@@ -39,17 +39,57 @@ jobs:
           WATCHER_USER_AGENT: "TCGWatcher/1.0 (+GitHub Actions personal Maxireves OP17 alert)"
         run: python src/watcher.py --config config/watchlist.json --state state/watch_state.json
 
-      - name: Commit watcher state
+            - name: Commit watcher state
         run: |
-          if [[ -n "$(git status --porcelain state/watch_state.json)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add state/watch_state.json
-            git commit -m "chore: update watcher state [skip ci]"
-            git push
-          else
+          set -e
+
+          if [[ -z "$(git status --porcelain state/watch_state.json)" ]]; then
             echo "No state changes to commit."
+            exit 0
           fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Sauvegarde l'état généré par ce run.
+          cp state/watch_state.json /tmp/watch_state.json
+
+          # Récupère la dernière version distante pour éviter "fetch first".
+          git fetch origin main
+          git reset --hard origin/main
+
+          # Réapplique l'état généré par ce run.
+          mkdir -p state
+          cp /tmp/watch_state.json state/watch_state.json
+
+          if [[ -z "$(git status --porcelain state/watch_state.json)" ]]; then
+            echo "State already up to date after sync."
+            exit 0
+          fi
+
+          git add state/watch_state.json
+          git commit -m "chore: update watcher state [skip ci]"
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Watcher state pushed successfully."
+              exit 0
+            fi
+
+            echo "Push failed, retry $attempt/3 after syncing remote main..."
+            sleep 3
+
+            cp state/watch_state.json /tmp/watch_state.json
+            git fetch origin main
+            git reset --hard origin/main
+            cp /tmp/watch_state.json state/watch_state.json
+
+            git add state/watch_state.json
+            git commit -m "chore: update watcher state [skip ci]" || true
+          done
+
+          echo "::warning::Unable to push watcher state after retries. Watcher already ran; continuing without failing."
+          exit 0
       - name: Notify Discord on workflow failure
         if: ${{ failure() }}
         env:
