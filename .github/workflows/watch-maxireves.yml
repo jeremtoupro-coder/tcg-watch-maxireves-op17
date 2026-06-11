@@ -4,7 +4,7 @@ on:
   schedule:
     # Toutes les 10 minutes, en évitant :00 pour limiter les files GitHub Actions.
     # GitHub utilise l'heure UTC pour cron.
-    - cron: "3-59/10 * * * *"
+    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
 
 permissions:
