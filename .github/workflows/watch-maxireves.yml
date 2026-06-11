@@ -50,3 +50,53 @@ jobs:
           else
             echo "No state changes to commit."
           fi
+      - name: Notify Discord on workflow failure
+        if: ${{ failure() }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+          if not webhook:
+              print("DISCORD_WEBHOOK_URL absent, impossible de notifier Discord.")
+              raise SystemExit(0)
+
+          payload = {
+              "content": "🚨 **ERREUR_WORKFLOW** — GitHub Actions Maxirêves OP17 a échoué.",
+              "embeds": [
+                  {
+                      "title": "🚨 Workflow GitHub en erreur",
+                      "description": (
+                          "Le watcher ou une étape GitHub a échoué. "
+                          "Va vérifier GitHub → Actions → dernier run rouge."
+                      ),
+                      "fields": [
+                          {
+                              "name": "Run",
+                              "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                              "inline": False
+                          },
+                          {
+                              "name": "Cause probable",
+                              "value": "Conflit Git sur `state/watch_state.json`, erreur réseau, token, ou étape GitHub échouée.",
+                              "inline": False
+                          }
+                      ]
+                  }
+              ]
+          }
+
+          req = urllib.request.Request(
+              webhook,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          with urllib.request.urlopen(req, timeout=20) as response:
+              print("Discord status:", response.status)
+          PY
