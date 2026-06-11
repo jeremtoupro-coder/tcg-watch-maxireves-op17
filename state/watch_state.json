@@ -3,32 +3,32 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T20:01:00.653326+00:00",
+      "last_checked_utc": "2026-06-11T20:10:43.577265+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_utc": "2026-06-11T15:07:57.993945+00:00",
-      "last_hash": "8f8ce00b5cb5d709e70a7e8f7397872e49bee806f3d7704731b9b2a05326ce49",
+      "last_hash": "278161bb7b201a22ea450e9fd56b081501b6d7b4369079f7eaf8799b91bc5d72",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T20:00:58.739267+00:00",
+      "last_checked_utc": "2026-06-11T20:10:41.423451+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-11T15:53:22.190074+00:00",
-      "last_hash": "8b83c06fe13793c6690d10a452cd77b6516a9ba46f99c254a74f8ca44b4f86ba",
+      "last_hash": "66fcb393e30d41259ab467b75cdbf486120bc3adec1c8954bfd36e848551bb7e",
       "last_recovered_utc": "2026-06-11T17:21:12.051689+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T20:00:47.540476+00:00",
+      "last_checked_utc": "2026-06-11T20:10:29.977374+00:00",
       "last_hash": "4b11115f73e67759dd9aaf155002342e8b405e5ada8f17e2456a4bdef9cae364",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T20:00:53.391314+00:00",
-      "last_hash": "42362c1b3606ec774a76b5b492e94a5aae1f94efd74541859219b337cd5ecd50",
+      "last_checked_utc": "2026-06-11T20:10:34.738022+00:00",
+      "last_hash": "b9d8b3ec44ecbbd68612fb2bc9ebcdc3743908251bd08833b455200fe4d78552",
       "last_status": 200
     }
   }
