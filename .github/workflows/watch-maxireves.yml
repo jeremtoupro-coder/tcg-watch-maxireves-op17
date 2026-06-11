@@ -1,0 +1,52 @@
+name: TCG Watch - Maxireves OP17
+
+on:
+  schedule:
+    # Toutes les 10 minutes, en évitant :00 pour limiter les files GitHub Actions.
+    # GitHub utilise l'heure UTC pour cron.
+    - cron: "3-59/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: maxireves-op17-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Run Maxireves watcher
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WATCHER_USER_AGENT: "TCGWatcher/1.0 (+GitHub Actions personal Maxireves OP17 alert)"
+        run: python src/watcher.py --config config/watchlist.json --state state/watch_state.json
+
+      - name: Commit watcher state
+        run: |
+          if [[ -n "$(git status --porcelain state/watch_state.json)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state/watch_state.json
+            git commit -m "chore: update watcher state [skip ci]"
+            git push
+          else
+            echo "No state changes to commit."
+          fi

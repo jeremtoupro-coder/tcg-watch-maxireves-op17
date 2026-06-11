@@ -1,0 +1,114 @@
+{
+  "watch_terms": [
+    "OP17",
+    "OP-17"
+  ],
+  "thresholds": {
+    "retail_display_price_eur": 120,
+    "max_display_price_eur": 130,
+    "case_display_count": 12,
+    "retail_case_price_eur": 1440,
+    "max_case_price_eur": 1560
+  },
+  "targets": [
+    {
+      "name": "Maxirêves — Display One Piece TCG",
+      "url": "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/"
+    },
+    {
+      "name": "Maxirêves — Nouveautés et précommandes",
+      "url": "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/"
+    },
+    {
+      "name": "Maxirêves — Recherche OP17",
+      "url": "https://maxireves.fr/?s=OP17&post_type=product"
+    },
+    {
+      "name": "Maxirêves — Recherche OP-17",
+      "url": "https://maxireves.fr/?s=OP-17&post_type=product"
+    }
+  ],
+  "rules": {
+    "fr_keywords": [
+      "français",
+      "francais",
+      "version française",
+      "version francaise",
+      "édition française",
+      "edition francaise",
+      "display fr",
+      "booster fr",
+      "cartes en français",
+      "cartes en francais"
+    ],
+    "non_fr_keywords": [
+      "english",
+      "anglais",
+      "eng",
+      "en anglais",
+      "version anglaise",
+      "japanese",
+      "japonais",
+      "jp",
+      "version japonaise"
+    ],
+    "case_keywords": [
+      "case",
+      "case scellée",
+      "case scellee",
+      "12 display",
+      "12 displays",
+      "carton scellé",
+      "carton scelle"
+    ],
+    "display_keywords": [
+      "display",
+      "booster box",
+      "boite de boosters",
+      "boîte de boosters",
+      "24 boosters",
+      "24 booster"
+    ],
+    "available_keywords": [
+      "ajouter au panier",
+      "add to cart",
+      "add to basket",
+      "en stock",
+      "disponible"
+    ],
+    "unavailable_keywords": [
+      "rupture",
+      "rupture de stock",
+      "épuisé",
+      "epuise",
+      "sold out",
+      "indisponible",
+      "prévenez-moi",
+      "prevenez-moi",
+      "alerte stock"
+    ],
+    "preorder_keywords": [
+      "précommande",
+      "precommande",
+      "en préco",
+      "en preco",
+      "pre-order",
+      "preorder",
+      "réservation",
+      "reservation"
+    ]
+  },
+  "politeness": {
+    "timeout_seconds": 20,
+    "delay_between_requests_seconds": 2.5,
+    "jitter_seconds": 2,
+    "max_alert_history": 80,
+    "user_agent": "TCGWatcher/1.0 (+personal Maxireves OP17 alert; respectful 10min polling)"
+  },
+  "alerting": {
+    "mode": "stock_any_price",
+    "ignore_price_for_stock_alerts": true,
+    "send_alert_when_op17_detected_without_stock": false,
+    "note": "Alerte stock/précommande OP17 quel que soit le prix. Le prix est affiché mais ne bloque pas. Les simples pages de recherche vides sont ignorées."
+  }
+}

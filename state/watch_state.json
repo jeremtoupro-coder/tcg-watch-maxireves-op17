@@ -1,0 +1,25 @@
+{
+  "alerts": [],
+  "urls": {
+    "https://maxireves.fr/?s=OP-17&post_type=product": {
+      "last_checked_utc": "2026-06-11T13:57:01.089744+00:00",
+      "last_hash": "58d9b7f1827ecc5bac0f7c85d4dfdd0078b9360fc9cab4326a909990f984084e",
+      "last_status": 200
+    },
+    "https://maxireves.fr/?s=OP17&post_type=product": {
+      "last_checked_utc": "2026-06-11T13:56:59.288997+00:00",
+      "last_hash": "cb327f73ba9d1048d5c09df7edf8b20f041a2b6b619946997e12f819db92f300",
+      "last_status": 200
+    },
+    "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
+      "last_checked_utc": "2026-06-11T13:56:50.641449+00:00",
+      "last_hash": "091db80a06c7e3d867cb7b731620d7394e4362ed56837da89bc32b78ff27fbad",
+      "last_status": 200
+    },
+    "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
+      "last_checked_utc": "2026-06-11T13:56:54.769499+00:00",
+      "last_hash": "985b23e38faf283659ad388a56aca940ace5de3fea8f917fef88c78a30fb679b",
+      "last_status": 200
+    }
+  }
+}
