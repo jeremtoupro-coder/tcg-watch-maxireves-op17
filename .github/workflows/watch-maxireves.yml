@@ -39,11 +39,11 @@ jobs:
           WATCHER_USER_AGENT: "TCGWatcher/1.0 (+GitHub Actions personal Maxireves OP17 alert)"
         run: python src/watcher.py --config config/watchlist.json --state state/watch_state.json
 
-            - name: Commit watcher state
+      - name: Commit watcher state
         run: |
-          set -e
+          set -euo pipefail
 
-          if [[ -z "$(git status --porcelain state/watch_state.json)" ]]; then
+          if [[ -z "$(git status --porcelain -- state/watch_state.json)" ]]; then
             echo "No state changes to commit."
             exit 0
           fi
@@ -51,19 +51,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Sauvegarde l'état généré par ce run.
-          cp state/watch_state.json /tmp/watch_state.json
+          tmp_state="$(mktemp)"
+          cp state/watch_state.json "$tmp_state"
 
-          # Récupère la dernière version distante pour éviter "fetch first".
           git fetch origin main
           git reset --hard origin/main
 
-          # Réapplique l'état généré par ce run.
           mkdir -p state
-          cp /tmp/watch_state.json state/watch_state.json
+          cp "$tmp_state" state/watch_state.json
 
-          if [[ -z "$(git status --porcelain state/watch_state.json)" ]]; then
+          if [[ -z "$(git status --porcelain -- state/watch_state.json)" ]]; then
             echo "State already up to date after sync."
+            rm -f "$tmp_state"
             exit 0
           fi
 
@@ -73,34 +72,49 @@ jobs:
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then
               echo "Watcher state pushed successfully."
+              rm -f "$tmp_state"
               exit 0
             fi
 
             echo "Push failed, retry $attempt/3 after syncing remote main..."
             sleep 3
 
-            cp state/watch_state.json /tmp/watch_state.json
+            cp state/watch_state.json "$tmp_state"
+
             git fetch origin main
             git reset --hard origin/main
-            cp /tmp/watch_state.json state/watch_state.json
+
+            mkdir -p state
+            cp "$tmp_state" state/watch_state.json
+
+            if [[ -z "$(git status --porcelain -- state/watch_state.json)" ]]; then
+              echo "State no longer differs after sync."
+              rm -f "$tmp_state"
+              exit 0
+            fi
 
             git add state/watch_state.json
             git commit -m "chore: update watcher state [skip ci]" || true
           done
 
           echo "::warning::Unable to push watcher state after retries. Watcher already ran; continuing without failing."
+          rm -f "$tmp_state"
           exit 0
+
       - name: Notify Discord on workflow failure
         if: ${{ failure() }}
+        continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           python - <<'PY'
           import json
           import os
+          import urllib.error
           import urllib.request
 
-          webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+          webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+
           if not webhook:
               print("DISCORD_WEBHOOK_URL absent, impossible de notifier Discord.")
               raise SystemExit(0)
@@ -122,7 +136,10 @@ jobs:
                           },
                           {
                               "name": "Cause probable",
-                              "value": "Conflit Git sur `state/watch_state.json`, erreur réseau, token, ou étape GitHub échouée.",
+                              "value": (
+                                  "Erreur watcher, erreur réseau, secret Discord invalide, "
+                                  "token GitHub, ou conflit Git sur state/watch_state.json."
+                              ),
                               "inline": False
                           }
                       ]
@@ -137,6 +154,14 @@ jobs:
               method="POST",
           )
 
-          with urllib.request.urlopen(req, timeout=20) as response:
-              print("Discord status:", response.status)
+          try:
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  print("Discord status:", response.status)
+          except urllib.error.HTTPError as e:
+              print("Discord notification failed with HTTP:", e.code)
+              print(e.read().decode("utf-8", errors="replace"))
+              raise SystemExit(0)
+          except Exception as e:
+              print("Discord notification failed:", repr(e))
+              raise SystemExit(0)
           PY
