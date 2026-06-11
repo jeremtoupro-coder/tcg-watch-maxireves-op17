@@ -387,6 +387,141 @@ def evaluate_context(context: str, config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+
+def describe_exception(exc: Exception) -> dict[str, Any]:
+    """Convertit une exception réseau en détails exploitables pour logs/Discord."""
+    details: dict[str, Any] = {
+        "type": exc.__class__.__name__,
+        "message": str(exc),
+        "status": None,
+        "is_http": False,
+    }
+    if isinstance(exc, urllib.error.HTTPError):
+        details["status"] = int(exc.code)
+        details["is_http"] = True
+        details["reason"] = getattr(exc, "reason", None) or str(exc)
+    elif isinstance(exc, urllib.error.URLError):
+        details["reason"] = str(getattr(exc, "reason", exc))
+    else:
+        details["reason"] = str(exc)
+    return details
+
+
+def should_alert_error(url_state: dict[str, Any], error_details: dict[str, Any], config: dict[str, Any]) -> tuple[bool, str]:
+    """Décide si une erreur mérite une alerte Discord.
+
+    Logique prudente:
+    - 403 / 429: alerte immédiate, car potentiel blocage/rate limit.
+    - 503 / timeout / SSL / réseau: alerte seulement après plusieurs runs consécutifs.
+    - Dédoublonnage via signature pour éviter le spam Discord.
+    """
+    error_cfg = config.get("error_alerting", {})
+    if not error_cfg.get("enabled", True):
+        return False, "error_alerting désactivé"
+
+    status = error_details.get("status")
+    consecutive = int(url_state.get("consecutive_errors", 0))
+    immediate_statuses = set(int(x) for x in error_cfg.get("alert_immediately_http_statuses", [403, 429]))
+    threshold = int(error_cfg.get("consecutive_errors_before_alert", 3))
+
+    if status in immediate_statuses:
+        return True, f"HTTP {status} détecté : possible blocage/rate limit."
+    if consecutive >= threshold:
+        return True, f"{consecutive} erreurs consécutives sur la même cible."
+
+    return False, f"Erreur temporaire ignorée ({consecutive}/{threshold})."
+
+
+def build_error_discord_payload(
+    target_name: str,
+    url: str,
+    error_details: dict[str, Any],
+    url_state: dict[str, Any],
+    reason: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    status = error_details.get("status")
+    consecutive = int(url_state.get("consecutive_errors", 0))
+    status_label = f"HTTP {status}" if status else error_details.get("type", "Erreur réseau")
+    message = str(error_details.get("message", ""))[:700] or "Erreur non détaillée"
+
+    severity = "INQUIETANTE" if status in {403, 429} or consecutive >= int(config.get("error_alerting", {}).get("consecutive_errors_before_alert", 3)) else "INFO"
+    emoji = "🚨" if severity == "INQUIETANTE" else "⚠️"
+    color = 0xE67E22 if severity == "INQUIETANTE" else 0xF1C40F
+
+    content = (
+        f"{emoji} **ERREUR_{severity}** — Watcher Maxirêves OP17\n"
+        f"{target_name}\n"
+        f"{status_label} — {reason}"
+    )
+
+    embed = {
+        "title": f"{emoji} Erreur watcher Maxirêves — {severity}",
+        "url": url,
+        "color": color,
+        "fields": [
+            {"name": "Cible", "value": f"{target_name}\n{url}"[:1024], "inline": False},
+            {"name": "Erreur", "value": f"{status_label}\n{message}"[:1024], "inline": False},
+            {"name": "Pourquoi l'alerte part", "value": reason[:1024], "inline": False},
+            {
+                "name": "État",
+                "value": (
+                    f"Erreurs consécutives sur cette cible: {consecutive}\n"
+                    f"Dernier check UTC: {url_state.get('last_checked_utc', 'n/a')}\n"
+                    f"Dernière erreur UTC: {url_state.get('last_error_utc', 'n/a')}"
+                )[:1024],
+                "inline": False,
+            },
+            {
+                "name": "Action conseillée",
+                "value": (
+                    "Si c'est un seul 503: rien à faire. "
+                    "Si 403/429 ou plusieurs erreurs d'affilée: ralentir le cron, retirer les pages recherche, "
+                    "ou attendre que Maxirêves/cache redevienne stable."
+                ),
+                "inline": False,
+            },
+        ],
+        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+    }
+    return {"content": content[:1900], "embeds": [embed]}
+
+
+def build_global_error_discord_payload(error_count: int, total_targets: int, errors: list[dict[str, Any]]) -> dict[str, Any]:
+    lines = []
+    for item in errors[:8]:
+        details = item["details"]
+        status = details.get("status")
+        status_label = f"HTTP {status}" if status else details.get("type", "Erreur réseau")
+        lines.append(f"• {item['name']} — {status_label} — {str(details.get('message', ''))[:120]}")
+
+    return {
+        "content": (
+            "🚨 **ERREUR_GLOBALE** — Watcher Maxirêves OP17\n"
+            f"{error_count}/{total_targets} pages ont échoué sur le même run."
+        )[:1900],
+        "embeds": [
+            {
+                "title": "🚨 Toutes les cibles Maxirêves ont échoué",
+                "color": 0xE74C3C,
+                "fields": [
+                    {"name": "Résumé", "value": "\n".join(lines)[:1024] or "Aucun détail.", "inline": False},
+                    {
+                        "name": "Action conseillée",
+                        "value": (
+                            "Ne panique pas: ça peut être un incident Maxirêves ou GitHub. "
+                            "Si ça se répète, passe temporairement le cron à 15/20 minutes."
+                        ),
+                        "inline": False,
+                    },
+                ],
+                "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+            }
+        ],
+    }
+
+
 def build_discord_payload(
     target_name: str,
     url: str,
@@ -518,6 +653,7 @@ def run_once(config_path: Path, state_path: Path, dry_run: bool = False) -> int:
     max_alert_history = int(config.get("politeness", {}).get("max_alert_history", 80))
 
     sent_count = 0
+    error_records: list[dict[str, Any]] = []
 
     for index, target in enumerate(config["targets"]):
         name = target["name"]
@@ -530,6 +666,10 @@ def run_once(config_path: Path, state_path: Path, dry_run: bool = False) -> int:
 
             url_state["last_checked_utc"] = now
             url_state["last_status"] = fetched.status
+            # Un succès remet le compteur d'erreurs à zéro.
+            if url_state.get("consecutive_errors"):
+                url_state["last_recovered_utc"] = now
+            url_state["consecutive_errors"] = 0
 
             if fetched.etag:
                 url_state["etag"] = fetched.etag
@@ -603,12 +743,77 @@ def run_once(config_path: Path, state_path: Path, dry_run: bool = False) -> int:
                     else:
                         print(f"[SKIP] {name} — alerte déjà envoyée pour cet état")
         except Exception as exc:
+            error_details = describe_exception(exc)
             print(f"[ERREUR] {name}: {exc}", file=sys.stderr)
-            url_state["last_error_utc"] = dt.datetime.now(dt.UTC).isoformat()
+
+            now = dt.datetime.now(dt.UTC).isoformat()
+            url_state["last_checked_utc"] = now
+            url_state["last_error_utc"] = now
             url_state["last_error"] = repr(exc)
+            url_state["last_error_status"] = error_details.get("status")
+            url_state["consecutive_errors"] = int(url_state.get("consecutive_errors", 0)) + 1
+
+            error_records.append({"name": name, "url": url, "details": error_details})
+
+            should_alert, reason = should_alert_error(url_state, error_details, config)
+            if should_alert:
+                signature = sha256_text(
+                    json.dumps(
+                        {
+                            "kind": "target_error",
+                            "url": url,
+                            "status": error_details.get("status"),
+                            "type": error_details.get("type"),
+                            "consecutive_bucket": min(int(url_state.get("consecutive_errors", 0)), 10),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                previous_error_alerts = set(url_state.get("error_alert_signatures", []))
+                if signature not in previous_error_alerts:
+                    payload = build_error_discord_payload(name, url, error_details, url_state, reason, config)
+                    if dry_run:
+                        print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    else:
+                        send_discord(payload)
+                    sent_count += 1
+                    url_state.setdefault("error_alert_signatures", []).append(signature)
+                    max_error_history = int(config.get("error_alerting", {}).get("max_error_alert_history", 50))
+                    url_state["error_alert_signatures"] = url_state["error_alert_signatures"][-max_error_history:]
+                else:
+                    print(f"[SKIP] {name} — alerte erreur déjà envoyée pour cet état")
+            else:
+                print(f"[INFO] {name} — {reason}")
 
         if index < len(config["targets"]) - 1:
             time.sleep(delay + random.uniform(0, jitter))
+
+    error_cfg = config.get("error_alerting", {})
+    if error_cfg.get("alert_if_all_targets_fail", True) and error_records and len(error_records) == len(config["targets"]):
+        signature = sha256_text(
+            json.dumps(
+                {
+                    "kind": "global_error",
+                    "statuses": [r["details"].get("status") for r in error_records],
+                    "types": [r["details"].get("type") for r in error_records],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        previous_global = set(state.get("global_error_alert_signatures", []))
+        if signature not in previous_global:
+            payload = build_global_error_discord_payload(len(error_records), len(config["targets"]), error_records)
+            if dry_run:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                send_discord(payload)
+            sent_count += 1
+            state.setdefault("global_error_alert_signatures", []).append(signature)
+            state["global_error_alert_signatures"] = state["global_error_alert_signatures"][-int(error_cfg.get("max_error_alert_history", 50)):]
+        else:
+            print("[SKIP] Alerte erreur globale déjà envoyée pour cet état")
 
     save_json(state_path, state)
     print(f"Run terminé. Alertes envoyées: {sent_count}")

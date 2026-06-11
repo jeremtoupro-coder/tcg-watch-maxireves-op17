@@ -110,5 +110,16 @@
     "ignore_price_for_stock_alerts": true,
     "send_alert_when_op17_detected_without_stock": false,
     "note": "Alerte stock/précommande OP17 quel que soit le prix. Le prix est affiché mais ne bloque pas. Les simples pages de recherche vides sont ignorées."
+  },
+  "error_alerting": {
+    "enabled": true,
+    "alert_immediately_http_statuses": [
+      403,
+      429
+    ],
+    "consecutive_errors_before_alert": 3,
+    "alert_if_all_targets_fail": true,
+    "max_error_alert_history": 50,
+    "note": "Alerte Discord seulement sur erreurs inquiétantes: 403/429 immédiat, ou 3 erreurs consécutives sur une cible, ou toutes les cibles en erreur sur un run."
   }
 }

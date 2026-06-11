@@ -448,3 +448,15 @@ git add .
 git commit -m "Update watcher"
 git push
 ```
+
+
+## Alertes d'erreurs inquiétantes
+
+Cette version envoie aussi une alerte Discord quand le watcher voit un problème qui peut mériter attention :
+
+- **HTTP 403** : alerte immédiate, possible blocage.
+- **HTTP 429** : alerte immédiate, possible rate limit.
+- **HTTP 503 / timeout / erreur réseau** : pas d'alerte au premier incident isolé ; alerte après **3 erreurs consécutives** sur la même cible.
+- **Toutes les pages en erreur sur le même run** : alerte globale.
+
+Un 503 isolé sur `Recherche OP-17` reste donc traité comme un bruit temporaire. Le but est d'éviter le spam Discord tout en signalant les vrais problèmes de surveillance.
