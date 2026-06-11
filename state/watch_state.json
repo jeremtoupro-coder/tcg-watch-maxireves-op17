@@ -3,31 +3,32 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T15:53:26.965699+00:00",
+      "last_checked_utc": "2026-06-11T17:21:13.964900+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_utc": "2026-06-11T15:07:57.993945+00:00",
-      "last_hash": "61a8213388a98e835e8a63d3accabff14c4caf30ddd3fc537f3aaf5ed682cc3a",
+      "last_hash": "21584edbc1ea1a3558f6e076875a67b7670b37357acc62ac8aebb415ea6c29ef",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-11T15:53:22.190074+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-11T17:21:12.051689+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-11T15:53:22.190074+00:00",
-      "last_hash": "9094ab0c1bba5077bfc09a9ad66cc1ab8f2af7071f8f585c2bfff553d5f9289a",
+      "last_hash": "bc25de9b04d49a5d1afdf318c049167bed88700cf2cbe96474d77261132c135b",
+      "last_recovered_utc": "2026-06-11T17:21:12.051689+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T15:53:12.418328+00:00",
-      "last_hash": "85eee3652b295c34373a77e4b77c20b76cbfc7f7e396e2bcf88aa0db58a6ebe3",
+      "last_checked_utc": "2026-06-11T17:21:02.068346+00:00",
+      "last_hash": "9f25e694488bf36794943f1ee58259bc6d4f58cc2092ac391df75223664dbd3c",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-11T15:53:17.572476+00:00",
-      "last_hash": "138ed59389e4e350af51649b2d96df91119ab93673013f9bc9b33dc442be3dd8",
+      "last_checked_utc": "2026-06-11T17:21:06.463205+00:00",
+      "last_hash": "d8b93dbd2731e86aa1354870f9ce573fd38dfa28efaed386d77bc4036d0b7684",
       "last_status": 200
     }
   }
