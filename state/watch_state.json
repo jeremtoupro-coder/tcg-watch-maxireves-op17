@@ -3,7 +3,7 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-14T14:31:03.020031+00:00",
+      "last_checked_utc": "2026-06-14T14:40:49.725260+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_utc": "2026-06-11T15:07:57.993945+00:00",
       "last_hash": "6ffa366fcf44ffea71001aa1d349694153044c3d65bef0fd5523a25b0317aaba",
@@ -11,7 +11,7 @@
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-14T14:31:00.427711+00:00",
+      "last_checked_utc": "2026-06-14T14:40:47.881145+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-13T13:30:53.173660+00:00",
@@ -21,14 +21,14 @@
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-14T14:30:49.118683+00:00",
+      "last_checked_utc": "2026-06-14T14:40:35.822056+00:00",
       "last_hash": "4c5c733a1d3b459b4e7271e7f873394c6848b55856772ea89516b256e1aec981",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-14T14:30:53.955376+00:00",
-      "last_hash": "6839150a8ef93231ac9e45a256434b5f619da363b5ee6a9ff309c22522101e40",
+      "last_checked_utc": "2026-06-14T14:40:41.266283+00:00",
+      "last_hash": "c5c63aecb193a58fd7e9c9e12e48cf78ae1c629dc3daae106353c43882cddd6e",
       "last_status": 200
     }
   }
