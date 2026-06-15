@@ -3,32 +3,32 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-15T09:40:52.280460+00:00",
+      "last_checked_utc": "2026-06-15T09:50:58.754149+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_utc": "2026-06-11T15:07:57.993945+00:00",
-      "last_hash": "cf490e41a55d0e2fc79cca561efead8a8d2bbc51fa932ea6bca5704c8a374fab",
+      "last_hash": "6969e35582b59ea33291dc985cb037446870de8696041461a0590f4c41c9516c",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-15T09:40:50.263757+00:00",
+      "last_checked_utc": "2026-06-15T09:50:56.788119+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-13T13:30:53.173660+00:00",
-      "last_hash": "7553303198c47d27f13037d5746db24b2e1a3ed7f82129c2b4636f11491ff835",
+      "last_hash": "c04bbed5de4a6f4ba380fa66cdb6f799aead93059b8aa59af191e14cc0aab5f6",
       "last_recovered_utc": "2026-06-13T13:40:50.829281+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-15T09:40:38.592889+00:00",
-      "last_hash": "e84c10897d9b02c3d37a7090c1ca616aa0390256d157f8033a70d5d9c1e64fd9",
+      "last_checked_utc": "2026-06-15T09:50:46.196170+00:00",
+      "last_hash": "436e78b34673d0872cfbe39d6d958c132326baf300a2d7b4bae79a7c4187216f",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-15T09:40:45.545928+00:00",
-      "last_hash": "d24444f64e92025058a05e12fc8d8d4569be5ed14c61acc2fd4534f3544bf71c",
+      "last_checked_utc": "2026-06-15T09:50:50.428463+00:00",
+      "last_hash": "b09e23477e323269c2f1b040a1639ac448cb77ac7505261a4224c66acdd8eb74",
       "last_status": 200
     }
   }
