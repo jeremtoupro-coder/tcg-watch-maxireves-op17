@@ -2,35 +2,35 @@
   "alerts": [],
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-17T10:31:04.993791+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-17T10:40:51.865356+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T10:31:04.993791+00:00",
-      "last_hash": "7476f3f32c8bd07dfdb8b985e21a17d22c1894975ccd2f611ffceb0733f997c5",
-      "last_recovered_utc": "2026-06-17T09:20:58.590235+00:00",
+      "last_hash": "0533bfc00bedbfb61ee9b45129460fc8efd6d2eb4a3d6d1fa2e0be175ace35fd",
+      "last_recovered_utc": "2026-06-17T10:40:51.865356+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T10:31:01.734401+00:00",
+      "last_checked_utc": "2026-06-17T10:40:49.562432+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-13T13:30:53.173660+00:00",
-      "last_hash": "671cc0dbe3b8e132e3ec9f5a70a252bd20018f9c3402598668fc9b60589941fa",
+      "last_hash": "0e7f947c7a4f4841c1a62924a378a45d4e939f2a92fd6311693a58ebe5734856",
       "last_recovered_utc": "2026-06-13T13:40:50.829281+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T10:30:49.215134+00:00",
-      "last_hash": "79985521550993d0627bb0d8d89dc08fda425b9802c7c74b60fa4d6170e6e790",
+      "last_checked_utc": "2026-06-17T10:40:38.832083+00:00",
+      "last_hash": "f8e29efc955c0bdbba086bf80fa47aa52b893861dcb0c437c4abcc79c6abbc3a",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T10:30:54.818237+00:00",
-      "last_hash": "fe4a782a6f3ac0a04a89e9828c9a9981cae6d8d53c10c40e24950d85709a6112",
+      "last_checked_utc": "2026-06-17T10:40:44.420845+00:00",
+      "last_hash": "7927271381cfa2fa3418890a95e48ecc1bfc043463a2a593879c1c7ce5b7323b",
       "last_status": 200
     }
   }
