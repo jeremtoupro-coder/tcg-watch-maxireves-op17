@@ -3,34 +3,34 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T09:50:46.717327+00:00",
+      "last_checked_utc": "2026-06-17T10:01:08.964997+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T09:10:45.138235+00:00",
-      "last_hash": "3927bbe5b07441c5cf917d31c02883807a01b7323532edc7413aad23057bcc6b",
+      "last_hash": "cc8b2c5ccbdcf6049dcc2cb13f8f926320a2f5b9e27934201837ce0db259a9d0",
       "last_recovered_utc": "2026-06-17T09:20:58.590235+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T09:50:44.786702+00:00",
+      "last_checked_utc": "2026-06-17T10:01:06.782489+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-13T13:30:53.173660+00:00",
-      "last_hash": "9b9b84c2c284470d5e8807ebc3de68ba9538539a4408327ba894242dcaa754ea",
+      "last_hash": "2566568eeb2fb92c6ddd8bbdc022fca30a31ad481bea617abb336fa21771d665",
       "last_recovered_utc": "2026-06-13T13:40:50.829281+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T09:50:36.589285+00:00",
-      "last_hash": "cbaaf58556239db31ea8aff2cb85d2f497ba9979283642bef2e58ab78460d265",
+      "last_checked_utc": "2026-06-17T10:00:55.922541+00:00",
+      "last_hash": "8e18c37f8f55103d379fd36fd6bd9fbfef26d99cd5c499b8353078322856298a",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T09:50:40.935447+00:00",
-      "last_hash": "ce1e21778dc27a057b4d9796cb8497040622c47e0a6e453e713f983cc8648896",
+      "last_checked_utc": "2026-06-17T10:01:01.029752+00:00",
+      "last_hash": "9b2ae40fb0b9ab058b3775aaeb16470944391d5b31480e12befb4b80747a8eca",
       "last_status": 200
     }
   }
