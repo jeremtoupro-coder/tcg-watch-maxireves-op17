@@ -3,17 +3,17 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T12:31:09.539771+00:00",
+      "last_checked_utc": "2026-06-17T12:40:50.598889+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:04.349114+00:00",
-      "last_hash": "feb4a98e7c46e32f98bc58772cf1a864fa503604eb46dd23d3938eb6ee13749b",
+      "last_hash": "9fe31ec516db59945e72bf4506db87b6ecb88b6342b20bfc217e089ca5c67b83",
       "last_recovered_utc": "2026-06-17T11:40:46.834438+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T12:31:07.550213+00:00",
+      "last_checked_utc": "2026-06-17T12:40:47.961702+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:01.346821+00:00",
@@ -23,17 +23,17 @@
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T12:30:56.759209+00:00",
-      "last_hash": "f0a4d360a9e95ec4afe8b6c408178a56f9408bb7783f97a4f3019252690c5b5c",
+      "last_checked_utc": "2026-06-17T12:40:39.141429+00:00",
+      "last_hash": "339be30681188a63648cc96daa1edf2cd9faecb6762cc479b39694a7992d7073",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-17T12:31:01.596916+00:00",
+      "last_checked_utc": "2026-06-17T12:40:44.314557+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:40:40.597825+00:00",
-      "last_hash": "f20806a9e64f0c3f729a6588dd739a9c10a24a8f0f55c6410c8de486d3f9691e",
+      "last_hash": "b5801d428f9c4454c5f079e7c4e8ef58c3ae8492e7783df857708e56b12af854",
       "last_recovered_utc": "2026-06-17T11:50:40.532999+00:00",
       "last_status": 200
     }
