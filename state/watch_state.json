@@ -3,17 +3,17 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-18T12:01:09.577124+00:00",
+      "last_checked_utc": "2026-06-18T12:10:48.722440+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:04.349114+00:00",
-      "last_hash": "69109bb27fe94955d6add8984d7835e973eb35036f36e78f67f4d998c5a0f416",
+      "last_hash": "ae16768782cd976d028e5186e52f327ce26021ceac188a23b11ffcaba9d02c80",
       "last_recovered_utc": "2026-06-17T11:40:46.834438+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-18T12:01:07.323619+00:00",
+      "last_checked_utc": "2026-06-18T12:10:46.879008+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:01.346821+00:00",
@@ -23,17 +23,17 @@
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-18T12:00:53.948504+00:00",
+      "last_checked_utc": "2026-06-18T12:10:37.923069+00:00",
       "last_hash": "52ff16fcac9afb0bfe7c983782a9e98562c2a06d950c27ff7605562bbea19412",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-18T12:01:00.550163+00:00",
+      "last_checked_utc": "2026-06-18T12:10:43.695011+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:40:40.597825+00:00",
-      "last_hash": "85f846e661739bda642fc7ba7c01a97d3d2315b2646de696de60b073740484d8",
+      "last_hash": "6cbe9de8d0b8b00baf562718bf41fc21c650c833f09a2f5ae32cf81a76888672",
       "last_recovered_utc": "2026-06-17T11:50:40.532999+00:00",
       "last_status": 200
     }
