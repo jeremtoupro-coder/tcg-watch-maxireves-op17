@@ -3,37 +3,37 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:50:49.781675+00:00",
+      "last_checked_utc": "2026-06-19T07:01:15.616701+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:04.349114+00:00",
-      "last_hash": "1c227e87c0816131542d9d6a63c826d83587dc2ff4ee5aab95b206385b8e4ebf",
+      "last_hash": "fcce62414356b5d74f0aa6e053da46d83b6c5bb541caebc0af161c8a9c60f774",
       "last_recovered_utc": "2026-06-17T11:40:46.834438+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:50:47.128406+00:00",
+      "last_checked_utc": "2026-06-19T07:01:13.151047+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:01.346821+00:00",
-      "last_hash": "2e15215dc1b28300bc246d36fc880c3e0964cf6ad04f2cb90d9efb17859ede9f",
+      "last_hash": "d88409759a09147b3b87488599266e88f26dcc50b4d57b1144bd71a306d933fd",
       "last_recovered_utc": "2026-06-17T11:40:46.506866+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:50:36.935159+00:00",
-      "last_hash": "70b30dadc8966fc24ca3bba16a13f4cd1ac8c128e90bc181a6d237d35dcc5a68",
+      "last_checked_utc": "2026-06-19T07:01:02.076797+00:00",
+      "last_hash": "08ce2be15f563c1aed8ff26fe5d336443b3ac236228e3381666c80b9c6c42044",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:50:42.230870+00:00",
+      "last_checked_utc": "2026-06-19T07:01:07.413242+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-18T16:01:49.257455+00:00",
-      "last_hash": "c4fd0edde9ca396192619e58c8772883e68e148a01630be9bfa94f38ca73c83e",
+      "last_hash": "88df0c9f1f4c36e4c9c6d440d8a55016a0dae9863ac68e3adbfdbdd5d33c7275",
       "last_recovered_utc": "2026-06-18T16:10:55.673776+00:00",
       "last_status": 200
     }
