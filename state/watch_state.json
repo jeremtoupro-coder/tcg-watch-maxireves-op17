@@ -3,37 +3,37 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T18:40:47.185036+00:00",
+      "last_checked_utc": "2026-06-19T18:50:47.994655+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:04.349114+00:00",
-      "last_hash": "9ffac06a4348d12207f53cbd2d2a866722d3a340680e94730dc9868bfe0622ad",
+      "last_hash": "de0d565460798b991ab0229b82fbb346fad70c03962dd700236f4bceb83fb4cf",
       "last_recovered_utc": "2026-06-17T11:40:46.834438+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T18:40:45.340552+00:00",
+      "last_checked_utc": "2026-06-19T18:50:45.978741+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:01.346821+00:00",
-      "last_hash": "77dc0e22fb2f6f62d0ecde7d4fbbccd569b1f9f246105cee262513f7a344443a",
+      "last_hash": "0e492a8e6ca6abf7a725772c49f78fc1ca3150d1fb0b48e69d5f446ce2f6fc7c",
       "last_recovered_utc": "2026-06-17T11:40:46.506866+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T18:40:37.259997+00:00",
+      "last_checked_utc": "2026-06-19T18:50:34.401474+00:00",
       "last_hash": "3a19a0190eaab4036c91e25f61b6fe48d4165cd0216a2e30d2953901f2febf49",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T18:40:41.099022+00:00",
+      "last_checked_utc": "2026-06-19T18:50:39.852565+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-18T16:01:49.257455+00:00",
-      "last_hash": "2dfc880bb6b0eca11a407066da86bd6895b9fa39d42122b24b487cc196fe79e3",
+      "last_hash": "2a03b699e8297b743c0acc0a3659ddc75619a27032dbe4189b24504de5dfb703",
       "last_recovered_utc": "2026-06-18T16:10:55.673776+00:00",
       "last_status": 200
     }
