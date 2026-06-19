@@ -3,33 +3,33 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:31:01.699240+00:00",
+      "last_checked_utc": "2026-06-19T06:40:52.270756+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:04.349114+00:00",
-      "last_hash": "0860f3c4858132c156364badf346f77a6ea9c7ea72c6bff806d12d8adf042514",
+      "last_hash": "52dfd316f11c84259a821b8fd700d7c32f81ebd952e03d138f001e54def9e0fc",
       "last_recovered_utc": "2026-06-17T11:40:46.834438+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:30:59.170056+00:00",
+      "last_checked_utc": "2026-06-19T06:40:50.173531+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-17T11:31:01.346821+00:00",
-      "last_hash": "02adff81827b4780f2ce19f1612ad33848ca9739de0b672eadb2c27baeb67b0d",
+      "last_hash": "6c657b7f23daa61523a53193c7bc2c9e5815a10d17dd8af996494fd4f83bca80",
       "last_recovered_utc": "2026-06-17T11:40:46.506866+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:30:47.515056+00:00",
+      "last_checked_utc": "2026-06-19T06:40:39.382047+00:00",
       "last_hash": "237f07c05b52900f9f3446b4347a883defc2630a94c8c62c017ba287ccaf42b2",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-19T06:30:53.666455+00:00",
+      "last_checked_utc": "2026-06-19T06:40:44.430153+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-18T16:01:49.257455+00:00",
