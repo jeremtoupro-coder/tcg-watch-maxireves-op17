@@ -5,42 +5,43 @@
   ],
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-20T01:52:10.336160+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-20T02:01:11.031201+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:52:10.336160+00:00",
       "last_hash": "21d5ad506b6002d96aade2db3ec7821912e688dcd688f3af8ac35332c2c3e7bd",
-      "last_recovered_utc": "2026-06-17T11:40:46.834438+00:00",
+      "last_recovered_utc": "2026-06-20T02:01:11.031201+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-20T01:51:47.490161+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-20T02:01:08.251220+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:47.490161+00:00",
       "last_hash": "cf43aa6a9ef0a7f81f0a5b6de57b38a454b58698016874298a38458f2b569d71",
-      "last_recovered_utc": "2026-06-17T11:40:46.506866+00:00",
+      "last_recovered_utc": "2026-06-20T02:01:08.251220+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-20T01:50:59.083022+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-20T02:00:56.671888+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:50:59.083022+00:00",
       "last_hash": "b54f615a3d929daf7502fcdc1933fec6f36c7043fc480160c5776acb88e29a9c",
+      "last_recovered_utc": "2026-06-20T02:00:56.671888+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-20T01:51:23.199629+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-20T02:01:02.519525+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:23.199629+00:00",
       "last_hash": "da0ff996bcd4fa17faa68620f8a1c2df3a249b14a049e9f53a90a6d5436be658",
-      "last_recovered_utc": "2026-06-18T16:10:55.673776+00:00",
+      "last_recovered_utc": "2026-06-20T02:01:02.519525+00:00",
       "last_status": 200
     }
   }
