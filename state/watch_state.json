@@ -6,27 +6,27 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T10:31:00.980307+00:00",
+      "last_checked_utc": "2026-06-20T10:40:47.256791+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:52:10.336160+00:00",
-      "last_hash": "a0d4daee82edeb8e5a987c699e37a99bbdbfa21c0685501eb7ef3eec3bc10d55",
+      "last_hash": "adcda1b21b1ae35e97aa9ef748fb9baa742b2ae74b83507b40aa7ff6eb9483ef",
       "last_recovered_utc": "2026-06-20T02:01:11.031201+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T10:30:59.234762+00:00",
+      "last_checked_utc": "2026-06-20T10:40:45.271980+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:47.490161+00:00",
-      "last_hash": "9a7c4de871d018cc6eb3df607b83cdc15414cf62d7c6d288d87406b8f2cc9fbc",
+      "last_hash": "9e69dbcd0a6b6e00686661feafa8960c0334fc15ff9cc8d1b90ff41845e66f03",
       "last_recovered_utc": "2026-06-20T02:01:08.251220+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T10:30:47.991240+00:00",
+      "last_checked_utc": "2026-06-20T10:40:35.636221+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:50:59.083022+00:00",
@@ -36,7 +36,7 @@
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T10:30:53.529899+00:00",
+      "last_checked_utc": "2026-06-20T10:40:39.787800+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:23.199629+00:00",
