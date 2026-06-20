@@ -6,17 +6,17 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T18:01:10.676425+00:00",
+      "last_checked_utc": "2026-06-20T18:10:49.527958+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:52:10.336160+00:00",
-      "last_hash": "e34c8311594fb858aa3f0f7d4f9fbfd63f60e4de79c2a7bc688130937b517f30",
+      "last_hash": "d9f78e3e8c8df7ad05cc43948d2090a5156922040b4c6d4a109942c5f78192c4",
       "last_recovered_utc": "2026-06-20T02:01:11.031201+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T18:01:08.776042+00:00",
+      "last_checked_utc": "2026-06-20T18:10:47.336699+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:47.490161+00:00",
@@ -26,17 +26,17 @@
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T18:00:58.904005+00:00",
+      "last_checked_utc": "2026-06-20T18:10:39.184696+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:50:59.083022+00:00",
-      "last_hash": "233a131a8b9d94179ae8c0f52147fbf486733a8560b271ae71abd32e25ff374b",
+      "last_hash": "9a9bd5ee4d48d2ec958c4b39331f6f6c3183540ae10daae518cb3172494659ab",
       "last_recovered_utc": "2026-06-20T02:00:56.671888+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T18:01:03.358767+00:00",
+      "last_checked_utc": "2026-06-20T18:10:43.485846+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:23.199629+00:00",
