@@ -6,41 +6,41 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T19:31:00.142152+00:00",
+      "last_checked_utc": "2026-06-20T19:40:49.382287+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:52:10.336160+00:00",
-      "last_hash": "289b8f0b35f90a57b043d5de738375ce4d836e8623e25b6a67d2e1d5cc827644",
+      "last_hash": "c22171a01c0614803ae51560146646bb2a006f2384aefcd740d5c7a06c09265e",
       "last_recovered_utc": "2026-06-20T02:01:11.031201+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T19:30:59.375284+00:00",
+      "last_checked_utc": "2026-06-20T19:40:47.661673+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:47.490161+00:00",
-      "last_hash": "7a1b32fb26436a1e4db333855315dd13cce27f5fa36ecad08a1780b7cbf1c049",
+      "last_hash": "ef36cb8140f945c63bfa39f02dabc0740270c357da4e5ebc8d4554fa578e9018",
       "last_recovered_utc": "2026-06-20T02:01:08.251220+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T19:30:47.165347+00:00",
+      "last_checked_utc": "2026-06-20T19:40:36.583197+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:50:59.083022+00:00",
-      "last_hash": "e39d72c56629fd5a8d00e956c400a157078e9958d3f30437b970556819deba2a",
+      "last_hash": "37c7289d71ab6cfe37b56140607da4f068cd7cb0913e2bd3c6000335454ca6ba",
       "last_recovered_utc": "2026-06-20T02:00:56.671888+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-20T19:30:52.647663+00:00",
+      "last_checked_utc": "2026-06-20T19:40:41.863897+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:23.199629+00:00",
-      "last_hash": "7b3078610500e9f86f50180d412672d71ecb1f36884b3cdfc13f20b8d2b5a96d",
+      "last_hash": "385b33951ef51f6fdf7bb3272af313f913387db2ad988a9cedf69da8d5f078d0",
       "last_recovered_utc": "2026-06-20T02:01:02.519525+00:00",
       "last_status": 200
     }
