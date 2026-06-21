@@ -6,41 +6,41 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-21T10:45:55.311508+00:00",
+      "last_checked_utc": "2026-06-21T10:50:53.899445+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-21T04:20:46.719578+00:00",
-      "last_hash": "155dcd93c6dfe15318f0e28be7e0be2f2d6426cd467980eefb0af2ac8c787e5e",
+      "last_hash": "0705f5b243e9fcbb1fcd41bd172ce5804ba4046465da87f1642bd04d395d1306",
       "last_recovered_utc": "2026-06-21T04:31:05.005295+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-21T10:45:53.235972+00:00",
+      "last_checked_utc": "2026-06-21T10:50:51.715868+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:47.490161+00:00",
-      "last_hash": "5a6d2c6b755fbc9e739b5761594a274042772dcf16239cc97a5ff70af51add7b",
+      "last_hash": "b3ae7907105ddb32c380afe7303a2417a12bc16464ee4daa0a88aebefcf44450",
       "last_recovered_utc": "2026-06-20T02:01:08.251220+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-21T10:45:43.940451+00:00",
+      "last_checked_utc": "2026-06-21T10:50:40.124775+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:50:59.083022+00:00",
-      "last_hash": "34f2aaab4c369c909f6e53a3d455c78728a69c09edcf477e2eabc66d1915ccd5",
+      "last_hash": "1b7b784a1ca5ba7025b16b25545f1d21d03900f23104ab2f887dc27c4a456288",
       "last_recovered_utc": "2026-06-20T02:00:56.671888+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-21T10:45:48.007667+00:00",
+      "last_checked_utc": "2026-06-21T10:50:46.779829+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:23.199629+00:00",
-      "last_hash": "49779636f63eb929b5cbf4ebcc10174e90bc21140dfb3e9b5d589784c74f3568",
+      "last_hash": "1d9334e73d55111f683ce5e39fb90fe3d2f512d42b94e304d7b725542e8eee6a",
       "last_recovered_utc": "2026-06-20T02:01:02.519525+00:00",
       "last_status": 200
     }
