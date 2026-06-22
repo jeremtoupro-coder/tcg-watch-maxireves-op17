@@ -6,27 +6,27 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-22T09:31:03.783568+00:00",
+      "last_checked_utc": "2026-06-22T09:40:50.242719+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-21T04:20:46.719578+00:00",
-      "last_hash": "ead343e83605f65ebe96bc9f44566c0a56be2b5f2b7cefccf36910240d6b637c",
+      "last_hash": "49d685b06ebf9ccf65ba4c44522d3e1e8937eaba640eab2c6afc8331eadee280",
       "last_recovered_utc": "2026-06-21T04:31:05.005295+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-22T09:31:01.249291+00:00",
+      "last_checked_utc": "2026-06-22T09:40:48.039572+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:47.490161+00:00",
-      "last_hash": "03388a85211d36c86dd9192b9a75e8e804149962a337f7aabd62ec416b7be587",
+      "last_hash": "32a05b5adc80f2cb9f01ee44d31c9b73b4122997276145665423a2549a3b6bac",
       "last_recovered_utc": "2026-06-20T02:01:08.251220+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-22T09:30:48.659271+00:00",
+      "last_checked_utc": "2026-06-22T09:40:36.594607+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:50:59.083022+00:00",
@@ -36,11 +36,11 @@
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-22T09:30:54.383254+00:00",
+      "last_checked_utc": "2026-06-22T09:40:41.994448+00:00",
       "last_error": "URLError(TimeoutError('timed out'))",
       "last_error_status": null,
       "last_error_utc": "2026-06-20T01:51:23.199629+00:00",
-      "last_hash": "98be41d314a73f3240d1bb0acc692620da3f29cee1061f1772ef4917456ae68e",
+      "last_hash": "b64fe9e6da4e67b1d6c4d3aa0f4a4814d4377e2f3a6df73ab3330b14d93f008d",
       "last_recovered_utc": "2026-06-20T02:01:02.519525+00:00",
       "last_status": 200
     }
