@@ -6,53 +6,53 @@
   ],
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
-      "consecutive_errors": 1,
-      "last_checked_utc": "2026-06-23T07:50:52.523808+00:00",
+      "consecutive_errors": 0,
+      "last_checked_utc": "2026-06-23T08:01:05.393276+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-23T07:50:52.523808+00:00",
       "last_hash": "ac3825ad0a0a015c3a8b646ca59d8616f91a226da54bd081808fd39686e6cda1",
-      "last_recovered_utc": "2026-06-23T07:21:01.679927+00:00",
+      "last_recovered_utc": "2026-06-23T08:01:05.393276+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/?s=OP17&post_type=product": {
-      "consecutive_errors": 1,
+      "consecutive_errors": 2,
       "error_alert_signatures": [
         "b2242041c07d16ca5754721964e8c814b0ac8e5866a13faeea84018a3153c386"
       ],
-      "last_checked_utc": "2026-06-23T07:50:49.218641+00:00",
+      "last_checked_utc": "2026-06-23T08:01:02.262751+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
-      "last_error_utc": "2026-06-23T07:50:49.218641+00:00",
+      "last_error_utc": "2026-06-23T08:01:02.262751+00:00",
       "last_hash": "e293ff1f9681d53b945764768edbee04cb83b96134992124131c7b3fcfb87264",
       "last_recovered_utc": "2026-06-23T07:20:57.594737+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/": {
-      "consecutive_errors": 0,
+      "consecutive_errors": 1,
       "error_alert_signatures": [
         "61fb7c020b14192c5f4a7d0cca719bbfbdeaffb4df24e2bcf608dabb498330b9",
         "59b86717cc70d8bfb64615e606ebf9ec5b36a945a740ae098f2dc6dd9e9d5278",
         "ea56a904121407b9fba16561cd6e9865d00cf0595ba682c57a3260c3515365ee"
       ],
-      "last_checked_utc": "2026-06-23T07:50:40.174165+00:00",
+      "last_checked_utc": "2026-06-23T08:00:54.726191+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
-      "last_error_utc": "2026-06-23T07:10:37.882741+00:00",
+      "last_error_utc": "2026-06-23T08:00:54.726191+00:00",
       "last_hash": "802bf017b2486e9e466020643408bbc74d5015507acf3ce9b19f8ece99639e9e",
       "last_recovered_utc": "2026-06-23T07:20:42.195066+00:00",
       "last_status": 200
     },
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/": {
-      "consecutive_errors": 1,
+      "consecutive_errors": 2,
       "error_alert_signatures": [
         "95db847e6fe75cbeee6ac32ce34fddcb1bb68577df11fe8f2f9de99995b42370",
         "0bee0bf48be1cbf54bf6a8b084bafb15bcdf46cd0013c6d0b1a315cd21d69e2d"
       ],
-      "last_checked_utc": "2026-06-23T07:50:44.918258+00:00",
+      "last_checked_utc": "2026-06-23T08:00:58.910447+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
-      "last_error_utc": "2026-06-23T07:50:44.918258+00:00",
+      "last_error_utc": "2026-06-23T08:00:58.910447+00:00",
       "last_hash": "4b1f8f8e10e380d5388d381d9d00198befbdcfeb4d097570b971f96b6a87d22f",
       "last_recovered_utc": "2026-06-23T07:20:49.809155+00:00",
       "last_status": 200
