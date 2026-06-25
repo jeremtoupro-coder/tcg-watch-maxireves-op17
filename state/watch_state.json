@@ -7,11 +7,11 @@
   "urls": {
     "https://maxireves.fr/?s=OP-17&post_type=product": {
       "consecutive_errors": 0,
-      "last_checked_utc": "2026-06-25T05:01:08.700896+00:00",
+      "last_checked_utc": "2026-06-25T05:10:52.301600+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-23T08:20:53.538768+00:00",
-      "last_hash": "a135ab2532dcc143ca86c022c9f0c60caada5c88815692e0e7104d5d8aa35c33",
+      "last_hash": "5abc494ec70752228af8bbdeac9141d92493fc40ee1e44e91631075d19689e7b",
       "last_recovered_utc": "2026-06-23T08:31:06.152324+00:00",
       "last_status": 200
     },
@@ -22,11 +22,11 @@
         "e0656ea184c3026da1eaaea57882fc5d9197ea571a08dcebe439d8853ba0474b",
         "d70f9d4115763a87ed3019e3783a36fffc2ce0607e09fc6a127df1465ccad2fe"
       ],
-      "last_checked_utc": "2026-06-25T05:01:06.749543+00:00",
+      "last_checked_utc": "2026-06-25T05:10:50.183576+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-23T08:31:02.298459+00:00",
-      "last_hash": "497829f8b1a18417bb9581034dd3e400c1c03e7ff246c70453f0b76337e954e7",
+      "last_hash": "5dc91a48ab5989e61adb74be1f3fc045e279eebbf30d728cbad79e2997a12778",
       "last_recovered_utc": "2026-06-23T08:40:54.411707+00:00",
       "last_status": 200
     },
@@ -37,11 +37,11 @@
         "59b86717cc70d8bfb64615e606ebf9ec5b36a945a740ae098f2dc6dd9e9d5278",
         "ea56a904121407b9fba16561cd6e9865d00cf0595ba682c57a3260c3515365ee"
       ],
-      "last_checked_utc": "2026-06-25T05:00:55.120190+00:00",
+      "last_checked_utc": "2026-06-25T05:10:39.366675+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-23T08:30:54.290793+00:00",
-      "last_hash": "a673bcf85c049600e8514d9da3c490641d50a2c6bf6169345679e203933074d0",
+      "last_hash": "e60bb59a3c76d84a178f28f7865e3000204077e617a5094596a1ed3cc96f2fac",
       "last_recovered_utc": "2026-06-23T08:40:43.293738+00:00",
       "last_status": 200
     },
@@ -51,11 +51,11 @@
         "95db847e6fe75cbeee6ac32ce34fddcb1bb68577df11fe8f2f9de99995b42370",
         "0bee0bf48be1cbf54bf6a8b084bafb15bcdf46cd0013c6d0b1a315cd21d69e2d"
       ],
-      "last_checked_utc": "2026-06-25T05:01:00.736883+00:00",
+      "last_checked_utc": "2026-06-25T05:10:44.769743+00:00",
       "last_error": "<HTTPError 503: 'Backend fetch failed'>",
       "last_error_status": 503,
       "last_error_utc": "2026-06-25T04:00:59.920171+00:00",
-      "last_hash": "a7502bf8014d93da0f29f5e9bfb980e9363ad8c4cc92953ea64c8ea701cd9a1c",
+      "last_hash": "91a3c81c06c336a619909f6eca4be292515e12e57b6a01b6d1e4f7fe36dc3196",
       "last_recovered_utc": "2026-06-25T04:10:42.634103+00:00",
       "last_status": 200
     }
