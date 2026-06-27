@@ -144,6 +144,8 @@ export interface ConnectorDefinition {
 export interface Env {
   AUDIT_MODE?: string;
   ALLOW_PUBLIC_AUDIT?: string;
+  MONITORING_ENABLED?: string;
+  ACTIVE_STORES?: string;
   WRITE_STATE?: string;
   DISCORD_MODE?: "dry-run" | "live";
   DISCORD_WEBHOOK_URL?: string;
