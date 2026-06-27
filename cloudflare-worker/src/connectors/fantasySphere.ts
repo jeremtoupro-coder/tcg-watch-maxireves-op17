@@ -9,7 +9,7 @@ export const fantasySphere: ConnectorDefinition = {
   productUrlPatterns: [/\/product\//i],
   notes: [
     "La catégorie publique expose titres, prix et disponibilité sans navigateur lourd.",
-    "Une fiche OP17 publique existe mais n'apparaît pas actuellement dans la catégorie.",
-    "Le mode de découverte des fiches masquées reste donc à fiabiliser."
+    "Le sitemap produit révèle IB-07, IB-08, OP17 et OP18 même lorsque les fiches sont masquées.",
+    "Le sitemap fait près de 10 Mo : découverte exhaustive via GitHub Actions, contrôles légers via Cloudflare."
   ]
 };
