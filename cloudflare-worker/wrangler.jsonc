@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tcg-watch-readonly-audit",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-27",
+  "workers_dev": true,
+  "vars": {
+    "AUDIT_MODE": "true"
+  }
+
+  // Sécurité volontaire :
+  // - aucun cron
+  // - aucun binding KV ou D1
+  // - aucun secret Discord
+  // - aucun déploiement automatique
+}
