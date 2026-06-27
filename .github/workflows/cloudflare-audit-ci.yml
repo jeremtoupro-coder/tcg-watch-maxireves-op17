@@ -22,29 +22,22 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     defaults:
       run:
         working-directory: cloudflare-worker
-
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
       - name: Install dependencies
         run: npm install
-
       - name: TypeScript check
         run: npm run typecheck
-
       - name: Unit tests
         run: npm test
-
       - name: Wrangler dry run
         run: npx wrangler deploy --dry-run
 
@@ -55,23 +48,18 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     defaults:
       run:
         working-directory: cloudflare-worker
-
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
       - name: Install dependencies
         run: npm install
-
       - name: Generate KV-aware deployment config
         run: npm run generate-deploy-config
         env:
@@ -81,9 +69,8 @@ jobs:
           DEPLOY_MONITORING_ENABLED: "false"
           DEPLOY_WRITE_STATE: "false"
           DEPLOY_DISCORD_MODE: dry-run
-
       - name: Deploy safe preview
-        run: npx wrangler deploy
+        run: npx wrangler deploy --config wrangler.generated.json
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -95,30 +82,24 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     defaults:
       run:
         working-directory: cloudflare-worker
-
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
       - name: Install dependencies
         run: npm install
-
       - name: Seed silent baseline in Cloudflare KV
         run: npm run seed-baseline
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-
       - name: Upload baseline report
         uses: actions/upload-artifact@v4
         with:
@@ -134,30 +115,24 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     defaults:
       run:
         working-directory: cloudflare-worker
-
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
       - name: Install dependencies
         run: npm install
-
       - name: Simulate a real KV return in stock
         run: npm run simulate-change
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-
       - name: Upload simulation report
         uses: actions/upload-artifact@v4
         with:
@@ -166,43 +141,49 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  test-discord-live:
+  deploy-live:
     if: >-
       github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[test-discord-live]')
+      contains(github.event.head_commit.message, '[deploy-live]')
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: cloudflare-worker
-
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-
       - name: Install dependencies
         run: npm install
-
-      - name: Send exactly one Discord test alert
-        run: npm run simulate-change
+      - name: Ensure all silent baselines exist
+        run: npm run seed-baseline
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-          DISCORD_MODE: live
+      - name: Generate live deployment config
+        run: npm run generate-deploy-config
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+          DEPLOY_MONITORING_ENABLED: "true"
+          DEPLOY_WRITE_STATE: "true"
+          DEPLOY_DISCORD_MODE: live
+          DEPLOY_CRON: "* * * * *"
+      - name: Install Discord secret in Cloudflare
+        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-
-      - name: Upload live Discord test report
-        uses: actions/upload-artifact@v4
-        with:
-          name: tcg-live-discord-test-report
-          path: cloudflare-worker/change-simulation-report.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Deploy live monitoring
+        run: npx wrangler deploy --config wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
