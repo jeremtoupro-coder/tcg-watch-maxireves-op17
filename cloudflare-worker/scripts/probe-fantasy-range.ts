@@ -29,7 +29,7 @@ const rangeResponse = await fetch(url, {
   headers: {
     "User-Agent": "TCGWatcherAudit/0.1 (+personal read-only range probe)",
     "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.5",
-    "Range": "bytes=-1000000"
+    "Range": "bytes=-3000000"
   }
 });
 
