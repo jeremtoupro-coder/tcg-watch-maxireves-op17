@@ -1,43 +1,14 @@
-name: Final Corrected Source Audit
+name: Fantasy Sphere Probe Archive
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/fantasy-source-probe.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  audit:
+  archived:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run corrected source audit once
-        run: npm run live-audit
-
-      - name: Upload final audit report
-        uses: actions/upload-artifact@v4
-        with:
-          name: tcg-final-corrected-audit
-          path: cloudflare-worker/audit-report.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Archived audit notice
+        run: echo "Fantasy Sphere probes are complete. See cloudflare-worker/docs/audit-2026-06-27.md."
