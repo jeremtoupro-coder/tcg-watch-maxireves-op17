@@ -22,6 +22,8 @@ Il effectue uniquement des requêtes HTTP GET publiques lorsqu'un audit est lanc
 - Oupi ;
 - Fantasy Sphere.
 
+L'audit mesuré est disponible dans `docs/audit-2026-06-27.md`.
+
 ## Références reconnues
 
 - Illustration Box Vol.7 / IB-07 / IB07 ;
@@ -51,21 +53,28 @@ Chaque résultat indique notamment :
 - produits ciblés détectés ;
 - prix, disponibilité et langue estimés.
 
-## Test local prévu
+## Validation
 
-```bash
-cd cloudflare-worker
+Les contrôles suivants réussissent dans GitHub Actions :
+
+```text
 npm install
 npm run typecheck
 npm test
-npm run dev
+npx wrangler deploy --dry-run
 ```
 
-Ces commandes ne déploient rien sur Cloudflare. Le déploiement et le cron resteront désactivés jusqu'à validation explicite de l'audit.
+Aucune de ces commandes ne déploie le Worker.
 
-## Limites actuelles
+## Architecture retenue après audit
 
-- Le parsing HTML est volontairement générique : chaque connecteur devra être renforcé après observation des résultats réels.
-- Oupi utilise pour l'instant une catégorie volumineuse ; une source plus légère est recherchée.
-- Fantasy Sphere peut posséder des fiches publiques absentes de sa catégorie ; la découverte de ces fiches reste à sécuriser.
-- Aucun état ni anti-doublon n'est encore implémenté.
+- Maxi Rêves, Ludotrotter et Oupi : connecteurs Cloudflare directs.
+- Fantasy Sphere : catégorie visible contrôlée par Cloudflare, découverte exhaustive du sitemap assurée à fréquence plus lente par GitHub Actions.
+- Le watcher historique Maxi Rêves sur `main` reste la solution de secours.
+
+## Prochaine phase
+
+- ajouter l'état et l'anti-doublon ;
+- préparer les messages Discord sans envoyer de vraie alerte ;
+- déployer ensuite une prévisualisation Cloudflare manuelle sans cron ;
+- mesurer le CPU de chaque connecteur avant toute fréquence d'une minute.
