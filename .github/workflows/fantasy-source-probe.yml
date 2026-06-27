@@ -1,14 +1,43 @@
-name: Fantasy Sphere Probe Archive
+name: One-shot Alert Evaluation
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/fantasy-source-probe.yml"
 
 permissions:
   contents: read
 
 jobs:
-  archived:
+  evaluate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+
     steps:
-      - name: Archived audit notice
-        run: echo "Fantasy Sphere probes are complete. See cloudflare-worker/docs/audit-2026-06-27.md."
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run live evaluation in dry-run mode
+        run: npm run live-audit
+
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcg-alert-evaluation
+          path: cloudflare-worker/audit-report.json
+          if-no-files-found: error
+          retention-days: 7
