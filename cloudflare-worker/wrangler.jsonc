@@ -5,12 +5,15 @@
   "compatibility_date": "2026-06-27",
   "workers_dev": true,
   "vars": {
-    "AUDIT_MODE": "true"
+    "AUDIT_MODE": "true",
+    "WRITE_STATE": "false",
+    "DISCORD_MODE": "dry-run"
   }
 
   // Sécurité volontaire :
   // - aucun cron
   // - aucun binding KV ou D1
   // - aucun secret Discord
+  // - aucune écriture d'état
   // - aucun déploiement automatique
 }
