@@ -165,3 +165,44 @@ jobs:
           path: cloudflare-worker/change-simulation-report.json
           if-no-files-found: error
           retention-days: 7
+
+  test-discord-live:
+    if: >-
+      github.event_name == 'push' &&
+      contains(github.event.head_commit.message, '[test-discord-live]')
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Send exactly one Discord test alert
+        run: npm run simulate-change
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+          DISCORD_MODE: live
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Upload live Discord test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcg-live-discord-test-report
+          path: cloudflare-worker/change-simulation-report.json
+          if-no-files-found: error
+          retention-days: 7
