@@ -6,11 +6,12 @@ import {
 } from "../src/monitor";
 
 describe("surveillance planifiée", () => {
-  it("utilise les trois boutiques Cloudflare par défaut", () => {
+  it("utilise les quatre boutiques Cloudflare par défaut", () => {
     expect(parseActiveStores()).toEqual([
       "maxireves",
       "ludotrotter",
-      "oupi"
+      "oupi",
+      "fantasy-sphere"
     ]);
   });
 
@@ -22,11 +23,17 @@ describe("surveillance planifiée", () => {
   });
 
   it("répartit une boutique par minute", () => {
-    const stores = ["maxireves", "ludotrotter", "oupi"] as const;
+    const stores = [
+      "maxireves",
+      "ludotrotter",
+      "oupi",
+      "fantasy-sphere"
+    ] as const;
     expect(selectScheduledStore([...stores], 0)).toBe("maxireves");
     expect(selectScheduledStore([...stores], 60_000)).toBe("ludotrotter");
     expect(selectScheduledStore([...stores], 120_000)).toBe("oupi");
-    expect(selectScheduledStore([...stores], 180_000)).toBe("maxireves");
+    expect(selectScheduledStore([...stores], 180_000)).toBe("fantasy-sphere");
+    expect(selectScheduledStore([...stores], 240_000)).toBe("maxireves");
   });
 
   it("ne fait aucune requête lorsque la surveillance est désactivée", async () => {
