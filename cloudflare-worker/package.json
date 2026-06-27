@@ -7,11 +7,7 @@
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "live-audit": "tsx scripts/live-audit.ts",
-    "probe-fantasy": "tsx scripts/probe-fantasy-sphere.ts",
-    "probe-fantasy-sitemap": "tsx scripts/probe-fantasy-sitemap.ts",
-    "probe-fantasy-products": "tsx scripts/probe-fantasy-product-sitemaps.ts",
-    "probe-fantasy-range": "tsx scripts/probe-fantasy-range.ts"
+    "live-audit": "tsx scripts/live-audit.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
