@@ -10,17 +10,27 @@ export interface StateStore {
   readonly writable: boolean;
   get(key: string): Promise<ProductSnapshot | undefined>;
   put(key: string, value: ProductSnapshot): Promise<void>;
+  getMetadata(key: string): Promise<string | undefined>;
+  putMetadata(key: string, value: string): Promise<void>;
 }
 
 export class MemoryStateStore implements StateStore {
   readonly mode = "memory" as const;
   readonly writable: boolean;
   private readonly values = new Map<string, ProductSnapshot>();
+  private readonly metadata = new Map<string, string>();
 
-  constructor(options: { writable?: boolean; seed?: ProductSnapshot[] } = {}) {
+  constructor(options: {
+    writable?: boolean;
+    seed?: ProductSnapshot[];
+    seedMetadata?: Record<string, string>;
+  } = {}) {
     this.writable = options.writable ?? true;
     for (const snapshot of options.seed ?? []) {
       this.values.set(snapshot.key, snapshot);
+    }
+    for (const [key, value] of Object.entries(options.seedMetadata ?? {})) {
+      this.metadata.set(key, value);
     }
   }
 
@@ -31,6 +41,15 @@ export class MemoryStateStore implements StateStore {
   async put(key: string, value: ProductSnapshot): Promise<void> {
     if (!this.writable) return;
     this.values.set(key, value);
+  }
+
+  async getMetadata(key: string): Promise<string | undefined> {
+    return this.metadata.get(key);
+  }
+
+  async putMetadata(key: string, value: string): Promise<void> {
+    if (!this.writable) return;
+    this.metadata.set(key, value);
   }
 }
 
@@ -51,12 +70,24 @@ export class KvStateStore implements StateStore {
     if (!this.writable) return;
     await this.namespace.put(key, JSON.stringify(value));
   }
+
+  async getMetadata(key: string): Promise<string | undefined> {
+    return (await this.namespace.get(`metadata:${key}`)) ?? undefined;
+  }
+
+  async putMetadata(key: string, value: string): Promise<void> {
+    if (!this.writable) return;
+    await this.namespace.put(`metadata:${key}`, value);
+  }
 }
 
 export function createStateStore(env: Env): StateStore {
   const writable = env.WRITE_STATE === "true";
   if (env.TCG_STATE) return new KvStateStore(env.TCG_STATE, writable);
-  return new MemoryStateStore({ writable });
+
+  // Sans KV, la mémoire disparaît après la requête : on interdit donc de
+  // présenter ces écritures comme une persistance réelle.
+  return new MemoryStateStore({ writable: false });
 }
 
 function fnv1a(value: string): string {
@@ -136,7 +167,8 @@ function sameStringArray(left: string[], right: string[]): boolean {
 export function detectProductChanges(
   candidate: ProductCandidate,
   previous: ProductSnapshot | undefined,
-  now = new Date().toISOString()
+  now = new Date().toISOString(),
+  initialDiscovery = true
 ): { current: ProductSnapshot; changes: ProductChange[] } {
   const current = toSnapshot(candidate, previous, now);
   const changes: ProductChange[] = [];
@@ -154,7 +186,7 @@ export function detectProductChanges(
   };
 
   if (!previous) {
-    addChange("new_listing", true);
+    addChange("new_listing", initialDiscovery);
     return { current, changes };
   }
 
@@ -200,7 +232,11 @@ export function detectProductChanges(
 export async function processCandidates(
   candidates: ProductCandidate[],
   store: StateStore,
-  options: { writeState: boolean; now?: string }
+  options: {
+    writeState: boolean;
+    now?: string;
+    initialBaseline?: boolean;
+  }
 ): Promise<{
   changes: ProductChange[];
   snapshots: ProductSnapshot[];
@@ -216,10 +252,11 @@ export async function processCandidates(
   const snapshots: ProductSnapshot[] = [];
   let stateWrites = 0;
   const now = options.now ?? new Date().toISOString();
+  const initialBaseline = options.initialBaseline ?? true;
 
   for (const [key, candidate] of unique.entries()) {
     const previous = await store.get(key);
-    const result = detectProductChanges(candidate, previous, now);
+    const result = detectProductChanges(candidate, previous, now, initialBaseline);
     changes.push(...result.changes);
     snapshots.push(result.current);
 
