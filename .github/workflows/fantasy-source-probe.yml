@@ -31,13 +31,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Probe sitemap HEAD and final byte range
+      - name: Probe sitemap HEAD and final 3 MB range
         run: npm run probe-fantasy-range
 
       - name: Upload range report
         uses: actions/upload-artifact@v4
         with:
-          name: fantasy-range-probe
+          name: fantasy-range-probe-3mb
           path: cloudflare-worker/fantasy-range-probe.json
           if-no-files-found: error
           retention-days: 7
