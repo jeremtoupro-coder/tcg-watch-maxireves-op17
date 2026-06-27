@@ -4,6 +4,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-06-27",
   "workers_dev": true,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
   "vars": {
     "AUDIT_MODE": "true",
     "ALLOW_PUBLIC_AUDIT": "false",
