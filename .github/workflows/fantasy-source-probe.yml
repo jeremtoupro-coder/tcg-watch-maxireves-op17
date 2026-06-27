@@ -31,13 +31,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Probe public sources once
-        run: npm run probe-fantasy
+      - name: Read sitemap index once
+        run: npm run probe-fantasy-sitemap
 
-      - name: Upload probe report
+      - name: Upload sitemap report
         uses: actions/upload-artifact@v4
         with:
-          name: fantasy-source-probe
-          path: cloudflare-worker/fantasy-source-probe.json
+          name: fantasy-sitemap-probe
+          path: cloudflare-worker/fantasy-sitemap-probe.json
           if-no-files-found: error
           retention-days: 7
