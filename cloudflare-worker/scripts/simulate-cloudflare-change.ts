@@ -21,9 +21,15 @@ interface KvKey {
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 const namespaceTitle = process.env.CLOUDFLARE_KV_NAMESPACE ?? "tcg-watch-state";
+const discordMode = process.env.DISCORD_MODE === "live" ? "live" : "dry-run";
+const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
 if (!accountId || !apiToken) {
   throw new Error("CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN sont obligatoires.");
+}
+
+if (discordMode === "live" && !discordWebhookUrl) {
+  throw new Error("DISCORD_WEBHOOK_URL est obligatoire pour le test Discord réel.");
 }
 
 async function cloudflareFetch(path: string): Promise<Response> {
@@ -80,7 +86,7 @@ if (!previous) {
 const simulatedCandidate: ProductCandidate = {
   store: previous.store,
   storeName: previous.storeName,
-  title: previous.title,
+  title: `[TEST] ${previous.title}`,
   url: previous.url,
   sourceUrl: previous.url,
   matchedReferences: previous.matchedReferences,
@@ -101,7 +107,8 @@ const stateStore = new MemoryStateStore({
 const evaluation = await evaluateCandidates([simulatedCandidate], {
   AUDIT_MODE: "true",
   WRITE_STATE: "false",
-  DISCORD_MODE: "dry-run"
+  DISCORD_MODE: discordMode,
+  DISCORD_WEBHOOK_URL: discordWebhookUrl
 }, {
   stateStore,
   baselineStores: ["oupi"],
@@ -113,12 +120,22 @@ if (!hasBackInStock) throw new Error("Le retour en stock simulé n'a pas été d
 if (evaluation.alertMatches.length !== 1) {
   throw new Error(`Une alerte était attendue, résultat: ${evaluation.alertMatches.length}.`);
 }
-if (evaluation.discordPayloads.length !== 1 || evaluation.discordDispatch.sent !== 0) {
-  throw new Error("Le test Discord dry-run n'a pas respecté les garanties attendues.");
+
+const expectedSent = discordMode === "live" ? 1 : 0;
+if (
+  evaluation.discordPayloads.length !== 1 ||
+  evaluation.discordDispatch.sent !== expectedSent ||
+  evaluation.discordDispatch.errors.length > 0
+) {
+  throw new Error(
+    `Le test Discord ${discordMode} a échoué: ${JSON.stringify(evaluation.discordDispatch)}`
+  );
 }
 
 const report = {
-  mode: "READ_ONLY_REAL_KV_SIMULATION",
+  mode: discordMode === "live"
+    ? "ONE_SHOT_LIVE_DISCORD_SIMULATION"
+    : "READ_ONLY_REAL_KV_SIMULATION",
   checkedAt: new Date().toISOString(),
   sourceSnapshot: {
     key: previous.key,
