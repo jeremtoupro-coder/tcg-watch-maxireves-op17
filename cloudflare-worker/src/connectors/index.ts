@@ -14,7 +14,8 @@ export const CONNECTORS: ConnectorDefinition[] = [
 export const DEFAULT_CLOUDFLARE_STORES: StoreKey[] = [
   "maxireves",
   "ludotrotter",
-  "oupi"
+  "oupi",
+  "fantasy-sphere"
 ];
 
 export function selectConnectors(storeKeys: StoreKey[]): ConnectorDefinition[] {
