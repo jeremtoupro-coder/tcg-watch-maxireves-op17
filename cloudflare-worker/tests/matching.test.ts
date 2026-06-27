@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeHtml,
   detectAvailability,
   detectLanguage,
   extractPrice,
@@ -18,9 +19,19 @@ describe("matchReferences", () => {
   });
 });
 
+describe("decodeHtml", () => {
+  it("décode les entités numériques hexadécimales", () => {
+    expect(decodeHtml("&#x41;&#65;")).toBe("AA");
+  });
+});
+
 describe("detectLanguage", () => {
   it("confirme le français", () => {
     expect(detectLanguage("Display OP17 FR - version française")).toBe("Français confirmé");
+  });
+
+  it("reconnaît French dans un titre anglais", () => {
+    expect(detectLanguage("OP-17 Booster Box (French)")).toBe("Français confirmé");
   });
 
   it("détecte l'anglais", () => {
@@ -53,5 +64,13 @@ describe("extractPrice", () => {
 
   it("extrait un prix avec euro devant", () => {
     expect(extractPrice("€7.42 Price")).toBe("€7.42");
+  });
+
+  it("conserve un séparateur de milliers international", () => {
+    expect(extractPrice("€1,437.12 Price")).toBe("€1,437.12");
+  });
+
+  it("conserve un séparateur de milliers français", () => {
+    expect(extractPrice("Prix 1 437,12 € TTC")).toBe("1 437,12 €");
   });
 });
