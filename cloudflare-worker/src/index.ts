@@ -123,7 +123,9 @@ export default {
     }
 
     const candidates = stores.flatMap((store) => store.candidates);
-    const evaluation = await evaluateCandidates(candidates, env);
+    const evaluation = await evaluateCandidates(candidates, env, {
+      baselineStores: selected.map((connector) => connector.key)
+    });
 
     return jsonResponse({
       mode: "ALERT_EVALUATION",
