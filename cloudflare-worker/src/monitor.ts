@@ -5,7 +5,16 @@ import {
   selectConnectors
 } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import type { Env, StoreKey } from "./types";
+import type { ConnectorDefinition, Env, StoreKey } from "./types";
+
+const FANTASY_BATCH_SIZE = 2;
+
+export interface MonitoringTask {
+  store: StoreKey;
+  connector: ConnectorDefinition;
+  batchIndex: number;
+  batchCount: number;
+}
 
 export function parseActiveStores(rawValue?: string): StoreKey[] {
   if (!rawValue?.trim()) return [...DEFAULT_CLOUDFLARE_STORES];
@@ -27,6 +36,42 @@ export function selectScheduledStore(
   return stores[minute % stores.length];
 }
 
+export function buildMonitoringTasks(stores: StoreKey[]): MonitoringTask[] {
+  const tasks: MonitoringTask[] = [];
+
+  for (const connector of selectConnectors(stores)) {
+    const batchSize = connector.key === "fantasy-sphere"
+      ? FANTASY_BATCH_SIZE
+      : Math.max(1, connector.sources.length);
+    const batchCount = Math.ceil(connector.sources.length / batchSize);
+
+    for (let batchIndex = 0; batchIndex < batchCount; batchIndex += 1) {
+      const sources = connector.sources.slice(
+        batchIndex * batchSize,
+        (batchIndex + 1) * batchSize
+      );
+
+      tasks.push({
+        store: connector.key,
+        connector: { ...connector, sources },
+        batchIndex,
+        batchCount
+      });
+    }
+  }
+
+  return tasks;
+}
+
+export function selectScheduledTask(
+  tasks: MonitoringTask[],
+  scheduledTime: number
+): MonitoringTask | undefined {
+  if (tasks.length === 0) return undefined;
+  const minute = Math.floor(scheduledTime / 60_000);
+  return tasks[minute % tasks.length];
+}
+
 export async function runMonitoringCycle(
   env: Env,
   options: {
@@ -36,6 +81,8 @@ export async function runMonitoringCycle(
 ): Promise<{
   status: "disabled" | "completed";
   store?: StoreKey;
+  batchIndex?: number;
+  batchCount?: number;
   reason?: string;
   audit?: Awaited<ReturnType<typeof auditConnector>>;
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
@@ -55,37 +102,36 @@ export async function runMonitoringCycle(
     throw new Error("WRITE_STATE doit être activé pour une surveillance persistante.");
   }
 
-  const activeStores = parseActiveStores(env.ACTIVE_STORES);
-  const store = options.forceStore ?? selectScheduledStore(
-    activeStores,
-    options.scheduledTime ?? Date.now()
-  );
+  const activeStores = options.forceStore
+    ? [options.forceStore]
+    : parseActiveStores(env.ACTIVE_STORES);
+  const tasks = buildMonitoringTasks(activeStores);
+  const task = selectScheduledTask(tasks, options.scheduledTime ?? Date.now());
 
-  if (!store) {
+  if (!task) {
     return {
       status: "disabled",
       reason: "Aucune boutique active."
     };
   }
 
-  const connector = selectConnectors([store])[0];
-  if (!connector) throw new Error(`Connecteur introuvable pour ${store}.`);
-
-  const audit = await auditConnector(connector);
+  const audit = await auditConnector(task.connector);
   const failedSources = audit.sources.filter((source) => source.error);
   if (failedSources.length > 0) {
     throw new Error(
-      `${connector.name}: ${failedSources.map((source) => source.error).join(", ")}`
+      `${task.connector.name}: ${failedSources.map((source) => source.error).join(", ")}`
     );
   }
 
   const evaluation = await evaluateCandidates(audit.candidates, env, {
-    baselineStores: [store]
+    baselineStores: [task.store]
   });
 
   return {
     status: "completed",
-    store,
+    store: task.store,
+    batchIndex: task.batchIndex,
+    batchCount: task.batchCount,
     audit,
     evaluation
   };
