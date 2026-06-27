@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "live-audit": "tsx scripts/live-audit.ts",
-    "probe-fantasy": "tsx scripts/probe-fantasy-sphere.ts"
+    "probe-fantasy": "tsx scripts/probe-fantasy-sphere.ts",
+    "probe-fantasy-sitemap": "tsx scripts/probe-fantasy-sitemap.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
