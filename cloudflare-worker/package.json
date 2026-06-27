@@ -9,7 +9,8 @@
     "test": "vitest run",
     "live-audit": "tsx scripts/live-audit.ts",
     "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts",
-    "generate-deploy-config": "tsx scripts/generate-deploy-config.ts"
+    "generate-deploy-config": "tsx scripts/generate-deploy-config.ts",
+    "simulate-change": "tsx scripts/simulate-cloudflare-change.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
