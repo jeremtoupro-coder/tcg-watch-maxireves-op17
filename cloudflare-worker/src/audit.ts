@@ -1,4 +1,4 @@
-import { detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
+import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
 import type {
   ConnectorDefinition,
   ProductCandidate,
@@ -31,8 +31,22 @@ function nearestHeading(htmlBeforeAnchor: string): string {
   return headings.length ? stripHtml(headings[headings.length - 1][1]) : "";
 }
 
+function extractAttribute(tag: string, name: string): string {
+  const pattern = new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i");
+  const match = tag.match(pattern);
+  return match ? stripHtml(match[2]) : "";
+}
+
 function productUrlMatches(url: string, connector: ConnectorDefinition): boolean {
   return connector.productUrlPatterns.some((pattern) => pattern.test(url));
+}
+
+function candidateScore(candidate: ProductCandidate): number {
+  let score = Math.min(candidate.title.length, 200);
+  if (candidate.priceText) score += 200;
+  if (candidate.language !== "Langue non précisée") score += 400;
+  if (candidate.availability !== "unknown") score += 800;
+  return score;
 }
 
 function extractCandidates(
@@ -41,13 +55,12 @@ function extractCandidates(
   connector: ConnectorDefinition
 ): { candidates: ProductCandidate[]; productLinksSeen: number } {
   const anchorPattern = /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
-  const candidates: ProductCandidate[] = [];
-  const seen = new Set<string>();
-  let productLinksSeen = 0;
+  const candidatesByUrl = new Map<string, ProductCandidate>();
+  const productUrlsSeen = new Set<string>();
 
   for (const match of html.matchAll(anchorPattern)) {
-    const rawHref = match[2]?.trim();
-    if (!rawHref) continue;
+    const rawHref = decodeHtml(match[2] ?? "").trim();
+    if (!rawHref || /^(?:#|javascript:|mailto:|tel:)/i.test(rawHref)) continue;
 
     let absoluteUrl: string;
     try {
@@ -56,31 +69,36 @@ function extractCandidates(
       continue;
     }
 
+    if (!productUrlMatches(absoluteUrl, connector)) continue;
+    productUrlsSeen.add(absoluteUrl);
+
+    const fullAnchor = match[0] ?? "";
+    const openingTag = fullAnchor.match(/^<a\b[^>]*>/i)?.[0] ?? "";
     const rawAnchorText = match[3] ?? "";
     const anchorText = stripHtml(rawAnchorText);
-    const directReferences = matchReferences(`${anchorText} ${absoluteUrl}`);
-    const isProductUrl = productUrlMatches(absoluteUrl, connector);
+    const titleAttribute = extractAttribute(openingTag, "title");
+    const ariaLabel = extractAttribute(openingTag, "aria-label");
+    const imageAlt = extractAttribute(rawAnchorText.match(/<img\b[^>]*>/i)?.[0] ?? "", "alt");
 
-    if (isProductUrl) productLinksSeen += 1;
-    if (!isProductUrl && directReferences.length === 0) continue;
+    const metadataParts = [anchorText, titleAttribute, ariaLabel, imageAlt]
+      .filter((value) => usefulAnchorText(value));
+    const metadata = metadataParts.join(" ");
 
     const anchorIndex = match.index ?? 0;
-    const before = html.slice(Math.max(0, anchorIndex - 1_400), anchorIndex);
-    const after = html.slice(anchorIndex, Math.min(html.length, anchorIndex + match[0].length + 1_200));
+    const before = html.slice(Math.max(0, anchorIndex - 2_000), anchorIndex);
+    const after = html.slice(anchorIndex, Math.min(html.length, anchorIndex + fullAnchor.length + 1_800));
     const heading = nearestHeading(before);
-    const title = usefulAnchorText(rawAnchorText) ? anchorText : heading;
-    const context = stripHtml(`${before.slice(-900)} ${after}`);
-    const searchableText = `${title} ${absoluteUrl} ${context}`;
-    const matchedReferences = matchReferences(searchableText);
+    const title = metadataParts.sort((a, b) => b.length - a.length)[0] || heading;
 
-    if (matchedReferences.length === 0) continue;
-    if (!title || title.length < 3) continue;
+    let matchedReferences = matchReferences(`${metadata} ${absoluteUrl}`);
+    if (matchedReferences.length === 0 && !metadata) {
+      matchedReferences = matchReferences(`${heading} ${absoluteUrl}`);
+    }
 
-    const dedupeKey = `${absoluteUrl}|${title.toLowerCase()}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
+    if (matchedReferences.length === 0 || !title || title.length < 3) continue;
 
-    candidates.push({
+    const context = stripHtml(`${before.slice(-1_500)} ${after}`);
+    const candidate: ProductCandidate = {
       store: connector.key,
       storeName: connector.name,
       title,
@@ -91,10 +109,18 @@ function extractCandidates(
       language: detectLanguage(`${title} ${context}`),
       priceText: extractPrice(context),
       excerpt: context.slice(0, 500)
-    });
+    };
+
+    const existing = candidatesByUrl.get(absoluteUrl);
+    if (!existing || candidateScore(candidate) > candidateScore(existing)) {
+      candidatesByUrl.set(absoluteUrl, candidate);
+    }
   }
 
-  return { candidates, productLinksSeen };
+  return {
+    candidates: [...candidatesByUrl.values()],
+    productLinksSeen: productUrlsSeen.size
+  };
 }
 
 async function fetchSource(
@@ -168,7 +194,10 @@ export async function auditConnector(connector: ConnectorDefinition): Promise<St
   const uniqueCandidates = new Map<string, ProductCandidate>();
   for (const source of sources) {
     for (const candidate of source.candidates) {
-      uniqueCandidates.set(`${candidate.url}|${candidate.title}`, candidate);
+      const existing = uniqueCandidates.get(candidate.url);
+      if (!existing || candidateScore(candidate) > candidateScore(existing)) {
+        uniqueCandidates.set(candidate.url, candidate);
+      }
     }
   }
 
