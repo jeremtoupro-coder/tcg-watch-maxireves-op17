@@ -31,14 +31,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Probe product sitemaps until OP17 is found
-        run: npm run probe-fantasy-products
+      - name: Probe sitemap HEAD and final byte range
+        run: npm run probe-fantasy-range
 
-      - name: Upload product sitemap report
-        if: always()
+      - name: Upload range report
         uses: actions/upload-artifact@v4
         with:
-          name: fantasy-product-sitemaps-probe
-          path: cloudflare-worker/fantasy-product-sitemaps-probe.json
+          name: fantasy-range-probe
+          path: cloudflare-worker/fantasy-range-probe.json
           if-no-files-found: error
           retention-days: 7
