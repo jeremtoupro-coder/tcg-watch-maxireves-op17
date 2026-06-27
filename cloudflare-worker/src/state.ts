@@ -2,11 +2,12 @@ import type {
   Env,
   ProductCandidate,
   ProductChange,
-  ProductSnapshot
+  ProductSnapshot,
+  StoreKey
 } from "./types";
 
 export interface StateStore {
-  readonly mode: "memory" | "kv";
+  readonly mode: "memory" | "kv" | "cloudflare-api";
   readonly writable: boolean;
   get(key: string): Promise<ProductSnapshot | undefined>;
   put(key: string, value: ProductSnapshot): Promise<void>;
@@ -85,8 +86,6 @@ export function createStateStore(env: Env): StateStore {
   const writable = env.WRITE_STATE === "true";
   if (env.TCG_STATE) return new KvStateStore(env.TCG_STATE, writable);
 
-  // Sans KV, la mémoire disparaît après la requête : on interdit donc de
-  // présenter ces écritures comme une persistance réelle.
   return new MemoryStateStore({ writable: false });
 }
 
@@ -235,7 +234,7 @@ export async function processCandidates(
   options: {
     writeState: boolean;
     now?: string;
-    initialBaseline?: boolean;
+    initialBaselineByStore?: Partial<Record<StoreKey, boolean>>;
   }
 ): Promise<{
   changes: ProductChange[];
@@ -252,11 +251,11 @@ export async function processCandidates(
   const snapshots: ProductSnapshot[] = [];
   let stateWrites = 0;
   const now = options.now ?? new Date().toISOString();
-  const initialBaseline = options.initialBaseline ?? true;
 
   for (const [key, candidate] of unique.entries()) {
     const previous = await store.get(key);
-    const result = detectProductChanges(candidate, previous, now, initialBaseline);
+    const initialDiscovery = options.initialBaselineByStore?.[candidate.store] ?? true;
+    const result = detectProductChanges(candidate, previous, now, initialDiscovery);
     changes.push(...result.changes);
     snapshots.push(result.current);
 
