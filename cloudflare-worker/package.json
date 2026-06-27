@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "live-audit": "tsx scripts/live-audit.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
+    "tsx": "latest",
     "typescript": "latest",
     "vitest": "latest",
     "wrangler": "latest"
