@@ -10,6 +10,7 @@ const REFERENCE_PATTERNS: Array<[string, RegExp]> = [
 const FRENCH_PATTERNS = [
   /\bfrançais\b/i,
   /\bfrancais\b/i,
+  /\bfrench\b/i,
   /\bversion\s+fran[çc]aise\b/i,
   /\bédition\s+fran[çc]aise\b/i,
   /\bcartes?\s+en\s+fran[çc]ais\b/i,
@@ -74,8 +75,21 @@ const AVAILABLE_PATTERNS = [
   /\b\d+\s+en\s+stock\b/i
 ];
 
+function decodeCodePoint(match: string, rawCode: string, radix: number): string {
+  const codePoint = Number.parseInt(rawCode, radix);
+  if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
+
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return match;
+  }
+}
+
 export function decodeHtml(value: string): string {
   return value
+    .replace(/&#x([0-9a-f]+);/gi, (match, code) => decodeCodePoint(match, code, 16))
+    .replace(/&#(\d+);/g, (match, code) => decodeCodePoint(match, code, 10))
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
@@ -85,7 +99,12 @@ export function decodeHtml(value: string): string {
 }
 
 export function stripHtml(value: string): string {
-  return decodeHtml(value.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " "))
+  return decodeHtml(
+    value
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+  )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -110,9 +129,13 @@ export function detectAvailability(value: string): Availability {
 }
 
 export function extractPrice(value: string): string | undefined {
-  const euroAfter = value.match(/\b\d{1,4}(?:[ .]\d{3})*(?:[,.]\d{2})?\s*€/);
-  if (euroAfter) return euroAfter[0].replace(/\s+/g, " ").trim();
+  const euroBefore = value.match(
+    /€\s*(?:\d{1,3}(?:[ .,\u00a0]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?)(?![\d.,])/i
+  );
+  if (euroBefore) return euroBefore[0].replace(/\s+/g, " ").trim();
 
-  const euroBefore = value.match(/€\s*\d{1,4}(?:[ .]\d{3})*(?:[,.]\d{2})?/);
-  return euroBefore?.[0].replace(/\s+/g, " ").trim();
+  const euroAfter = value.match(
+    /(?<![\d.,])(?:\d{1,3}(?:[ .,\u00a0]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?)\s*€/i
+  );
+  return euroAfter?.[0].replace(/\s+/g, " ").trim();
 }
