@@ -77,3 +77,42 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  seed-baseline:
+    if: >-
+      github.event_name == 'push' &&
+      contains(github.event.head_commit.message, '[seed-baseline]')
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Seed silent baseline in Cloudflare KV
+        run: npm run seed-baseline
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+
+      - name: Upload baseline report
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcg-kv-baseline-report
+          path: cloudflare-worker/baseline-report.json
+          if-no-files-found: error
+          retention-days: 7
