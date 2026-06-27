@@ -6,7 +6,7 @@ export const oupi: ConnectorDefinition = {
   sources: [
     "https://oupi.eu/en/382-one-piece"
   ],
-  productUrlPatterns: [/\/\d+-[^/?#]+/i],
+  productUrlPatterns: [/\/\d+-[^/?#]+\.html(?:[?#].*)?$/i],
   notes: [
     "PrestaShop très probable d'après les routes et la structure publique.",
     "La catégorie expose prix et ajout au panier sans JavaScript.",
