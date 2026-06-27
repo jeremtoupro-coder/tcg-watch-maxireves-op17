@@ -1,47 +1,14 @@
-name: One-shot Discord Live Test
+name: Discord Live Test Archive
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/discord-live-once.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  send-one-test:
+  archived:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: TypeScript check
-        run: npm run typecheck
-
-      - name: Unit tests
-        run: npm test
-
-      - name: Send exactly one Discord test alert
-        run: npm run simulate-change
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-          DISCORD_MODE: live
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Archived test notice
+        run: echo "The one-shot Discord live test has completed and cannot send another alert."
