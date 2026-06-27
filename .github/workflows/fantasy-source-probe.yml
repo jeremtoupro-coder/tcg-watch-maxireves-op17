@@ -1,43 +1,14 @@
-name: One-shot Alert Evaluation
+name: Alert Evaluation Archive
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/fantasy-source-probe.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  evaluate:
+  archived:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run live evaluation in dry-run mode
-        run: npm run live-audit
-
-      - name: Upload evaluation report
-        uses: actions/upload-artifact@v4
-        with:
-          name: tcg-alert-evaluation
-          path: cloudflare-worker/audit-report.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Archived evaluation notice
+        run: echo "The one-shot alert evaluation is complete. No automatic source requests are configured here."
