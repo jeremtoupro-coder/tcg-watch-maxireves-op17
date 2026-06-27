@@ -4,6 +4,7 @@ import { fantasySphere } from "../src/connectors/fantasySphere";
 import { ludotrotter } from "../src/connectors/ludotrotter";
 import { maxireves } from "../src/connectors/maxireves";
 import { oupi } from "../src/connectors/oupi";
+import { evaluateCandidates } from "../src/engine";
 
 const connectors = [maxireves, ludotrotter, oupi, fantasySphere];
 const stores = [];
@@ -30,11 +31,25 @@ for (const connector of connectors) {
   }
 }
 
+const candidates = stores.flatMap((store) => store.candidates);
+const evaluation = await evaluateCandidates(candidates, {
+  AUDIT_MODE: "true",
+  WRITE_STATE: "false",
+  DISCORD_MODE: "dry-run"
+});
+
+console.log("\n=== Évaluation des alertes ===");
+console.log(`Candidats uniques : ${evaluation.uniqueCandidates}`);
+console.log(`Événements détectés : ${evaluation.changes.length}`);
+console.log(`Alertes correspondantes : ${evaluation.alertMatches.length}`);
+console.log(`Messages Discord envoyés : ${evaluation.discordDispatch.sent}`);
+
 const report = {
-  mode: "ONE_SHOT_LIVE_AUDIT",
+  mode: "ONE_SHOT_LIVE_EVALUATION",
   checkedAt: new Date().toISOString(),
   requestCount: connectors.reduce((total, connector) => total + connector.sources.length, 0),
-  stores
+  stores,
+  evaluation
 };
 
 await writeFile("audit-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
