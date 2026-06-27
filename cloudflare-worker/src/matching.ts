@@ -1,11 +1,5 @@
+import { getEnabledProducts } from "./config";
 import type { Availability, LanguageStatus } from "./types";
-
-const REFERENCE_PATTERNS: Array<[string, RegExp]> = [
-  ["IB-07", /(?:\billustration\s*box\s*(?:(?:vol(?:ume)?\.?\s*)?)0?7\b|\bib[-\s]?0?7\b)/i],
-  ["IB-08", /(?:\billustration\s*box\s*(?:(?:vol(?:ume)?\.?\s*)?)0?8\b|\bib[-\s]?0?8\b)/i],
-  ["OP17", /\bop[-\s]?17\b/i],
-  ["OP18", /\bop[-\s]?18\b/i]
-];
 
 const FRENCH_PATTERNS = [
   /\bfrançais\b/i,
@@ -109,8 +103,33 @@ export function stripHtml(value: string): string {
     .trim();
 }
 
+export function normalizeForMatching(value: string): string {
+  let decoded = decodeHtml(value);
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    // Une URL partiellement encodée reste exploitable telle quelle.
+  }
+
+  return decoded
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
 export function matchReferences(value: string): string[] {
-  return REFERENCE_PATTERNS.filter(([, pattern]) => pattern.test(value)).map(([name]) => name);
+  const normalizedValue = normalizeForMatching(value);
+
+  return getEnabledProducts()
+    .filter((product) =>
+      product.aliases.some((alias) => {
+        const normalizedAlias = normalizeForMatching(alias);
+        return normalizedAlias.length > 0 && normalizedValue.includes(normalizedAlias);
+      })
+    )
+    .map((product) => product.id);
 }
 
 export function detectLanguage(value: string): LanguageStatus {
