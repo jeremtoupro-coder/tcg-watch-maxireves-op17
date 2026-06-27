@@ -1,8 +1,10 @@
 import { auditConnector } from "./audit";
+import { WATCH_CONFIG } from "./config";
 import { fantasySphere } from "./connectors/fantasySphere";
 import { ludotrotter } from "./connectors/ludotrotter";
 import { maxireves } from "./connectors/maxireves";
 import { oupi } from "./connectors/oupi";
+import { evaluateCandidates } from "./engine";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
 const CONNECTORS: ConnectorDefinition[] = [maxireves, ludotrotter, oupi, fantasySphere];
@@ -17,10 +19,24 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
+function selectConnectors(requestedStore: StoreKey | null): ConnectorDefinition[] {
+  return requestedStore
+    ? CONNECTORS.filter((connector) => connector.key === requestedStore)
+    : CONNECTORS;
+}
+
+async function runAudits(connectors: ConnectorDefinition[]) {
+  const results = [];
+  for (const connector of connectors) {
+    results.push(await auditConnector(connector));
+  }
+  return results;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method !== "GET") {
-      return jsonResponse({ error: "Méthode non autorisée. Audit GET uniquement." }, 405);
+      return jsonResponse({ error: "Méthode non autorisée. GET uniquement." }, 405);
     }
 
     if (env.AUDIT_MODE !== "true") {
@@ -31,29 +47,45 @@ export default {
 
     if (url.pathname === "/") {
       return jsonResponse({
-        project: "TCG Watch — audit Cloudflare en lecture seule",
+        project: "TCG Watch — moteur d'alertes configurable",
         safeMode: {
           cron: false,
-          discord: false,
-          storageWrites: false,
+          discordMode: env.DISCORD_MODE ?? "dry-run",
+          stateBindingPresent: Boolean(env.TCG_STATE),
+          stateWritesEnabled: env.WRITE_STATE === "true",
           automaticPolling: false
         },
+        configuration: {
+          version: WATCH_CONFIG.version,
+          enabledProducts: WATCH_CONFIG.products.filter((product) => product.enabled).length,
+          enabledAlerts: WATCH_CONFIG.alerts.filter((alert) => alert.enabled).length,
+          file: "config/alerts.json"
+        },
         usage: {
-          allStores: "/audit",
-          oneStore: "/audit?store=maxireves",
+          config: "/config",
+          rawAudit: "/audit",
+          evaluatedDryRun: "/evaluate",
+          oneStoreExample: "/evaluate?store=oupi",
           allowedStores: CONNECTORS.map((connector) => connector.key)
         }
       });
     }
 
-    if (url.pathname !== "/audit") {
+    if (url.pathname === "/config") {
+      return jsonResponse({
+        version: WATCH_CONFIG.version,
+        settings: WATCH_CONFIG.settings,
+        products: WATCH_CONFIG.products,
+        alerts: WATCH_CONFIG.alerts
+      });
+    }
+
+    if (url.pathname !== "/audit" && url.pathname !== "/evaluate") {
       return jsonResponse({ error: "Route inconnue." }, 404);
     }
 
     const requestedStore = url.searchParams.get("store") as StoreKey | null;
-    const selected = requestedStore
-      ? CONNECTORS.filter((connector) => connector.key === requestedStore)
-      : CONNECTORS;
+    const selected = selectConnectors(requestedStore);
 
     if (requestedStore && selected.length === 0) {
       return jsonResponse({
@@ -62,15 +94,24 @@ export default {
       }, 400);
     }
 
-    const results = [];
-    for (const connector of selected) {
-      results.push(await auditConnector(connector));
+    const stores = await runAudits(selected);
+
+    if (url.pathname === "/audit") {
+      return jsonResponse({
+        mode: "READ_ONLY_AUDIT",
+        checkedAt: new Date().toISOString(),
+        stores
+      });
     }
 
+    const candidates = stores.flatMap((store) => store.candidates);
+    const evaluation = await evaluateCandidates(candidates, env);
+
     return jsonResponse({
-      mode: "READ_ONLY_AUDIT",
+      mode: "ALERT_EVALUATION",
       checkedAt: new Date().toISOString(),
-      stores: results
+      stores,
+      evaluation
     });
   }
 };
