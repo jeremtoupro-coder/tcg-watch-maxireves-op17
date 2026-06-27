@@ -2,7 +2,7 @@ import { evaluateAlertRules } from "./alerts";
 import { WATCH_CONFIG } from "./config";
 import { buildDiscordPayloads, dispatchDiscordPayloads } from "./discord";
 import { createStateStore, processCandidates, type StateStore } from "./state";
-import type { Env, ProductCandidate, WatchConfig } from "./types";
+import type { Env, ProductCandidate, StoreKey, WatchConfig } from "./types";
 
 export async function evaluateCandidates(
   candidates: ProductCandidate[],
@@ -11,6 +11,7 @@ export async function evaluateCandidates(
     config?: WatchConfig;
     stateStore?: StateStore;
     now?: string;
+    baselineStores?: StoreKey[];
   } = {}
 ): Promise<{
   configVersion: number;
@@ -19,8 +20,10 @@ export async function evaluateCandidates(
     writable: boolean;
     requestedWrite: boolean;
     writes: number;
-    baselineCompleteBefore: boolean;
-    baselineMarkedComplete: boolean;
+    baselines: Record<string, {
+      completeBefore: boolean;
+      markedComplete: boolean;
+    }>;
   };
   uniqueCandidates: number;
   snapshots: Awaited<ReturnType<typeof processCandidates>>["snapshots"];
@@ -32,19 +35,30 @@ export async function evaluateCandidates(
   const config = options.config ?? WATCH_CONFIG;
   const stateStore = options.stateStore ?? createStateStore(env);
   const requestedWrite = env.WRITE_STATE === "true";
-  const baselineKey = `baseline:config-v${config.version}`;
-  const baselineCompleteBefore = (await stateStore.getMetadata(baselineKey)) === "complete";
+  const baselineStores = options.baselineStores ?? [...new Set(candidates.map((candidate) => candidate.store))];
+  const baselines: Record<string, { completeBefore: boolean; markedComplete: boolean }> = {};
+  const initialBaselineByStore: Partial<Record<StoreKey, boolean>> = {};
+
+  for (const store of baselineStores) {
+    const baselineKey = `baseline:config-v${config.version}:${store}`;
+    const completeBefore = (await stateStore.getMetadata(baselineKey)) === "complete";
+    baselines[store] = { completeBefore, markedComplete: false };
+    initialBaselineByStore[store] = !completeBefore;
+  }
 
   const processed = await processCandidates(candidates, stateStore, {
     writeState: requestedWrite,
     now: options.now,
-    initialBaseline: !baselineCompleteBefore
+    initialBaselineByStore
   });
 
-  let baselineMarkedComplete = false;
-  if (requestedWrite && stateStore.writable && !baselineCompleteBefore) {
-    await stateStore.putMetadata(baselineKey, "complete");
-    baselineMarkedComplete = true;
+  if (requestedWrite && stateStore.writable) {
+    for (const store of baselineStores) {
+      if (baselines[store].completeBefore) continue;
+      const baselineKey = `baseline:config-v${config.version}:${store}`;
+      await stateStore.putMetadata(baselineKey, "complete");
+      baselines[store].markedComplete = true;
+    }
   }
 
   const alertMatches = evaluateAlertRules(processed.changes, config);
@@ -58,8 +72,7 @@ export async function evaluateCandidates(
       writable: stateStore.writable,
       requestedWrite,
       writes: processed.stateWrites,
-      baselineCompleteBefore,
-      baselineMarkedComplete
+      baselines
     },
     uniqueCandidates: processed.uniqueCandidates,
     snapshots: processed.snapshots,
