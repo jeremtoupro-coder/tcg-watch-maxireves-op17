@@ -64,10 +64,10 @@ function extractDirectProductCandidate(
 
   if (!title || matchedReferences.length === 0) return undefined;
 
-  const anchorIndex = h1Match?.index ?? 0;
-  const contextStart = Math.max(0, anchorIndex - 1_000);
-  const contextEnd = Math.min(html.length, anchorIndex + 12_000);
-  const context = stripHtml(html.slice(contextStart, contextEnd));
+  const productStart = h1Match?.index ?? titleMatch?.index ?? 0;
+  const productArea = html.slice(productStart, Math.min(html.length, productStart + 7_000));
+  const context = stripHtml(productArea);
+  const availability = detectAvailability(context);
 
   return {
     store: connector.key,
@@ -76,9 +76,9 @@ function extractDirectProductCandidate(
     url: sourceUrl,
     sourceUrl,
     matchedReferences,
-    availability: detectAvailability(context),
+    availability,
     language: detectLanguage(`${title} ${sourceUrl} ${context}`),
-    priceText: extractPrice(context),
+    priceText: availability === "unavailable" ? undefined : extractPrice(context),
     excerpt: context.slice(0, 500)
   };
 }
@@ -110,6 +110,7 @@ function extractCandidates(
     }
 
     if (!productUrlMatches(absoluteUrl, connector)) continue;
+    if (directCandidate && absoluteUrl === directCandidate.url) continue;
     productUrlsSeen.add(absoluteUrl);
 
     const fullAnchor = match[0] ?? "";
