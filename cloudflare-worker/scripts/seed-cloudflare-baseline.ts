@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { auditConnector } from "../src/audit";
+import { fantasySphere } from "../src/connectors/fantasySphere";
 import { ludotrotter } from "../src/connectors/ludotrotter";
 import { maxireves } from "../src/connectors/maxireves";
 import { oupi } from "../src/connectors/oupi";
@@ -112,7 +113,7 @@ class CloudflareApiStateStore implements StateStore {
   }
 }
 
-const connectors = [maxireves, ludotrotter, oupi];
+const connectors = [maxireves, ludotrotter, oupi, fantasySphere];
 const baselineStores = connectors.map((connector) => connector.key) as StoreKey[];
 const namespaceId = await resolveNamespaceId();
 const stateStore = new CloudflareApiStateStore(namespaceId);
@@ -131,7 +132,7 @@ if (incompleteStores.length === 0) {
     stores: baselineStores
   };
   await writeFile("baseline-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log("La base initiale est déjà complète pour les trois boutiques.");
+  console.log("La base initiale est déjà complète pour toutes les boutiques.");
   process.exit(0);
 }
 
