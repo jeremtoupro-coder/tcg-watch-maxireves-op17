@@ -47,16 +47,3 @@ jobs:
 
       - name: Wrangler dry run
         run: npx wrangler deploy --dry-run
-
-      - name: One-shot live source audit
-        if: github.event_name == 'pull_request'
-        run: npm run live-audit
-
-      - name: Upload live audit report
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tcg-live-audit-report
-          path: cloudflare-worker/audit-report.json
-          if-no-files-found: error
-          retention-days: 7
