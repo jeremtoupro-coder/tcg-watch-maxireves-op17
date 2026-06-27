@@ -1,14 +1,36 @@
-name: Discord Live Test Archive
+name: Fantasy Catalogue Diagnostic
 
 on:
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/discord-live-once.yml"
 
 permissions:
   contents: read
 
 jobs:
-  archived:
+  diagnose:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudflare-worker
     steps:
-      - name: Archived test notice
-        run: echo "The one-shot Discord live test has completed and cannot send another alert."
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: npm install
+      - name: Collect catalogue data
+        run: npx tsx scripts/probe-fantasy-sphere.ts
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: fantasy-catalogue-diagnostic
+          path: cloudflare-worker/fantasy-sphere-probe.json
+          retention-days: 1
