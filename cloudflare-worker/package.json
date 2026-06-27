@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "live-audit": "tsx scripts/live-audit.ts"
+    "live-audit": "tsx scripts/live-audit.ts",
+    "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
