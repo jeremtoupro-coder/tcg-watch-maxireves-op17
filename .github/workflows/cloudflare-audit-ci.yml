@@ -49,11 +49,11 @@ jobs:
         run: npx wrangler deploy --dry-run
 
       - name: One-shot live source audit
-        if: contains(github.event.head_commit.message, '[live-audit]')
+        if: github.event_name == 'pull_request'
         run: npm run live-audit
 
       - name: Upload live audit report
-        if: contains(github.event.head_commit.message, '[live-audit]')
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: tcg-live-audit-report
