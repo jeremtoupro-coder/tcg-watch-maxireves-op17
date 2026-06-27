@@ -1,4 +1,4 @@
-name: Fantasy Sphere Source Probe
+name: Final Corrected Source Audit
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -31,13 +31,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Probe sitemap HEAD and final 3 MB range
-        run: npm run probe-fantasy-range
+      - name: Run corrected source audit once
+        run: npm run live-audit
 
-      - name: Upload range report
+      - name: Upload final audit report
         uses: actions/upload-artifact@v4
         with:
-          name: fantasy-range-probe-3mb
-          path: cloudflare-worker/fantasy-range-probe.json
+          name: tcg-final-corrected-audit
+          path: cloudflare-worker/audit-report.json
           if-no-files-found: error
           retention-days: 7
