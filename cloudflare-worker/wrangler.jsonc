@@ -8,7 +8,7 @@
     "AUDIT_MODE": "true",
     "ALLOW_PUBLIC_AUDIT": "false",
     "MONITORING_ENABLED": "false",
-    "ACTIVE_STORES": "maxireves,ludotrotter,oupi",
+    "ACTIVE_STORES": "maxireves,ludotrotter,oupi,fantasy-sphere",
     "WRITE_STATE": "false",
     "DISCORD_MODE": "dry-run"
   }
