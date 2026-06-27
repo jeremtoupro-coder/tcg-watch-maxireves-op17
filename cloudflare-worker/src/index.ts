@@ -2,7 +2,7 @@ import { auditConnector } from "./audit";
 import { WATCH_CONFIG } from "./config";
 import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import { runMonitoringCycle } from "./monitor";
+import { parseActiveStores, runMonitoringCycle } from "./monitor";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -20,6 +20,13 @@ function selectRequestedConnectors(requestedStore: StoreKey | null): ConnectorDe
   return requestedStore
     ? CONNECTORS.filter((connector) => connector.key === requestedStore)
     : CONNECTORS;
+}
+
+function isLive(env: Env): boolean {
+  return env.MONITORING_ENABLED === "true" &&
+    env.WRITE_STATE === "true" &&
+    env.DISCORD_MODE === "live" &&
+    Boolean(env.TCG_STATE);
 }
 
 async function runAudits(connectors: ConnectorDefinition[]) {
@@ -41,19 +48,23 @@ export default {
     }
 
     const url = new URL(request.url);
+    const live = isLive(env);
+    const mode = live ? "LIVE" : "SAFE_PREVIEW";
 
     if (url.pathname === "/") {
       return jsonResponse({
         project: "TCG Watch — moteur d'alertes configurable",
-        deployment: "SAFE_PREVIEW",
-        safeMode: {
-          cron: false,
+        deployment: mode,
+        runtime: {
+          cron: live,
           monitoringEnabled: env.MONITORING_ENABLED === "true",
           discordMode: env.DISCORD_MODE ?? "dry-run",
           stateBindingPresent: Boolean(env.TCG_STATE),
           stateWritesEnabled: env.WRITE_STATE === "true",
           publicStorePollingEnabled: env.ALLOW_PUBLIC_AUDIT === "true",
-          automaticPolling: false
+          automaticPolling: live,
+          activeStores: parseActiveStores(env.ACTIVE_STORES),
+          schedule: live ? "one task per minute" : "disabled"
         },
         configuration: {
           version: WATCH_CONFIG.version,
@@ -73,7 +84,9 @@ export default {
     if (url.pathname === "/health") {
       return jsonResponse({
         status: "ok",
-        mode: "SAFE_PREVIEW",
+        mode,
+        monitoringEnabled: env.MONITORING_ENABLED === "true",
+        stateBindingPresent: Boolean(env.TCG_STATE),
         checkedAt: new Date().toISOString()
       });
     }
@@ -93,9 +106,9 @@ export default {
 
     if (env.ALLOW_PUBLIC_AUDIT !== "true") {
       return jsonResponse({
-        error: "Route désactivée sur la prévisualisation publique.",
-        mode: "SAFE_PREVIEW",
-        hint: "Les audits réels restent exécutés uniquement depuis GitHub Actions."
+        error: "Route publique désactivée.",
+        mode,
+        hint: "Les contrôles automatiques sont exécutés uniquement par le gestionnaire planifié."
       }, 403);
     }
 
