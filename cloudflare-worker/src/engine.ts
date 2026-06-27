@@ -19,6 +19,8 @@ export async function evaluateCandidates(
     writable: boolean;
     requestedWrite: boolean;
     writes: number;
+    baselineCompleteBefore: boolean;
+    baselineMarkedComplete: boolean;
   };
   uniqueCandidates: number;
   snapshots: Awaited<ReturnType<typeof processCandidates>>["snapshots"];
@@ -30,11 +32,20 @@ export async function evaluateCandidates(
   const config = options.config ?? WATCH_CONFIG;
   const stateStore = options.stateStore ?? createStateStore(env);
   const requestedWrite = env.WRITE_STATE === "true";
+  const baselineKey = `baseline:config-v${config.version}`;
+  const baselineCompleteBefore = (await stateStore.getMetadata(baselineKey)) === "complete";
 
   const processed = await processCandidates(candidates, stateStore, {
     writeState: requestedWrite,
-    now: options.now
+    now: options.now,
+    initialBaseline: !baselineCompleteBefore
   });
+
+  let baselineMarkedComplete = false;
+  if (requestedWrite && stateStore.writable && !baselineCompleteBefore) {
+    await stateStore.putMetadata(baselineKey, "complete");
+    baselineMarkedComplete = true;
+  }
 
   const alertMatches = evaluateAlertRules(processed.changes, config);
   const discordPayloads = buildDiscordPayloads(alertMatches);
@@ -46,7 +57,9 @@ export async function evaluateCandidates(
       mode: stateStore.mode,
       writable: stateStore.writable,
       requestedWrite,
-      writes: processed.stateWrites
+      writes: processed.stateWrites,
+      baselineCompleteBefore,
+      baselineMarkedComplete
     },
     uniqueCandidates: processed.uniqueCandidates,
     snapshots: processed.snapshots,
