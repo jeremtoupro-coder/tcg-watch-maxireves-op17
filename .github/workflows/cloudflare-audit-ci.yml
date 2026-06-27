@@ -72,6 +72,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Generate KV-aware deployment config
+        run: npm run generate-deploy-config
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+          DEPLOY_MONITORING_ENABLED: "false"
+          DEPLOY_WRITE_STATE: "false"
+          DEPLOY_DISCORD_MODE: dry-run
+
       - name: Deploy safe preview
         run: npx wrangler deploy
         env:
