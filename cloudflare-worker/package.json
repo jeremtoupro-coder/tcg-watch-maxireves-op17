@@ -10,7 +10,7 @@
     "live-audit": "tsx scripts/live-audit.ts",
     "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts",
     "generate-deploy-config": "tsx scripts/generate-deploy-config.ts",
-    "simulate-change": "tsx scripts/simulate-cloudflare-change.ts"
+    "simulate-change": "tsx scripts/simulate-change-dry-only.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
