@@ -47,7 +47,10 @@ const UNAVAILABLE_PATTERNS = [
   /out\s+of\s+stock/i,
   /sold\s+out/i,
   /produit\s+épuisé/i,
-  /not\s+available/i
+  /not\s+available/i,
+  /not\s+currently\s+sold/i,
+  /currently\s+not\s+sold/i,
+  /n['’]est\s+pas\s+actuellement\s+vendu/i
 ];
 
 const PREORDER_PATTERNS = [
