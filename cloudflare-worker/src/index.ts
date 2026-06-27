@@ -1,13 +1,9 @@
 import { auditConnector } from "./audit";
 import { WATCH_CONFIG } from "./config";
-import { fantasySphere } from "./connectors/fantasySphere";
-import { ludotrotter } from "./connectors/ludotrotter";
-import { maxireves } from "./connectors/maxireves";
-import { oupi } from "./connectors/oupi";
+import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
+import { runMonitoringCycle } from "./monitor";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
-
-const CONNECTORS: ConnectorDefinition[] = [maxireves, ludotrotter, oupi, fantasySphere];
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -20,7 +16,7 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-function selectConnectors(requestedStore: StoreKey | null): ConnectorDefinition[] {
+function selectRequestedConnectors(requestedStore: StoreKey | null): ConnectorDefinition[] {
   return requestedStore
     ? CONNECTORS.filter((connector) => connector.key === requestedStore)
     : CONNECTORS;
@@ -52,6 +48,7 @@ export default {
         deployment: "SAFE_PREVIEW",
         safeMode: {
           cron: false,
+          monitoringEnabled: env.MONITORING_ENABLED === "true",
           discordMode: env.DISCORD_MODE ?? "dry-run",
           stateBindingPresent: Boolean(env.TCG_STATE),
           stateWritesEnabled: env.WRITE_STATE === "true",
@@ -103,7 +100,7 @@ export default {
     }
 
     const requestedStore = url.searchParams.get("store") as StoreKey | null;
-    const selected = selectConnectors(requestedStore);
+    const selected = selectRequestedConnectors(requestedStore);
 
     if (requestedStore && selected.length === 0) {
       return jsonResponse({
@@ -133,5 +130,22 @@ export default {
       stores,
       evaluation
     });
+  },
+
+  async scheduled(
+    controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    ctx.waitUntil(
+      runMonitoringCycle(env, { scheduledTime: controller.scheduledTime })
+        .then((result) => {
+          console.log(JSON.stringify({ event: "tcg-monitor", ...result }));
+        })
+        .catch((error) => {
+          console.error("TCG monitoring failed", error);
+          throw error;
+        })
+    );
   }
 };
