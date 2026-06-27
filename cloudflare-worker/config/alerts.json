@@ -1,4 +1,5 @@
 {
+  "$schema": "./alerts.schema.json",
   "version": 1,
   "settings": {
     "notifyOnInitialDiscovery": false,
