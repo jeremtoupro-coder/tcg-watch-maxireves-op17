@@ -9,6 +9,45 @@ export type LanguageStatus =
   | "Japonais détecté"
   | "Autre langue détectée";
 
+export type AlertEventType =
+  | "new_listing"
+  | "back_in_stock"
+  | "preorder_opened"
+  | "price_drop"
+  | "price_increase"
+  | "became_unavailable"
+  | "details_changed";
+
+export interface ProductDefinition {
+  id: string;
+  label: string;
+  enabled: boolean;
+  aliases: string[];
+}
+
+export interface AlertRule {
+  id: string;
+  label: string;
+  enabled: boolean;
+  productIds: string[];
+  stores: Array<StoreKey | "*">;
+  languages: Array<LanguageStatus | "*">;
+  events: AlertEventType[];
+  availabilities: Array<Availability | "*">;
+  notifyOnInitialDiscovery: boolean;
+  maxPriceCents?: number;
+}
+
+export interface WatchConfig {
+  version: number;
+  settings: {
+    notifyOnInitialDiscovery: boolean;
+    defaultLanguages: LanguageStatus[];
+  };
+  products: ProductDefinition[];
+  alerts: AlertRule[];
+}
+
 export interface ProductCandidate {
   store: StoreKey;
   storeName: string;
@@ -20,6 +59,55 @@ export interface ProductCandidate {
   language: LanguageStatus;
   priceText?: string;
   excerpt: string;
+}
+
+export interface ProductSnapshot {
+  key: string;
+  store: StoreKey;
+  storeName: string;
+  title: string;
+  url: string;
+  matchedReferences: string[];
+  availability: Availability;
+  language: LanguageStatus;
+  priceText?: string;
+  priceCents?: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+export interface ProductChange {
+  id: string;
+  type: AlertEventType;
+  initial: boolean;
+  detectedAt: string;
+  candidate: ProductCandidate;
+  previous?: ProductSnapshot;
+  current: ProductSnapshot;
+}
+
+export interface AlertMatch {
+  rule: AlertRule;
+  change: ProductChange;
+  matchedProductIds: string[];
+}
+
+export interface DiscordEmbedField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+export interface DiscordPayload {
+  username: string;
+  embeds: Array<{
+    title: string;
+    url: string;
+    description: string;
+    fields: DiscordEmbedField[];
+    footer: { text: string };
+    timestamp: string;
+  }>;
 }
 
 export interface SourceAudit {
@@ -55,4 +143,8 @@ export interface ConnectorDefinition {
 
 export interface Env {
   AUDIT_MODE?: string;
+  WRITE_STATE?: string;
+  DISCORD_MODE?: "dry-run" | "live";
+  DISCORD_WEBHOOK_URL?: string;
+  TCG_STATE?: KVNamespace;
 }
