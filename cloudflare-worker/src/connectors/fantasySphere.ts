@@ -4,12 +4,13 @@ export const fantasySphere: ConnectorDefinition = {
   key: "fantasy-sphere",
   name: "Fantasy Sphere",
   sources: [
-    "https://en.fantasysphere.net/jeux-de-cartes-a-collectionner/one-piece-tcg/"
+    "https://en.fantasysphere.net/product/coffret-illustration-box-vol-7-one-piece-cg-ib-07-en-10041399",
+    "https://en.fantasysphere.net/product/coffret-illustration-box-vol-8-one-piece-cg-ib-08-en-10041400",
+    "https://en.fantasysphere.net/product/boite-de-24-boosters-op17-one-piece-cg-op-17-fr-10042440",
+    "https://en.fantasysphere.net/product/boite-de-24-boosters-op18-one-piece-cg-op-18-fr-10045251"
   ],
   productUrlPatterns: [/\/product\//i],
   notes: [
-    "La catégorie publique expose titres, prix et disponibilité sans navigateur lourd.",
-    "Le sitemap produit révèle IB-07, IB-08, OP17 et OP18 même lorsque les fiches sont masquées.",
-    "Le sitemap fait près de 10 Mo : découverte exhaustive via GitHub Actions, contrôles légers via Cloudflare."
+    "Les fiches cibles sont contrôlées directement, même avant leur apparition dans la catégorie publique."
   ]
 };
