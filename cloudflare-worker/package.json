@@ -9,7 +9,8 @@
     "test": "vitest run",
     "live-audit": "tsx scripts/live-audit.ts",
     "probe-fantasy": "tsx scripts/probe-fantasy-sphere.ts",
-    "probe-fantasy-sitemap": "tsx scripts/probe-fantasy-sitemap.ts"
+    "probe-fantasy-sitemap": "tsx scripts/probe-fantasy-sitemap.ts",
+    "probe-fantasy-products": "tsx scripts/probe-fantasy-product-sitemaps.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
