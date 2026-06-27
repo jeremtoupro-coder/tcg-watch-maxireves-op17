@@ -1,4 +1,4 @@
-import { getEnabledAlerts, WATCH_CONFIG } from "./config";
+import { WATCH_CONFIG } from "./config";
 import type { AlertMatch, AlertRule, ProductChange, WatchConfig } from "./types";
 
 function includesWildcard<T extends string>(values: Array<T | "*">, value: T): boolean {
@@ -42,9 +42,10 @@ export function evaluateAlertRules(
 ): AlertMatch[] {
   const matches: AlertMatch[] = [];
   const seen = new Set<string>();
+  const enabledRules = config.alerts.filter((rule) => rule.enabled);
 
   for (const change of changes) {
-    for (const rule of getEnabledAlerts()) {
+    for (const rule of enabledRules) {
       if (!matchesRule(change, rule, config)) continue;
 
       const dedupeKey = `${rule.id}:${change.current.key}:${change.type}`;
