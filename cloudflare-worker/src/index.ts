@@ -14,7 +14,8 @@ function jsonResponse(data: unknown, status = 200): Response {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store"
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff"
     }
   });
 }
@@ -48,11 +49,13 @@ export default {
     if (url.pathname === "/") {
       return jsonResponse({
         project: "TCG Watch — moteur d'alertes configurable",
+        deployment: "SAFE_PREVIEW",
         safeMode: {
           cron: false,
           discordMode: env.DISCORD_MODE ?? "dry-run",
           stateBindingPresent: Boolean(env.TCG_STATE),
           stateWritesEnabled: env.WRITE_STATE === "true",
+          publicStorePollingEnabled: env.ALLOW_PUBLIC_AUDIT === "true",
           automaticPolling: false
         },
         configuration: {
@@ -63,11 +66,18 @@ export default {
         },
         usage: {
           config: "/config",
-          rawAudit: "/audit",
-          evaluatedDryRun: "/evaluate",
-          oneStoreExample: "/evaluate?store=oupi",
+          health: "/health",
+          protectedRoutes: ["/audit", "/evaluate"],
           allowedStores: CONNECTORS.map((connector) => connector.key)
         }
+      });
+    }
+
+    if (url.pathname === "/health") {
+      return jsonResponse({
+        status: "ok",
+        mode: "SAFE_PREVIEW",
+        checkedAt: new Date().toISOString()
       });
     }
 
@@ -82,6 +92,14 @@ export default {
 
     if (url.pathname !== "/audit" && url.pathname !== "/evaluate") {
       return jsonResponse({ error: "Route inconnue." }, 404);
+    }
+
+    if (env.ALLOW_PUBLIC_AUDIT !== "true") {
+      return jsonResponse({
+        error: "Route désactivée sur la prévisualisation publique.",
+        mode: "SAFE_PREVIEW",
+        hint: "Les audits réels restent exécutés uniquement depuis GitHub Actions."
+      }, 403);
     }
 
     const requestedStore = url.searchParams.get("store") as StoreKey | null;
