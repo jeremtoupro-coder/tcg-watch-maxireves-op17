@@ -1,6 +1,6 @@
 import { evaluateAlertRules } from "./alerts";
 import { WATCH_CONFIG } from "./config";
-import { buildDiscordPayloads, dispatchDiscordPayloads } from "./discord";
+import { deliverAlertMatches } from "./delivery";
 import { createStateStore, processCandidates, type StateStore } from "./state";
 import type { Env, ProductCandidate, StoreKey, WatchConfig } from "./types";
 
@@ -12,6 +12,7 @@ export async function evaluateCandidates(
     stateStore?: StateStore;
     now?: string;
     baselineStores?: StoreKey[];
+    claimSettleMs?: number;
   } = {}
 ): Promise<{
   configVersion: number;
@@ -29,8 +30,9 @@ export async function evaluateCandidates(
   snapshots: Awaited<ReturnType<typeof processCandidates>>["snapshots"];
   changes: Awaited<ReturnType<typeof processCandidates>>["changes"];
   alertMatches: ReturnType<typeof evaluateAlertRules>;
-  discordPayloads: ReturnType<typeof buildDiscordPayloads>;
-  discordDispatch: Awaited<ReturnType<typeof dispatchDiscordPayloads>>;
+  discordPayloads: Awaited<ReturnType<typeof deliverAlertMatches>>["payloads"];
+  discordDispatch: Awaited<ReturnType<typeof deliverAlertMatches>>["dispatch"];
+  deliveryDedupe: Awaited<ReturnType<typeof deliverAlertMatches>>["dedupe"];
 }> {
   const config = options.config ?? WATCH_CONFIG;
   const stateStore = options.stateStore ?? createStateStore(env);
@@ -62,8 +64,10 @@ export async function evaluateCandidates(
   }
 
   const alertMatches = evaluateAlertRules(processed.changes, config);
-  const discordPayloads = buildDiscordPayloads(alertMatches);
-  const discordDispatch = await dispatchDiscordPayloads(discordPayloads, env);
+  const delivery = await deliverAlertMatches(alertMatches, env, stateStore, {
+    claimSettleMs: options.claimSettleMs,
+    now: options.now
+  });
 
   return {
     configVersion: config.version,
@@ -78,7 +82,8 @@ export async function evaluateCandidates(
     snapshots: processed.snapshots,
     changes: processed.changes,
     alertMatches,
-    discordPayloads,
-    discordDispatch
+    discordPayloads: delivery.payloads,
+    discordDispatch: delivery.dispatch,
+    deliveryDedupe: delivery.dedupe
   };
 }
