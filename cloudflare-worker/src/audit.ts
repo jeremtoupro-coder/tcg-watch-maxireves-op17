@@ -9,6 +9,7 @@ import type {
 const MAX_RESPONSE_BYTES = 2_500_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const SOURCE_DELAY_MS = 300;
+const MAX_CONNECTOR_CONCURRENCY = 8;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,6 +50,39 @@ function candidateScore(candidate: ProductCandidate): number {
   return score;
 }
 
+function extractDirectProductCandidate(
+  html: string,
+  sourceUrl: string,
+  connector: ConnectorDefinition
+): ProductCandidate | undefined {
+  if (!productUrlMatches(sourceUrl, connector)) return undefined;
+
+  const h1Match = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+  const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  const title = stripHtml(h1Match?.[1] ?? titleMatch?.[1] ?? "");
+  const matchedReferences = matchReferences(`${title} ${sourceUrl}`);
+
+  if (!title || matchedReferences.length === 0) return undefined;
+
+  const anchorIndex = h1Match?.index ?? 0;
+  const contextStart = Math.max(0, anchorIndex - 1_000);
+  const contextEnd = Math.min(html.length, anchorIndex + 12_000);
+  const context = stripHtml(html.slice(contextStart, contextEnd));
+
+  return {
+    store: connector.key,
+    storeName: connector.name,
+    title,
+    url: sourceUrl,
+    sourceUrl,
+    matchedReferences,
+    availability: detectAvailability(context),
+    language: detectLanguage(`${title} ${sourceUrl} ${context}`),
+    priceText: extractPrice(context),
+    excerpt: context.slice(0, 500)
+  };
+}
+
 function extractCandidates(
   html: string,
   sourceUrl: string,
@@ -57,6 +91,12 @@ function extractCandidates(
   const anchorPattern = /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
   const candidatesByUrl = new Map<string, ProductCandidate>();
   const productUrlsSeen = new Set<string>();
+
+  const directCandidate = extractDirectProductCandidate(html, sourceUrl, connector);
+  if (directCandidate) {
+    candidatesByUrl.set(directCandidate.url, directCandidate);
+    productUrlsSeen.add(directCandidate.url);
+  }
 
   for (const match of html.matchAll(anchorPattern)) {
     const rawHref = decodeHtml(match[2] ?? "").trim();
@@ -106,7 +146,7 @@ function extractCandidates(
       sourceUrl,
       matchedReferences,
       availability: detectAvailability(context),
-      language: detectLanguage(`${title} ${context}`),
+      language: detectLanguage(`${title} ${absoluteUrl} ${context}`),
       priceText: extractPrice(context),
       excerpt: context.slice(0, 500)
     };
@@ -185,10 +225,13 @@ async function fetchSource(
 
 export async function auditConnector(connector: ConnectorDefinition): Promise<StoreAudit> {
   const sources: SourceAudit[] = [];
+  const requestedConcurrency = (connector as ConnectorDefinition & { maxConcurrency?: number }).maxConcurrency ?? 1;
+  const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, requestedConcurrency));
 
-  for (const [index, sourceUrl] of connector.sources.entries()) {
+  for (let index = 0; index < connector.sources.length; index += concurrency) {
     if (index > 0) await sleep(SOURCE_DELAY_MS);
-    sources.push(await fetchSource(sourceUrl, connector));
+    const batch = connector.sources.slice(index, index + concurrency);
+    sources.push(...await Promise.all(batch.map((sourceUrl) => fetchSource(sourceUrl, connector))));
   }
 
   const uniqueCandidates = new Map<string, ProductCandidate>();
