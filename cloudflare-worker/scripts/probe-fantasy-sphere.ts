@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 
 const baseUrl = "https://en.fantasysphere.net";
-const targetPattern = /(OP[-_\s]?17|OP[-_\s]?18|IB[-_\s]?0?7|IB[-_\s]?0?8|Illustration[^<\n]{0,40}(?:Vol(?:ume)?\.?\s*)?[78])/i;
+const targetPattern = /(OP[-_\s]?17|OP[-_\s]?18|IB[-_\s]?0?7|IB[-_\s]?0?8)/i;
 const MAX_DOCUMENTS = 60;
 const MAX_BYTES = 25_000_000;
 
@@ -15,10 +15,32 @@ interface ProbeResult {
   error?: string;
 }
 
+interface ProductPageDiagnostic {
+  url: string;
+  status?: number;
+  bytes?: number;
+  title?: string;
+  h1?: string;
+  jsonLdProducts: unknown[];
+  availabilityMentions: string[];
+  error?: string;
+}
+
 function extractLocs(text: string): string[] {
   return [...text.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)]
     .map((match) => match[1].replace(/&amp;/g, "&").trim())
     .filter(Boolean);
+}
+
+function stripTags(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function fetchText(url: string): Promise<{ text: string; status: number; contentType: string; bytes: number }> {
@@ -30,7 +52,7 @@ async function fetchText(url: string): Promise<{ text: string; status: number; c
       signal: controller.signal,
       headers: {
         "User-Agent": "TCGWatcherSitemapProbe/1.0 (+personal read-only audit)",
-        "Accept": "application/xml,text/xml,text/plain,*/*"
+        "Accept": "text/html,application/xml,text/xml,text/plain,*/*"
       }
     });
     const buffer = await response.arrayBuffer();
@@ -46,6 +68,58 @@ async function fetchText(url: string): Promise<{ text: string; status: number; c
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function collectProductObjects(value: unknown, output: unknown[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectProductObjects(item, output);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  const record = value as Record<string, unknown>;
+  const type = record["@type"];
+  if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
+    output.push(record);
+  }
+
+  for (const child of Object.values(record)) collectProductObjects(child, output);
+}
+
+async function inspectProductPage(url: string): Promise<ProductPageDiagnostic> {
+  const diagnostic: ProductPageDiagnostic = {
+    url,
+    jsonLdProducts: [],
+    availabilityMentions: []
+  };
+
+  try {
+    const fetched = await fetchText(url);
+    diagnostic.status = fetched.status;
+    diagnostic.bytes = fetched.bytes;
+    diagnostic.title = stripTags(fetched.text.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+    diagnostic.h1 = stripTags(fetched.text.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "");
+
+    for (const match of fetched.text.matchAll(
+      /<script\b[^>]*type\s*=\s*(["'])application\/ld\+json\1[^>]*>([\s\S]*?)<\/script>/gi
+    )) {
+      try {
+        collectProductObjects(JSON.parse(match[2]), diagnostic.jsonLdProducts);
+      } catch {
+        // Certains sites publient plusieurs objets non JSON dans le même bloc.
+      }
+    }
+
+    const plainText = stripTags(fetched.text);
+    const mentions = plainText.match(
+      /(?:in stock|out of stock|available|unavailable|pre-?order|en stock|rupture de stock|indisponible|précommande)/gi
+    ) ?? [];
+    diagnostic.availabilityMentions = [...new Set(mentions.map((value) => value.toLowerCase()))];
+  } catch (error) {
+    diagnostic.error = error instanceof Error ? error.message : String(error);
+  }
+
+  return diagnostic;
 }
 
 const initialUrls = new Set<string>([
@@ -105,19 +179,15 @@ while (queue.length > 0 && visited.size < MAX_DOCUMENTS) {
       }
 
       for (const loc of locs) {
-        if (targetPattern.test(decodeURIComponent(loc))) {
+        let decoded = loc;
+        try {
+          decoded = decodeURIComponent(loc);
+        } catch {
+          // Une URL mal encodée reste testée telle quelle.
+        }
+        if (targetPattern.test(decoded)) {
           result.targetUrls.push(loc);
           allTargetUrls.add(loc);
-        }
-      }
-
-      if (targetPattern.test(fetched.text)) {
-        for (const match of fetched.text.matchAll(/https?:\/\/[^<\s"']+/gi)) {
-          const candidate = match[0].replace(/&amp;/g, "&");
-          if (targetPattern.test(decodeURIComponent(candidate))) {
-            result.targetUrls.push(candidate);
-            allTargetUrls.add(candidate);
-          }
         }
       }
     }
@@ -129,11 +199,27 @@ while (queue.length > 0 && visited.size < MAX_DOCUMENTS) {
   results.push(result);
 }
 
+const englishTargets = [...allTargetUrls]
+  .filter((url) => url.startsWith("https://en.fantasysphere.net/product/"))
+  .sort();
+
+const representativeTargets = [
+  englishTargets.find((url) => /op17.*-fr-/i.test(url)),
+  englishTargets.find((url) => /op18.*-fr-/i.test(url)),
+  englishTargets.find((url) => /ib-07/i.test(url))
+].filter((url): url is string => Boolean(url));
+
+const productPages: ProductPageDiagnostic[] = [];
+for (const url of representativeTargets) {
+  productPages.push(await inspectProductPage(url));
+}
+
 const report = {
   mode: "READ_ONLY_FANTASY_SPHERE_SITEMAP_PROBE",
   checkedAt: new Date().toISOString(),
   documentsVisited: visited.size,
-  targets: [...allTargetUrls].sort(),
+  targets: englishTargets,
+  productPages,
   results
 };
 
@@ -144,5 +230,5 @@ await writeFile(
 );
 
 console.log(`Documents sondés: ${visited.size}`);
-console.log(`URLs cibles trouvées: ${allTargetUrls.size}`);
-for (const url of allTargetUrls) console.log(`- ${url}`);
+console.log(`URLs anglaises cibles trouvées: ${englishTargets.length}`);
+console.log(`Pages produit inspectées: ${productPages.length}`);
