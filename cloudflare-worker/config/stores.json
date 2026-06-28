@@ -1,4 +1,5 @@
 {
+  "$schema": "./stores.schema.json",
   "version": 1,
   "stores": [
     {
