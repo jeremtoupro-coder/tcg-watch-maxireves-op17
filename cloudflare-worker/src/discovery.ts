@@ -1,5 +1,6 @@
 import { getEnabledProducts } from "./config";
 import {
+  getConfiguredDirectProducts,
   getEnabledStoreDefinitions,
   productMatchesStore,
   type StoreDefinition
@@ -25,7 +26,8 @@ export function staticSources(store: StoreDefinition): string[] {
     ...searchUrls(store),
     ...store.categoryUrls,
     ...store.newReleaseUrls,
-    ...store.directProductUrls
+    ...store.directProductUrls,
+    ...getConfiguredDirectProducts(store.id)
   ])];
 }
 
