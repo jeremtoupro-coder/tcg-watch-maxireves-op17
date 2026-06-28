@@ -1,4 +1,5 @@
 import storeRegistryJson from "../config/stores.json";
+import directProductsJson from "../config/direct-products.json";
 import type { ProductDefinition, StoreKey } from "./types";
 
 export interface StoreDefinition {
@@ -19,6 +20,8 @@ interface StoreRegistry {
   stores: StoreDefinition[];
 }
 
+const directProducts = directProductsJson as Record<string, string[]>;
+
 export const STORE_REGISTRY = storeRegistryJson as StoreRegistry;
 
 export function getEnabledStoreDefinitions(): StoreDefinition[] {
@@ -31,4 +34,8 @@ export function getStoreDefinition(id: StoreKey): StoreDefinition | undefined {
 
 export function productMatchesStore(product: ProductDefinition, store: StoreDefinition): boolean {
   return !product.game || store.games.includes(product.game);
+}
+
+export function getConfiguredDirectProducts(storeId: StoreKey): string[] {
+  return [...(directProducts[storeId] ?? [])];
 }
