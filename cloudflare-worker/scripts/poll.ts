@@ -2,6 +2,7 @@ import { auditConnector } from "../src/audit";
 import { createConfiguredConnector } from "../src/connectorBuilder";
 import { processProducts } from "../src/engine";
 import { createRemoteState } from "../src/persistence";
+import { writeJsonReport } from "../src/report";
 import { getEnabledStoreDefinitions } from "../src/storeConfig";
 import type { ConnectorDefinition } from "../src/types";
 
@@ -68,6 +69,7 @@ if (failedStores.length === 0 && evaluation.discordDispatch.errors.length === 0)
   await stateStore.putMetadata("external-monitor:last-success", checkedAt);
 }
 
+await writeJsonReport("monitor-report.json", report);
 console.log(JSON.stringify(report));
 if (failedStores.length > 0 || evaluation.discordDispatch.errors.length > 0) {
   process.exitCode = 1;
