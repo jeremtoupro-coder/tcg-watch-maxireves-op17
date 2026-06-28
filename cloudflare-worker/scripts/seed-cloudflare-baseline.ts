@@ -21,9 +21,13 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 const namespaceTitle = process.env.CLOUDFLARE_KV_NAMESPACE ?? "tcg-watch-state";
 const requestedMode = process.env.MONITOR_MODE === "live" ? "live" : "baseline";
+const discordEndpoint = process.env.DISCORD_WEBHOOK_URL;
 
 if (!accountId || !apiToken) {
   throw new Error("CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN sont obligatoires.");
+}
+if (requestedMode === "live" && !discordEndpoint) {
+  throw new Error("Le canal Discord est obligatoire en mode live.");
 }
 
 async function cloudflareFetch(path: string, init: RequestInit = {}): Promise<Response> {
