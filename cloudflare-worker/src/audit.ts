@@ -47,6 +47,12 @@ function candidateScore(candidate: ProductCandidate): number {
   if (candidate.priceText) score += 200;
   if (candidate.language !== "Langue non précisée") score += 400;
   if (candidate.availability !== "unknown") score += 800;
+
+  // Une fiche produit directe est la source de vérité pour le stock.
+  // Sans ce bonus, une carte issue d'une catégorie peut l'emporter simplement
+  // parce qu'elle contient un prix, même si la fiche directe indique une rupture.
+  if (candidate.sourceUrl === candidate.url) score += 10_000;
+
   return score;
 }
 
