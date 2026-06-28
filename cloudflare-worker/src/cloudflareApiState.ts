@@ -102,3 +102,5 @@ export async function createCloudflareApiStateStore(
   const namespaceId = await resolveKvNamespaceId(credentials);
   return new CloudflareApiStateStore(credentials, namespaceId);
 }
+
+export const createRemoteState = createCloudflareApiStateStore;
