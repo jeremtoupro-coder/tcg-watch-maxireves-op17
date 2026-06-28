@@ -20,6 +20,7 @@ interface KvNamespace {
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 const namespaceTitle = process.env.CLOUDFLARE_KV_NAMESPACE ?? "tcg-watch-state";
+const requestedMode = process.env.MONITOR_MODE === "live" ? "live" : "baseline";
 
 if (!accountId || !apiToken) {
   throw new Error("CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN sont obligatoires.");
@@ -111,6 +112,7 @@ for (const store of baselineStores) {
 if (incompleteStores.length === 0) {
   const report = {
     mode: "BASELINE_ALREADY_COMPLETE",
+    requestedMode,
     checkedAt: new Date().toISOString(),
     namespaceTitle,
     stores: baselineStores
@@ -148,6 +150,7 @@ if (evaluation.discordDispatch.sent !== 0) {
 
 const report = {
   mode: "HYBRID_BASELINE_SEEDED",
+  requestedMode,
   checkedAt: new Date().toISOString(),
   namespaceTitle,
   initializedStores: incompleteStores,
