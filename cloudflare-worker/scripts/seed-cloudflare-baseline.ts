@@ -1,10 +1,12 @@
 import { writeFile } from "node:fs/promises";
 import { auditConnector } from "../src/audit";
+import { createConfiguredConnector } from "../src/connectorBuilder";
 import { fantasySphere } from "../src/connectors/fantasySphere";
 import { ludotrotter } from "../src/connectors/ludotrotter";
 import { maxireves } from "../src/connectors/maxireves";
 import { oupi } from "../src/connectors/oupi";
 import { evaluateCandidates } from "../src/engine";
+import { getEnabledStoreDefinitions } from "../src/storeConfig";
 import type { StateStore } from "../src/state";
 import type { ProductSnapshot, StoreKey } from "../src/types";
 
