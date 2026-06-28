@@ -1,4 +1,5 @@
 import { getEnabledProducts } from "./config";
+import { discoverFromSitemaps } from "./sitemaps";
 import {
   getConfiguredDirectProducts,
   getEnabledStoreDefinitions,
@@ -40,4 +41,8 @@ export function staticConnectors(): ConnectorDefinition[] {
     maxConcurrency: 6,
     notes: ["Recherche interne, catégories, nouveautés et fiches directes configurées."]
   }));
+}
+
+export async function sitemapSourcesForStore(store: StoreDefinition): Promise<string[]> {
+  return discoverFromSitemaps(store);
 }
