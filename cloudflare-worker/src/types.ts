@@ -1,4 +1,4 @@
-export type StoreKey = "maxireves" | "ludotrotter" | "oupi" | "fantasy-sphere";
+export type StoreKey = string;
 
 export type Availability = "available" | "preorder" | "unavailable" | "unknown";
 
@@ -21,8 +21,10 @@ export type AlertEventType =
 export interface ProductDefinition {
   id: string;
   label: string;
+  game?: string;
   enabled: boolean;
   aliases: string[];
+  searchTerms?: string[];
 }
 
 export interface AlertRule {
@@ -138,6 +140,7 @@ export interface ConnectorDefinition {
   name: string;
   sources: string[];
   productUrlPatterns: RegExp[];
+  maxConcurrency?: number;
   notes: string[];
 }
 
