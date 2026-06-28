@@ -30,7 +30,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          MONITOR_MODE: baseline
+          MONITOR_MODE: live
       - uses: actions/upload-artifact@v4
         with:
           name: hybrid-monitor-report
