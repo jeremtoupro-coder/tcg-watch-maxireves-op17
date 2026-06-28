@@ -1,1 +1,3 @@
-export const STORE_CONFIG_VERSION = 1;
+import storeRegistryJson from "../config/stores.json";
+
+export const STORE_CONFIG_VERSION = storeRegistryJson.version;
