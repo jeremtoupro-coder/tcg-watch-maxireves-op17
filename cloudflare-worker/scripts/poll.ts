@@ -3,6 +3,7 @@ import { createConfiguredConnector } from "../src/connectorBuilder";
 import { processProducts } from "../src/engine";
 import { createRemoteState } from "../src/persistence";
 import { getEnabledStoreDefinitions } from "../src/storeConfig";
+import type { ConnectorDefinition } from "../src/types";
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
 const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim() ?? "";
@@ -14,5 +15,9 @@ if (!accountId || !apiToken) throw new Error("Les identifiants Cloudflare sont a
 if (mode === "live" && !discordEndpoint) throw new Error("Le canal Discord est absent.");
 
 const stateStore = await createRemoteState({ accountId, apiToken, namespaceTitle });
+const connectors: ConnectorDefinition[] = [];
+for (const store of getEnabledStoreDefinitions()) {
+  connectors.push(await createConfiguredConnector(store));
+}
 
-export const POLL_VERSION = stateStore.writable ? 1 : 0;
+export const POLL_VERSION = connectors.length;
