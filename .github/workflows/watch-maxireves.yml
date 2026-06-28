@@ -1,167 +1,67 @@
-name: TCG Watch - Maxireves OP17
+name: TCG Watch - Hybrid Monitor
 
 on:
-  schedule:
-    # Toutes les 10 minutes, en évitant :00 pour limiter les files GitHub Actions.
-    # GitHub utilise l'heure UTC pour cron.
-    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode d'exécution"
+        required: false
+        default: "live"
+        type: choice
+        options:
+          - live
+          - baseline
+  push:
+    branches:
+      - cloudflare-workers-audit
+    paths:
+      - ".github/workflows/watch-maxireves.yml"
+      - "cloudflare-worker/config/**"
+      - "cloudflare-worker/src/**"
+      - "cloudflare-worker/scripts/poll.ts"
+      - "cloudflare-worker/package.json"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: maxireves-op17-watch
+  group: tcg-watch-hybrid-monitor
   cancel-in-progress: false
 
 jobs:
-  watch:
+  monitor:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+
+    defaults:
+      run:
+        working-directory: cloudflare-worker
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          persist-credentials: true
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package.json
 
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
+      - name: Install dependencies
+        run: npm install
 
-      - name: Show Python version
-        run: python --version
-
-      - name: Run Maxireves watcher
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          WATCHER_USER_AGENT: "TCGWatcher/1.0 (+GitHub Actions personal Maxireves OP17 alert)"
-        run: python src/watcher.py --config config/watchlist.json --state state/watch_state.json
-
-      - name: Commit watcher state
+      - name: Validate code on configuration changes
+        if: github.event_name == 'push'
         run: |
-          set -euo pipefail
+          npm run typecheck
+          npm test
 
-          if [[ -z "$(git status --porcelain -- state/watch_state.json)" ]]; then
-            echo "No state changes to commit."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          tmp_state="$(mktemp)"
-          cp state/watch_state.json "$tmp_state"
-
-          git fetch origin main
-          git reset --hard origin/main
-
-          mkdir -p state
-          cp "$tmp_state" state/watch_state.json
-
-          if [[ -z "$(git status --porcelain -- state/watch_state.json)" ]]; then
-            echo "State already up to date after sync."
-            rm -f "$tmp_state"
-            exit 0
-          fi
-
-          git add state/watch_state.json
-          git commit -m "chore: update watcher state [skip ci]"
-
-          for attempt in 1 2 3; do
-            if git push origin HEAD:main; then
-              echo "Watcher state pushed successfully."
-              rm -f "$tmp_state"
-              exit 0
-            fi
-
-            echo "Push failed, retry $attempt/3 after syncing remote main..."
-            sleep 3
-
-            cp state/watch_state.json "$tmp_state"
-
-            git fetch origin main
-            git reset --hard origin/main
-
-            mkdir -p state
-            cp "$tmp_state" state/watch_state.json
-
-            if [[ -z "$(git status --porcelain -- state/watch_state.json)" ]]; then
-              echo "State no longer differs after sync."
-              rm -f "$tmp_state"
-              exit 0
-            fi
-
-            git add state/watch_state.json
-            git commit -m "chore: update watcher state [skip ci]" || true
-          done
-
-          echo "::warning::Unable to push watcher state after retries. Watcher already ran; continuing without failing."
-          rm -f "$tmp_state"
-          exit 0
-
-      - name: Notify Discord on workflow failure
-        if: ${{ failure() }}
-        continue-on-error: true
+      - name: Monitor every configured store
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import urllib.error
-          import urllib.request
-
-          webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-
-          if not webhook:
-              print("DISCORD_WEBHOOK_URL absent, impossible de notifier Discord.")
-              raise SystemExit(0)
-
-          payload = {
-              "content": "🚨 **ERREUR_WORKFLOW** — GitHub Actions Maxirêves OP17 a échoué.",
-              "embeds": [
-                  {
-                      "title": "🚨 Workflow GitHub en erreur",
-                      "description": (
-                          "Le watcher ou une étape GitHub a échoué. "
-                          "Va vérifier GitHub → Actions → dernier run rouge."
-                      ),
-                      "fields": [
-                          {
-                              "name": "Run",
-                              "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-                              "inline": False
-                          },
-                          {
-                              "name": "Cause probable",
-                              "value": (
-                                  "Erreur watcher, erreur réseau, secret Discord invalide, "
-                                  "token GitHub, ou conflit Git sur state/watch_state.json."
-                              ),
-                              "inline": False
-                          }
-                      ]
-                  }
-              ]
-          }
-
-          req = urllib.request.Request(
-              webhook,
-              data=json.dumps(payload).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
-              method="POST",
-          )
-
-          try:
-              with urllib.request.urlopen(req, timeout=20) as response:
-                  print("Discord status:", response.status)
-          except urllib.error.HTTPError as e:
-              print("Discord notification failed with HTTP:", e.code)
-              print(e.read().decode("utf-8", errors="replace"))
-              raise SystemExit(0)
-          except Exception as e:
-              print("Discord notification failed:", repr(e))
-              raise SystemExit(0)
-          PY
+          MONITOR_MODE: ${{ github.event_name == 'push' && 'baseline' || inputs.mode || 'live' }}
+        run: npm run monitor
