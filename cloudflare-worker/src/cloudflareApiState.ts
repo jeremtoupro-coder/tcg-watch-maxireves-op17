@@ -18,6 +18,24 @@ interface KvNamespaceSummary {
   title: string;
 }
 
+const SUCCESS_HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000;
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function samePersistedProductState(left: ProductSnapshot, right: ProductSnapshot): boolean {
+  return left.key === right.key &&
+    left.store === right.store &&
+    left.storeName === right.storeName &&
+    left.title === right.title &&
+    left.url === right.url &&
+    sameStringArray(left.matchedReferences, right.matchedReferences) &&
+    left.availability === right.availability &&
+    left.language === right.language &&
+    left.priceCents === right.priceCents;
+}
+
 async function apiRequest(
   credentials: CloudflareApiCredentials,
   path: string,
@@ -84,6 +102,8 @@ export class CloudflareApiStateStore implements StateStore {
   }
 
   async put(key: string, value: ProductSnapshot): Promise<void> {
+    const current = await this.get(key);
+    if (current && samePersistedProductState(current, value)) return;
     await this.putText(key, JSON.stringify(value));
   }
 
@@ -92,6 +112,22 @@ export class CloudflareApiStateStore implements StateStore {
   }
 
   async putMetadata(key: string, value: string): Promise<void> {
+    const current = await this.getMetadata(key);
+
+    if (current === value) return;
+
+    if (key === "external-monitor:last-success" && current) {
+      const previousMs = Date.parse(current);
+      const nextMs = Date.parse(value);
+      if (
+        Number.isFinite(previousMs) &&
+        Number.isFinite(nextMs) &&
+        nextMs - previousMs < SUCCESS_HEARTBEAT_INTERVAL_MS
+      ) {
+        return;
+      }
+    }
+
     await this.putText(`metadata:${key}`, value);
   }
 }
