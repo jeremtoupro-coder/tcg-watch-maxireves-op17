@@ -62,3 +62,33 @@ export async function processConnectorCycle(
     };
   }
 }
+
+export async function runAllConnectorCycles(
+  connectors: ConnectorDefinition[],
+  stateStore: StateStore,
+  discordEndpoint: string
+): Promise<{
+  checkedAt: string;
+  intervalTargetMinutes: number;
+  fatalErrors: number;
+  stores: CycleStoreSummary[];
+}> {
+  const checkedAt = new Date().toISOString();
+  const stores: CycleStoreSummary[] = [];
+
+  for (const connector of connectors) {
+    stores.push(await processConnectorCycle(connector, stateStore, discordEndpoint));
+  }
+
+  const fatalErrors = stores.filter((store) => store.status === "failed").length;
+  if (fatalErrors === 0) {
+    await stateStore.putMetadata("external-monitor:last-success", checkedAt);
+  }
+
+  return {
+    checkedAt,
+    intervalTargetMinutes: 5,
+    fatalErrors,
+    stores
+  };
+}
