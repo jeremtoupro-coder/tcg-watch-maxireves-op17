@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tcg-watch-one-piece",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-27",
+  "workers_dev": true,
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "vars": {
+    "AUDIT_MODE": "true",
+    "ALLOW_PUBLIC_AUDIT": "false",
+    "MONITORING_ENABLED": "false",
+    "ACTIVE_STORES": "maxireves,ludotrotter,oupi,fantasy-sphere",
+    "WRITE_STATE": "false",
+    "DISCORD_MODE": "dry-run"
+  }
+}

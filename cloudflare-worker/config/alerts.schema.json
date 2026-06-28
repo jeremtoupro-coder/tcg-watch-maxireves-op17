@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/tcg-watch/alerts.schema.json",
+  "title": "Configuration TCG Watch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "settings", "products", "alerts"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["notifyOnInitialDiscovery", "defaultLanguages"],
+      "properties": {
+        "notifyOnInitialDiscovery": { "type": "boolean" },
+        "defaultLanguages": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/language" }
+        }
+      }
+    },
+    "products": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "game", "enabled", "aliases", "searchTerms"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "game": { "type": "string", "minLength": 1 },
+          "enabled": { "type": "boolean" },
+          "aliases": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "searchTerms": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "alerts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "enabled",
+          "productIds",
+          "stores",
+          "languages",
+          "events",
+          "availabilities",
+          "notifyOnInitialDiscovery"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "enabled": { "type": "boolean" },
+          "productIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "stores": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "languages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "oneOf": [
+                { "const": "*" },
+                { "$ref": "#/$defs/language" }
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/event" }
+          },
+          "availabilities": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "enum": ["*", "available", "preorder", "unavailable", "unknown"]
+            }
+          },
+          "notifyOnInitialDiscovery": { "type": "boolean" },
+          "maxPriceCents": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "language": {
+      "enum": [
+        "Français confirmé",
+        "Langue non précisée",
+        "Anglais détecté",
+        "Japonais détecté",
+        "Autre langue détectée"
+      ]
+    },
+    "event": {
+      "enum": [
+        "new_listing",
+        "back_in_stock",
+        "preorder_opened",
+        "price_drop",
+        "price_increase",
+        "became_unavailable",
+        "details_changed"
+      ]
+    }
+  }
+}

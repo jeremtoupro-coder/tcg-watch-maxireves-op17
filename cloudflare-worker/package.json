@@ -1,0 +1,24 @@
+{
+  "name": "tcg-watch-cloudflare-audit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "live-audit": "tsx scripts/live-audit.ts",
+    "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts",
+    "monitor": "tsx scripts/poll.ts",
+    "generate-deploy-config": "tsx scripts/generate-deploy-config.ts",
+    "simulate-change": "tsx scripts/simulate-change-dry-only.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest",
+    "wrangler": "latest"
+  }
+}

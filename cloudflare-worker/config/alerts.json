@@ -1,0 +1,111 @@
+{
+  "$schema": "./alerts.schema.json",
+  "version": 2,
+  "settings": {
+    "notifyOnInitialDiscovery": false,
+    "defaultLanguages": [
+      "Français confirmé",
+      "Langue non précisée"
+    ]
+  },
+  "products": [
+    {
+      "id": "IB-07",
+      "label": "Illustration Box Vol.7",
+      "game": "one-piece",
+      "enabled": true,
+      "aliases": [
+        "IB07",
+        "IB-07",
+        "IB 07",
+        "Illustration Box Vol.7",
+        "Illustration Box Vol 7",
+        "Illustration Box Volume 7"
+      ],
+      "searchTerms": ["IB-07", "Illustration Box Vol 7"]
+    },
+    {
+      "id": "IB-08",
+      "label": "Illustration Box Vol.8",
+      "game": "one-piece",
+      "enabled": true,
+      "aliases": [
+        "IB08",
+        "IB-08",
+        "IB 08",
+        "Illustration Box Vol.8",
+        "Illustration Box Vol 8",
+        "Illustration Box Volume 8"
+      ],
+      "searchTerms": ["IB-08", "Illustration Box Vol 8"]
+    },
+    {
+      "id": "OP17",
+      "label": "One Piece Card Game OP17",
+      "game": "one-piece",
+      "enabled": true,
+      "aliases": [
+        "OP17",
+        "OP-17",
+        "OP 17"
+      ],
+      "searchTerms": ["OP17", "OP-17"]
+    },
+    {
+      "id": "OP18",
+      "label": "One Piece Card Game OP18",
+      "game": "one-piece",
+      "enabled": true,
+      "aliases": [
+        "OP18",
+        "OP-18",
+        "OP 18"
+      ],
+      "searchTerms": ["OP18", "OP-18"]
+    }
+  ],
+  "alerts": [
+    {
+      "id": "target-products-available-fr",
+      "label": "Produits ciblés FR disponibles",
+      "enabled": true,
+      "productIds": [
+        "IB-07",
+        "IB-08",
+        "OP17",
+        "OP18"
+      ],
+      "stores": ["*"],
+      "languages": [
+        "Français confirmé",
+        "Langue non précisée"
+      ],
+      "events": [
+        "new_listing",
+        "back_in_stock",
+        "preorder_opened"
+      ],
+      "availabilities": [
+        "available",
+        "preorder"
+      ],
+      "notifyOnInitialDiscovery": false
+    },
+    {
+      "id": "target-products-price-drop",
+      "label": "Baisse de prix sur un produit ciblé",
+      "enabled": true,
+      "productIds": [
+        "IB-07",
+        "IB-08",
+        "OP17",
+        "OP18"
+      ],
+      "stores": ["*"],
+      "languages": ["*"],
+      "events": ["price_drop"],
+      "availabilities": ["*"],
+      "notifyOnInitialDiscovery": false
+    }
+  ]
+}
