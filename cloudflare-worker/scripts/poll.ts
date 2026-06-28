@@ -28,5 +28,7 @@ for (const connector of connectors) {
 const successfulAudits = audits.filter(
   (audit) => audit.sources.some((source) => !source.error)
 );
+const candidates = successfulAudits.flatMap((audit) => audit.candidates);
+const checkedStores = successfulAudits.map((audit) => audit.store);
 
-export const POLL_VERSION = successfulAudits.length;
+export const POLL_VERSION = candidates.length + checkedStores.length;
