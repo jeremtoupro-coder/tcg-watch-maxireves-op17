@@ -1,10 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { auditConnector } from "../src/audit";
 import { createConfiguredConnector } from "../src/connectorBuilder";
-import { fantasySphere } from "../src/connectors/fantasySphere";
-import { ludotrotter } from "../src/connectors/ludotrotter";
-import { maxireves } from "../src/connectors/maxireves";
-import { oupi } from "../src/connectors/oupi";
 import { evaluateCandidates } from "../src/engine";
 import { getEnabledStoreDefinitions } from "../src/storeConfig";
 import type { StateStore } from "../src/state";
@@ -43,23 +39,13 @@ async function resolveNamespaceId(): Promise<string> {
   const response = await cloudflareFetch(
     `/accounts/${accountId}/storage/kv/namespaces?per_page=100`
   );
-
-  if (!response.ok) {
-    throw new Error(`Impossible de lister les namespaces KV: HTTP ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Liste KV impossible: HTTP ${response.status}`);
 
   const payload = await response.json() as CloudflareEnvelope<KvNamespace[]>;
-  if (!payload.success) {
-    throw new Error(`Cloudflare refuse la liste KV: ${JSON.stringify(payload.errors ?? [])}`);
-  }
-
   const matches = payload.result.filter((namespace) => namespace.title === namespaceTitle);
-  if (matches.length !== 1) {
-    throw new Error(
-      `Namespace KV '${namespaceTitle}' introuvable ou ambigu (${matches.length} résultat(s)).`
-    );
+  if (!payload.success || matches.length !== 1) {
+    throw new Error(`Namespace KV introuvable ou ambigu: ${namespaceTitle}`);
   }
-
   return matches[0].id;
 }
 
@@ -86,15 +72,7 @@ class CloudflareApiStateStore implements StateStore {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
       body: value
     });
-
-    if (!response.ok) {
-      throw new Error(`Écriture KV impossible pour ${key}: HTTP ${response.status}`);
-    }
-
-    const payload = await response.json() as CloudflareEnvelope<unknown>;
-    if (!payload.success) {
-      throw new Error(`Cloudflare refuse l'écriture KV ${key}: ${JSON.stringify(payload.errors ?? [])}`);
-    }
+    if (!response.ok) throw new Error(`Écriture KV impossible pour ${key}: HTTP ${response.status}`);
   }
 
   async get(key: string): Promise<ProductSnapshot | undefined> {
@@ -115,14 +93,18 @@ class CloudflareApiStateStore implements StateStore {
   }
 }
 
-const connectors = [maxireves, ludotrotter, oupi, fantasySphere];
+const connectors = [];
+for (const store of getEnabledStoreDefinitions()) {
+  connectors.push(await createConfiguredConnector(store));
+}
+
 const baselineStores = connectors.map((connector) => connector.key) as StoreKey[];
 const namespaceId = await resolveNamespaceId();
 const stateStore = new CloudflareApiStateStore(namespaceId);
 const incompleteStores: StoreKey[] = [];
 
 for (const store of baselineStores) {
-  const marker = await stateStore.getMetadata(`baseline:config-v1:${store}`);
+  const marker = await stateStore.getMetadata(`baseline:config-v2:${store}`);
   if (marker !== "complete") incompleteStores.push(store);
 }
 
@@ -134,7 +116,7 @@ if (incompleteStores.length === 0) {
     stores: baselineStores
   };
   await writeFile("baseline-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log("La base initiale est déjà complète pour toutes les boutiques.");
+  console.log("La base hybride est déjà complète pour toutes les boutiques.");
   process.exit(0);
 }
 
@@ -142,21 +124,17 @@ const selectedConnectors = connectors.filter((connector) => incompleteStores.inc
 const audits = [];
 
 for (const connector of selectedConnectors) {
-  console.log(`Audit initial de ${connector.name}...`);
+  console.log(`Audit initial hybride de ${connector.name}...`);
   const audit = await auditConnector(connector);
   audits.push(audit);
 
-  const errors = audit.sources.filter((source) => source.error);
-  if (errors.length > 0) {
-    throw new Error(
-      `Initialisation annulée pour ${connector.name}: ${errors.map((source) => source.error).join(", ")}`
-    );
+  if (audit.sources.every((source) => Boolean(source.error))) {
+    throw new Error(`Initialisation impossible pour ${connector.name}: toutes les sources ont échoué.`);
   }
 }
 
 const candidates = audits.flatMap((audit) => audit.candidates);
 const evaluation = await evaluateCandidates(candidates, {
-  AUDIT_MODE: "true",
   WRITE_STATE: "true",
   DISCORD_MODE: "dry-run"
 }, {
@@ -169,16 +147,15 @@ if (evaluation.discordDispatch.sent !== 0) {
 }
 
 const report = {
-  mode: "BASELINE_SEEDED",
+  mode: "HYBRID_BASELINE_SEEDED",
   checkedAt: new Date().toISOString(),
   namespaceTitle,
   initializedStores: incompleteStores,
-  auditCount: audits.length,
+  sourceCount: audits.reduce((total, audit) => total + audit.sources.length, 0),
   candidateCount: candidates.length,
-  evaluation
+  stateWrites: evaluation.state.writes,
+  alertsSent: evaluation.discordDispatch.sent
 };
 
 await writeFile("baseline-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
-console.log(`Base initiale créée pour: ${incompleteStores.join(", ")}`);
-console.log(`Fiches enregistrées: ${evaluation.state.writes}`);
-console.log(`Alertes envoyées: ${evaluation.discordDispatch.sent}`);
+console.log(JSON.stringify(report));
