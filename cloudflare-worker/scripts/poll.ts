@@ -20,4 +20,9 @@ for (const store of getEnabledStoreDefinitions()) {
   connectors.push(await createConfiguredConnector(store));
 }
 
-export const POLL_VERSION = connectors.length;
+const audits = [];
+for (const connector of connectors) {
+  audits.push(await auditConnector(connector));
+}
+
+export const POLL_VERSION = audits.length;
