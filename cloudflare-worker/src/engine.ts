@@ -87,3 +87,5 @@ export async function evaluateCandidates(
     deliveryDedupe: delivery.dedupe
   };
 }
+
+export const processProducts = evaluateCandidates;
