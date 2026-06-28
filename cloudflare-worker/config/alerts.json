@@ -1,6 +1,6 @@
 {
   "$schema": "./alerts.schema.json",
-  "version": 1,
+  "version": 2,
   "settings": {
     "notifyOnInitialDiscovery": false,
     "defaultLanguages": [
@@ -12,6 +12,7 @@
     {
       "id": "IB-07",
       "label": "Illustration Box Vol.7",
+      "game": "one-piece",
       "enabled": true,
       "aliases": [
         "IB07",
@@ -20,11 +21,13 @@
         "Illustration Box Vol.7",
         "Illustration Box Vol 7",
         "Illustration Box Volume 7"
-      ]
+      ],
+      "searchTerms": ["IB-07", "Illustration Box Vol 7"]
     },
     {
       "id": "IB-08",
       "label": "Illustration Box Vol.8",
+      "game": "one-piece",
       "enabled": true,
       "aliases": [
         "IB08",
@@ -33,27 +36,32 @@
         "Illustration Box Vol.8",
         "Illustration Box Vol 8",
         "Illustration Box Volume 8"
-      ]
+      ],
+      "searchTerms": ["IB-08", "Illustration Box Vol 8"]
     },
     {
       "id": "OP17",
       "label": "One Piece Card Game OP17",
+      "game": "one-piece",
       "enabled": true,
       "aliases": [
         "OP17",
         "OP-17",
         "OP 17"
-      ]
+      ],
+      "searchTerms": ["OP17", "OP-17"]
     },
     {
       "id": "OP18",
       "label": "One Piece Card Game OP18",
+      "game": "one-piece",
       "enabled": true,
       "aliases": [
         "OP18",
         "OP-18",
         "OP 18"
-      ]
+      ],
+      "searchTerms": ["OP18", "OP-18"]
     }
   ],
   "alerts": [
