@@ -9,6 +9,7 @@
     "test": "vitest run",
     "live-audit": "tsx scripts/live-audit.ts",
     "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts",
+    "monitor": "tsx scripts/poll.ts",
     "generate-deploy-config": "tsx scripts/generate-deploy-config.ts",
     "simulate-change": "tsx scripts/simulate-change-dry-only.ts"
   },
