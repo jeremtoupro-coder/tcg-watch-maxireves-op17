@@ -5,5 +5,6 @@ import { createRemoteState } from "../src/persistence";
 import { getEnabledStoreDefinitions } from "../src/storeConfig";
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim() ?? "";
 
-export const POLL_VERSION = accountId ? 1 : 0;
+export const POLL_VERSION = accountId && apiToken ? 1 : 0;
