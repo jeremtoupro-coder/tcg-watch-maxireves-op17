@@ -10,4 +10,9 @@ const namespaceTitle = process.env.CLOUDFLARE_KV_NAMESPACE?.trim() || "tcg-watch
 const discordEndpoint = process.env.DISCORD_WEBHOOK_URL?.trim() ?? "";
 const mode = process.env.MONITOR_MODE === "baseline" ? "baseline" : "live";
 
-export const POLL_VERSION = accountId && apiToken ? 1 : 0;
+if (!accountId || !apiToken) throw new Error("Les identifiants Cloudflare sont absents.");
+if (mode === "live" && !discordEndpoint) throw new Error("Le canal Discord est absent.");
+
+const stateStore = await createRemoteState({ accountId, apiToken, namespaceTitle });
+
+export const POLL_VERSION = stateStore.writable ? 1 : 0;
