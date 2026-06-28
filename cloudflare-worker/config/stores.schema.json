@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/tcg-watch/stores.schema.json",
+  "title": "Boutiques TCG Watch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "stores"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "stores": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "games",
+          "productUrlPatterns",
+          "categoryUrls",
+          "newReleaseUrls",
+          "sitemapUrls",
+          "directProductUrls"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "enabled": { "type": "boolean" },
+          "games": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "productUrlPatterns": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "searchUrlTemplate": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\{query\\}"
+          },
+          "categoryUrls": {
+            "type": "array",
+            "items": { "type": "string", "format": "uri" }
+          },
+          "newReleaseUrls": {
+            "type": "array",
+            "items": { "type": "string", "format": "uri" }
+          },
+          "sitemapUrls": {
+            "type": "array",
+            "items": { "type": "string", "format": "uri" }
+          },
+          "directProductUrls": {
+            "type": "array",
+            "items": { "type": "string", "format": "uri" }
+          }
+        }
+      }
+    }
+  }
+}
