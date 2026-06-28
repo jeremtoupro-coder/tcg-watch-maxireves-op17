@@ -1,3 +1,4 @@
+import { auditConnector } from "./audit";
 import { createConfiguredConnector } from "./connectorBuilder";
 import { getEnabledStoreDefinitions } from "./storeConfig";
 
