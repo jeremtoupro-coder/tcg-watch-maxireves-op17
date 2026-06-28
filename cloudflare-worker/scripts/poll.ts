@@ -4,4 +4,6 @@ import { processProducts } from "../src/engine";
 import { createRemoteState } from "../src/persistence";
 import { getEnabledStoreDefinitions } from "../src/storeConfig";
 
-export const POLL_VERSION = 1;
+const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+
+export const POLL_VERSION = accountId ? 1 : 0;
