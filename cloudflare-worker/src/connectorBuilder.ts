@@ -2,7 +2,7 @@ import { staticSources, sitemapSourcesForStore } from "./discovery";
 import { getEnabledStoreDefinitions, type StoreDefinition } from "./storeConfig";
 import type { ConnectorDefinition } from "./types";
 
-async function buildOne(store: StoreDefinition): Promise<ConnectorDefinition> {
+export async function buildOne(store: StoreDefinition): Promise<ConnectorDefinition> {
   const extraSources = await sitemapSourcesForStore(store);
   return {
     key: store.id,
