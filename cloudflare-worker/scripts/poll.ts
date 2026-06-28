@@ -25,4 +25,8 @@ for (const connector of connectors) {
   audits.push(await auditConnector(connector));
 }
 
-export const POLL_VERSION = audits.length;
+const successfulAudits = audits.filter(
+  (audit) => audit.sources.some((source) => !source.error)
+);
+
+export const POLL_VERSION = successfulAudits.length;
