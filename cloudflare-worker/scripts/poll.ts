@@ -45,4 +45,32 @@ const evaluation = await processProducts(
   }
 );
 
+const failedStores = audits
+  .filter((audit) => audit.sources.every((source) => Boolean(source.error)))
+  .map((audit) => audit.store);
+const checkedAt = new Date().toISOString();
+const report = {
+  mode,
+  checkedAt,
+  intervalTargetMinutes: 5,
+  configuredStores: connectors.length,
+  checkedStores,
+  failedStores,
+  sourceCount: audits.reduce((total, audit) => total + audit.sources.length, 0),
+  candidates: evaluation.uniqueCandidates,
+  changes: evaluation.changes.length,
+  alertsMatched: evaluation.alertMatches.length,
+  alertsSent: evaluation.discordDispatch.sent,
+  deliveryErrors: evaluation.discordDispatch.errors
+};
+
+if (failedStores.length === 0 && evaluation.discordDispatch.errors.length === 0) {
+  await stateStore.putMetadata("external-monitor:last-success", checkedAt);
+}
+
+console.log(JSON.stringify(report));
+if (failedStores.length > 0 || evaluation.discordDispatch.errors.length > 0) {
+  process.exitCode = 1;
+}
+
 export const POLL_VERSION = evaluation.configVersion;
