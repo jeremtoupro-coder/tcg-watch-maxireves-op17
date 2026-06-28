@@ -24,8 +24,10 @@ describe("configuration des alertes", () => {
     config.products.push({
       id: "OP19",
       label: "One Piece Card Game OP19",
+      game: "one-piece",
       enabled: true,
-      aliases: ["OP19", "OP-19", "OP 19"]
+      aliases: ["OP19", "OP-19", "OP 19"],
+      searchTerms: ["OP19"]
     });
     config.alerts.push({
       id: "op19-stock",
