@@ -10,6 +10,7 @@ const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim() ?? "";
 const namespaceTitle = process.env.CLOUDFLARE_KV_NAMESPACE?.trim() || "tcg-watch-state";
 const discordEndpoint = process.env.DISCORD_WEBHOOK_URL?.trim() ?? "";
 const mode = process.env.MONITOR_MODE === "baseline" ? "baseline" : "live";
+const deliveryMode = mode === "live" ? "live" as const : "dry-run" as const;
 
 if (!accountId || !apiToken) throw new Error("Les identifiants Cloudflare sont absents.");
 if (mode === "live" && !discordEndpoint) throw new Error("Le canal Discord est absent.");
@@ -31,4 +32,17 @@ const successfulAudits = audits.filter(
 const candidates = successfulAudits.flatMap((audit) => audit.candidates);
 const checkedStores = successfulAudits.map((audit) => audit.store);
 
-export const POLL_VERSION = candidates.length + checkedStores.length;
+const evaluation = await processProducts(
+  candidates,
+  {
+    WRITE_STATE: "true",
+    DISCORD_MODE: deliveryMode,
+    DISCORD_WEBHOOK_URL: discordEndpoint
+  },
+  {
+    stateStore,
+    baselineStores: checkedStores
+  }
+);
+
+export const POLL_VERSION = evaluation.configVersion;
