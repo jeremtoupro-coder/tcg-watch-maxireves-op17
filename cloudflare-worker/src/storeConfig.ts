@@ -1,5 +1,5 @@
 import storeRegistryJson from "../config/stores.json";
-import type { StoreKey } from "./types";
+import type { ProductDefinition, StoreKey } from "./types";
 
 export interface StoreDefinition {
   id: StoreKey;
@@ -20,3 +20,15 @@ interface StoreRegistry {
 }
 
 export const STORE_REGISTRY = storeRegistryJson as StoreRegistry;
+
+export function getEnabledStoreDefinitions(): StoreDefinition[] {
+  return STORE_REGISTRY.stores.filter((store) => store.enabled);
+}
+
+export function getStoreDefinition(id: StoreKey): StoreDefinition | undefined {
+  return STORE_REGISTRY.stores.find((store) => store.id === id);
+}
+
+export function productMatchesStore(product: ProductDefinition, store: StoreDefinition): boolean {
+  return !product.game || store.games.includes(product.game);
+}
