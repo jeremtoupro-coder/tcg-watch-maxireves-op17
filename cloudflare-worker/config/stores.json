@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "stores": [
+    {
+      "id": "maxireves",
+      "name": "Maxi Rêves",
+      "enabled": true,
+      "games": ["one-piece"],
+      "productUrlPatterns": ["/produit/", "/product/"],
+      "searchUrlTemplate": "https://maxireves.fr/?s={query}&post_type=product",
+      "categoryUrls": ["https://maxireves.fr/selection-jeux/jeux-de-cartes-tcg/one-piece-tcg/display-one-piece-tcg/"],
+      "newReleaseUrls": ["https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/"],
+      "sitemapUrls": ["https://maxireves.fr/sitemap_index.xml"],
+      "directProductUrls": []
+    },
+    {
+      "id": "ludotrotter",
+      "name": "Ludotrotter",
+      "enabled": true,
+      "games": ["one-piece"],
+      "productUrlPatterns": ["/one-piece/", ".html"],
+      "searchUrlTemplate": "https://ludotrotter.com/recherche?controller=search&s={query}",
+      "categoryUrls": ["https://ludotrotter.com/271-one-piece-card-game"],
+      "newReleaseUrls": [],
+      "sitemapUrls": ["https://ludotrotter.com/sitemap.xml"],
+      "directProductUrls": []
+    },
+    {
+      "id": "oupi",
+      "name": "Oupi",
+      "enabled": true,
+      "games": ["one-piece"],
+      "productUrlPatterns": ["/booster-box-one-piece/", ".html"],
+      "searchUrlTemplate": "https://oupi.eu/en/search?controller=search&s={query}",
+      "categoryUrls": ["https://oupi.eu/en/413-pre-order-one-piece"],
+      "newReleaseUrls": ["https://oupi.eu/en/413-pre-order-one-piece"],
+      "sitemapUrls": ["https://oupi.eu/sitemap.xml"],
+      "directProductUrls": []
+    },
+    {
+      "id": "fantasy-sphere",
+      "name": "Fantasy Sphere",
+      "enabled": true,
+      "games": ["one-piece"],
+      "productUrlPatterns": ["/product/"],
+      "searchUrlTemplate": "https://en.fantasysphere.net/search?controller=search&s={query}",
+      "categoryUrls": [],
+      "newReleaseUrls": [],
+      "sitemapUrls": ["https://en.fantasysphere.net/1_en_0_sitemap.xml"],
+      "directProductUrls": []
+    }
+  ]
+}
