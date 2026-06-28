@@ -10,6 +10,7 @@ function requireNonEmptyString(value: unknown, field: string): asserts value is 
 function validateProduct(product: ProductDefinition, index: number): void {
   requireNonEmptyString(product.id, `products[${index}].id`);
   requireNonEmptyString(product.label, `products[${index}].label`);
+  requireNonEmptyString(product.game, `products[${index}].game`);
 
   if (!Array.isArray(product.aliases) || product.aliases.length === 0) {
     throw new Error(`Configuration invalide: products[${index}].aliases doit contenir au moins une valeur.`);
@@ -17,6 +18,14 @@ function validateProduct(product: ProductDefinition, index: number): void {
 
   for (const [aliasIndex, alias] of product.aliases.entries()) {
     requireNonEmptyString(alias, `products[${index}].aliases[${aliasIndex}]`);
+  }
+
+  if (!Array.isArray(product.searchTerms) || product.searchTerms.length === 0) {
+    throw new Error(`Configuration invalide: products[${index}].searchTerms doit contenir au moins une valeur.`);
+  }
+
+  for (const [termIndex, term] of product.searchTerms.entries()) {
+    requireNonEmptyString(term, `products[${index}].searchTerms[${termIndex}]`);
   }
 }
 
@@ -36,6 +45,10 @@ function validateAlert(rule: AlertRule, index: number, productIds: Set<string>):
 
   if (!Array.isArray(rule.stores) || rule.stores.length === 0) {
     throw new Error(`Configuration invalide: alerts[${index}].stores est vide.`);
+  }
+
+  for (const [storeIndex, store] of rule.stores.entries()) {
+    requireNonEmptyString(store, `alerts[${index}].stores[${storeIndex}]`);
   }
 
   if (!Array.isArray(rule.languages) || rule.languages.length === 0) {
