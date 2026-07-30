@@ -1,6 +1,9 @@
-name: TCG Watch - Hybrid Monitor
+name: TCG Watch - Production Monitor
 
 on:
+  schedule:
+    # GitHub Actions utilise UTC. Exécution demandée toutes les 5 minutes.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -13,7 +16,7 @@ on:
           - baseline
   push:
     branches:
-      - cloudflare-workers-audit
+      - main
     paths:
       - ".github/workflows/watch-maxireves.yml"
       - "cloudflare-worker/config/**"
@@ -25,13 +28,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: tcg-watch-hybrid-monitor
-  cancel-in-progress: false
+  group: tcg-watch-production-monitor
+  # Évite les files d'attente et les doublons si un contrôle dépasse 5 minutes.
+  cancel-in-progress: true
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 4
 
     defaults:
       run:
@@ -48,8 +52,23 @@ jobs:
           cache: npm
           cache-dependency-path: cloudflare-worker/package.json
 
+      - name: Verify required production secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DISCORD_WEBHOOK_URL; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret manquant::$name n'est pas configuré dans GitHub Actions."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: Validate code on configuration changes
         if: github.event_name == 'push'
@@ -63,5 +82,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          MONITOR_MODE: ${{ github.event_name == 'push' && 'baseline' || inputs.mode || 'live' }}
+          MONITOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'live' }}
         run: npm run monitor
+
+      - name: Publish monitoring report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-report-${{ github.run_id }}
+          path: cloudflare-worker/monitor-report.json
+          if-no-files-found: warn
+          retention-days: 14
