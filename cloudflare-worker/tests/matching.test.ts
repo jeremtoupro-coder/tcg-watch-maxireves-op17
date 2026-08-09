@@ -23,6 +23,10 @@ describe("decodeHtml", () => {
   it("décode les entités numériques hexadécimales", () => {
     expect(decodeHtml("&#x41;&#65;")).toBe("AA");
   });
+
+  it("décode l'entité euro nommée", () => {
+    expect(decodeHtml("249,90 &euro;")).toBe("249,90 €");
+  });
 });
 
 describe("detectLanguage", () => {
@@ -36,6 +40,18 @@ describe("detectLanguage", () => {
 
   it("détecte l'anglais", () => {
     expect(detectLanguage("Booster OP17 English version")).toBe("Anglais détecté");
+  });
+
+  it("donne priorité à une version anglaise explicite même sur le storefront français", () => {
+    expect(detectLanguage(
+      "https://www.pixelheart.eu/fr/produit/one-piece-op-18-version-anglaise/ One Piece OP-18 Version Anglaise"
+    )).toBe("Anglais détecté");
+  });
+
+  it("conserve une version française explicite", () => {
+    expect(detectLanguage(
+      "https://www.pixelheart.eu/fr/produit/one-piece-op-18-version-francaise/ One Piece OP-18 Version Française"
+    )).toBe("Français confirmé");
   });
 
   it("ne rejette pas une langue absente", () => {
@@ -60,6 +76,10 @@ describe("detectAvailability", () => {
 describe("extractPrice", () => {
   it("extrait un prix français", () => {
     expect(extractPrice("Prix : 149,90 € TTC")).toBe("149,90 €");
+  });
+
+  it("extrait un prix HTML encodé", () => {
+    expect(extractPrice("Display OP17 249,90 &euro;")).toBe("249,90 €");
   });
 
   it("extrait un prix avec euro devant", () => {
