@@ -45,6 +45,100 @@ describe("priorité de la fiche produit", () => {
     expect(candidate?.sourceUrl).toBe(productUrl);
   });
 
+  it("suit une fiche Oupi découverte et lui donne priorité sans devoir connaître son URL à l'avance", async () => {
+    const categoryUrl = "https://oupi.test/fr/413-precommande-one-piece";
+    const productUrl = "https://oupi.test/fr/display-one-piece/7367-display-op-17-francais.html";
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: [categoryUrl],
+      productUrlPatterns: [/\/\d+-[^/?#]+\.html$/i],
+      followDiscoveredProductPages: true,
+      maxDiscoveredProductPages: 8,
+      notes: []
+    };
+
+    const categoryHtml = `
+      <article>
+        <a href="${productUrl}" title="Display OP-17 Boite de Booster (Français)">
+          Display OP-17 Boite de Booster (Français)
+        </a>
+        <p>Précommande ouverte</p><span>119,80 €</span>
+      </article>
+    `;
+    const productHtml = `
+      <h1>Display OP-17 Boite de Booster (Français)</h1>
+      <span>119,80 €</span>
+      <div>Rupture de stock</div>
+      <p>Précommande : disponibilité août 2026.</p>
+      <dl><dt>Langue</dt><dd>Français</dd></dl>
+    `;
+
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      return new Response(url === productUrl ? productHtml : categoryHtml, {
+        status: 200,
+        headers: { "Content-Type": "text/html" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditConnector(connector);
+    const candidate = audit.candidates.find((item) => item.url === productUrl);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(audit.sources.map((source) => source.sourceUrl)).toContain(productUrl);
+    expect(candidate?.sourceUrl).toBe(productUrl);
+    expect(candidate?.availability).toBe("unavailable");
+    expect(candidate?.language).toBe("Français confirmé");
+  });
+
+  it("applique le profil HTTP explicite du connecteur au lieu d'imiter un navigateur", async () => {
+    const categoryUrl = "https://oupi.test/fr/413-precommande-one-piece";
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: [categoryUrl],
+      productUrlPatterns: [/\.html$/i],
+      requestHeaders: {
+        "User-Agent": "OPWatch/1.0 (+personal read-only stock monitor)"
+      },
+      notes: []
+    };
+
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("user-agent")).toBe("OPWatch/1.0 (+personal read-only stock monitor)");
+      expect(headers.get("user-agent")).not.toMatch(/Mozilla\/5\.0/i);
+      return new Response("<html><body>One Piece</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditConnector(connector);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(audit.sources[0].status).toBe(200);
+  });
+
+  it("conserve un HTTP 403 comme erreur de source et ne fabrique aucun état de stock", async () => {
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: ["https://oupi.test/fr/413-precommande-one-piece"],
+      productUrlPatterns: [/\.html$/i],
+      notes: []
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Forbidden", { status: 403 })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.sources[0].error).toBe("HTTP 403");
+    expect(audit.sources[0].candidates).toEqual([]);
+    expect(audit.candidates).toEqual([]);
+  });
+
   it("ignore un bouton add-to-cart WooCommerce qui hérite de l'URL OP17 mais cible un autre produit", async () => {
     const productUrl = "https://example.test/produit/display-op17-fr/";
     const connector: ConnectorDefinition = {
