@@ -155,6 +155,10 @@ export interface ConnectorDefinition {
   notes: string[];
 }
 
+export interface BrowserRunBinding {
+  quickAction(action: string, options: Record<string, unknown>): Promise<Response>;
+}
+
 export interface Env {
   AUDIT_MODE?: string;
   ALLOW_PUBLIC_AUDIT?: string;
@@ -164,4 +168,5 @@ export interface Env {
   DISCORD_MODE?: "dry-run" | "live";
   DISCORD_WEBHOOK_URL?: string;
   TCG_STATE?: KVNamespace;
+  BROWSER?: BrowserRunBinding;
 }
