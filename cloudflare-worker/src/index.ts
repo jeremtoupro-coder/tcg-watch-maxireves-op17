@@ -173,6 +173,20 @@ export default {
       });
     }
 
+    if (url.pathname === "/opwatch/v1/oupi-audit") {
+      if (live) {
+        return jsonResponse({ error: "Audit Oupi interdit en mode LIVE." }, 403);
+      }
+      const connector = CONNECTORS.find((item) => item.key === "oupi");
+      if (!connector) return jsonResponse({ error: "Connecteur Oupi introuvable." }, 500);
+      const audit = await auditConnector(connector);
+      return jsonResponse({
+        mode: "SAFE_OUPI_CONNECTOR_AUDIT",
+        checkedAt: new Date().toISOString(),
+        audit
+      });
+    }
+
     if (url.pathname === "/config") {
       return jsonResponse({
         version: WATCH_CONFIG.version,
