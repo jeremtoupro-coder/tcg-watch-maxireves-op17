@@ -2,10 +2,8 @@ import type { ConnectorDefinition } from "../types";
 
 const PROBE_SOURCES: Record<string, string[]> = {
   ludisphere: [
-    "https://020d06-2.myshopify.com/collections/one-piece-card-game-precommande/products.json?limit=250",
-    "https://020d06-2.myshopify.com/products/one-piece-op17-display-24-boosters-jcc-fr.js",
-    "https://ludisphere.fr/collections/one-piece-card-game-precommande/products.json?limit=250",
-    "https://ludisphere.fr/products/one-piece-op17-display-24-boosters-jcc-fr.js"
+    "https://020d06-2.myshopify.com/collections/one-piece-card-game-precommande",
+    "https://020d06-2.myshopify.com/collections/one-piece-card-game-precommande/products.json?limit=250"
   ],
   playin: [
     "https://www.play-in.com/fr/gamme/24/one-piece/catalogue",
