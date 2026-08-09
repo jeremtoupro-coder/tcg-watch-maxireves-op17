@@ -269,6 +269,29 @@ function extractCandidates(
   return { candidates: [...candidatesByUrl.values()], productLinksSeen: productUrlsSeen.size };
 }
 
+function normalizeLudisphereShopifyJson(raw: string): string {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("Ludisphere Shopify JSON invalide"); }
+  const products = (parsed as { products?: unknown }).products;
+  if (!Array.isArray(products)) throw new Error("Ludisphere Shopify JSON sans tableau products");
+  const escapeHtml = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&#039;");
+  const cards = products.map((item) => {
+    const product = item as { title?: unknown; handle?: unknown; variants?: Array<{ price?: unknown; available?: unknown }>; images?: Array<{ src?: unknown }> };
+    const title = typeof product.title === "string" ? product.title.trim() : "";
+    const handle = typeof product.handle === "string" ? product.handle.trim() : "";
+    if (!title || !handle) return "";
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+    const available = variants.some((variant) => variant.available === true);
+    const prices = variants.map((variant) => typeof variant.price === "string" || typeof variant.price === "number" ? Number(variant.price) : Number.NaN).filter((price) => Number.isFinite(price)).sort((a, b) => a - b);
+    const price = prices.length ? prices[0].toFixed(2).replace(".", ",") + " €" : "";
+    const image = Array.isArray(product.images) && typeof product.images[0]?.src === "string" ? product.images[0].src : "";
+    const url = "https://ludisphere.fr/products/" + encodeURIComponent(handle);
+    const stock = available ? "En stock Disponible Ajouter au panier" : "Rupture de stock Produit épuisé";
+    return "<article><h2><a href=\"" + escapeHtml(url) + "\">" + escapeHtml(title) + "</a></h2>" + (image ? "<img src=\"" + escapeHtml(image) + "\" alt=\"" + escapeHtml(title) + "\">" : "") + "<p>One Piece Card Game Français FR " + stock + " " + escapeHtml(price) + "</p></article>";
+  }).join("");
+  return "<!doctype html><html lang=\"fr\"><head><title>Ludisphere One Piece Shopify feed</title></head><body><h1>One Piece Card Game Ludisphere</h1>" + cards + "</body></html>";
+}
+
 function buildRequestHeaders(connector: ConnectorDefinition): Record<string, string> {
   return {
     "User-Agent": "TCGWatcherAudit/0.1 (+personal read-only stock audit)",
@@ -295,7 +318,9 @@ async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): P
     if (responseBytes > MAX_RESPONSE_BYTES) throw new Error(`Réponse trop volumineuse: ${responseBytes} octets`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const html = new TextDecoder("utf-8").decode(body);
+    let html = new TextDecoder("utf-8").decode(body);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (connector.key === "ludisphere" && /application\/json/i.test(contentType)) { html = normalizeLudisphereShopifyJson(html); }
     validateSemanticResponse(html, connector);
     const extracted = extractCandidates(html, response.url || sourceUrl, connector);
     return {
