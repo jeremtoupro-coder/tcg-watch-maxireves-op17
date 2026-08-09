@@ -1,9 +1,15 @@
 export {};
 
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
+const auditToken = process.env.PREVIEW_AUDIT_TOKEN ?? "";
 if (!baseUrl) throw new Error("PREVIEW_URL est obligatoire.");
+if (!auditToken) throw new Error("PREVIEW_AUDIT_TOKEN est obligatoire.");
 
-async function getJson(path: string): Promise<Record<string, any>> {
+async function getJson(
+  path: string,
+  expectedStatus = 200,
+  headers: Record<string, string> = {}
+): Promise<Record<string, any>> {
   const url = `${baseUrl}${path}`;
   let lastError: unknown;
 
@@ -11,10 +17,13 @@ async function getJson(path: string): Promise<Record<string, any>> {
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     try {
       const response = await fetch(url, {
-        headers: { "User-Agent": "OPWatchPreviewSmoke/1.0" }
+        headers: { "User-Agent": "OPWatchPreviewSmoke/1.0", ...headers }
       });
-      if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
-      return await response.json() as Record<string, any>;
+      const body = await response.json() as Record<string, any>;
+      if (response.status !== expectedStatus) {
+        throw new Error(`${path}: HTTP ${response.status}, attendu ${expectedStatus}: ${JSON.stringify(body)}`);
+      }
+      return body;
     } catch (error) {
       lastError = error;
       if (attempt < 6) await new Promise((resolve) => setTimeout(resolve, 5_000));
@@ -34,10 +43,27 @@ if (root.runtime?.monitoringEnabled !== false || root.runtime?.automaticPolling 
 if (root.runtime?.stateWritesEnabled !== false || root.runtime?.discordMode !== "dry-run") {
   throw new Error("La preview autorise une écriture ou un envoi Discord : arrêt.");
 }
+if (root.runtime?.stateBindingPresent !== false || root.runtime?.cron !== false) {
+  throw new Error("La preview ne doit avoir ni KV ni cron.");
+}
 
 const health = await getJson("/health");
 if (health.status !== "ok" || health.mode !== "SAFE_PREVIEW") {
   throw new Error(`Healthcheck invalide: ${JSON.stringify(health)}`);
+}
+if (!Array.isArray(health.stores) || health.stores.length !== 21) {
+  throw new Error(`Le healthcheck ne décrit pas les 21 boutiques: ${JSON.stringify(health.stores)}`);
+}
+
+const config = await getJson("/config");
+if (config.opWatchV1?.officialCatalogUrl !== "https://fr.onepiece-cardgame.com/products/") {
+  throw new Error("La source calendrier n'est pas la source officielle française attendue.");
+}
+if (config.opWatchV1?.language?.strict !== true || config.opWatchV1?.language?.target !== "fr") {
+  throw new Error("La configuration commerciale n'est pas strictement française.");
+}
+if (!Array.isArray(config.stores) || config.stores.length !== 21) {
+  throw new Error("La configuration déployée ne contient pas exactement 21 boutiques.");
 }
 
 const calendar = await getJson("/opwatch/v1/calendar");
@@ -50,6 +76,9 @@ if (!Number.isInteger(calendar.catalogProductsParsed) || calendar.catalogProduct
 if (!Array.isArray(calendar.activeProducts)) {
   throw new Error("activeProducts doit être un tableau.");
 }
+if (calendar.source !== "https://fr.onepiece-cardgame.com/products/") {
+  throw new Error(`Source calendrier inattendue: ${calendar.source}`);
+}
 
 for (const product of calendar.activeProducts) {
   if (!product.id || !product.releaseDate || product.watchWindow?.active !== true) {
@@ -57,10 +86,26 @@ for (const product of calendar.activeProducts) {
   }
 }
 
+const unauthorizedAudit = await getJson("/audit?store=playin", 401);
+if (!/jeton/i.test(String(unauthorizedAudit.error ?? ""))) {
+  throw new Error("La route d'audit ne refuse pas explicitement l'accès sans jeton.");
+}
+
+const protectedAudit = await getJson("/audit?store=playin", 200, {
+  Authorization: `Bearer ${auditToken}`
+});
+if (protectedAudit.mode !== "READ_ONLY_AUDIT" || protectedAudit.stores?.[0]?.store !== "playin") {
+  throw new Error(`Audit protégé incohérent: ${JSON.stringify(protectedAudit)}`);
+}
+if (!["pending_authorized_feed", "active_fast_watch"].includes(protectedAudit.stores[0].configuredStatus)) {
+  throw new Error(`Statut Playin inattendu: ${protectedAudit.stores[0].configuredStatus}`);
+}
+
 console.log(JSON.stringify({
   ok: true,
   deployment: root.deployment,
-  pilotStores: root.v1?.pilotStores,
+  stores: health.stores.length,
   calendarProductsParsed: calendar.catalogProductsParsed,
-  activeProductIds: calendar.activeProducts.map((product: any) => product.id)
+  activeProductIds: calendar.activeProducts.map((product: any) => product.id),
+  protectedAudit: "PASS"
 }, null, 2));

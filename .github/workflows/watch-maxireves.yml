@@ -1,4 +1,4 @@
-name: TCG Watch - Production Monitor
+name: OP Watch - Production Monitor (gated)
 
 on:
   schedule:
@@ -9,20 +9,14 @@ on:
       mode:
         description: "Mode d'exécution"
         required: false
-        default: "live"
+        default: "baseline"
         type: choice
         options:
           - live
           - baseline
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/watch-maxireves.yml"
-      - "cloudflare-worker/config/**"
-      - "cloudflare-worker/src/**"
-      - "cloudflare-worker/scripts/poll.ts"
-      - "cloudflare-worker/package.json"
+  repository_dispatch:
+    types:
+      - op-watch-fast-watch
 
 permissions:
   contents: read
@@ -34,6 +28,7 @@ concurrency:
 
 jobs:
   monitor:
+    if: vars.OP_WATCH_PRODUCTION_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 4
 
@@ -55,24 +50,23 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          MONITOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'live' }}
         run: |
           missing=0
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DISCORD_WEBHOOK_URL; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
             if [ -z "${!name}" ]; then
               echo "::error title=Secret manquant::$name n'est pas configuré dans GitHub Actions."
               missing=1
             fi
           done
+          if [ "$MONITOR_MODE" = "live" ] && [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "::error title=Secret manquant::DISCORD_WEBHOOK_URL n'est pas configuré."
+            missing=1
+          fi
           exit "$missing"
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Validate code on configuration changes
-        if: github.event_name == 'push'
-        run: |
-          npm run typecheck
-          npm test
+        run: npm ci --no-audit --no-fund
 
       - name: Monitor every configured store
         env:
@@ -80,6 +74,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          AUTHORIZED_FEED_PLAYIN_URL: ${{ secrets.AUTHORIZED_FEED_PLAYIN_URL }}
+          AUTHORIZED_FEED_CULTURA_URL: ${{ secrets.AUTHORIZED_FEED_CULTURA_URL }}
+          AUTHORIZED_FEED_MICROMANIA_URL: ${{ secrets.AUTHORIZED_FEED_MICROMANIA_URL }}
+          AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
+          AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
+          AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
           MONITOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'live' }}
         run: npm run monitor
 

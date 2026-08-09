@@ -1,222 +1,147 @@
-name: Cloudflare Audit CI
+name: OP Watch Test CI and Safe Preview
 
 on:
   push:
     branches:
-      - cloudflare-workers-audit
+      - op-watch-v1-test
+    paths:
+      - "cloudflare-worker/**"
+      - ".github/workflows/cloudflare-audit-ci.yml"
   pull_request:
     branches:
       - main
     paths:
       - "cloudflare-worker/**"
       - ".github/workflows/cloudflare-audit-ci.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-audit-ci-${{ github.ref }}
+  group: op-watch-test-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
+    name: Validate code
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: cloudflare-worker
     steps:
-      - name: Checkout branch
+      - name: Checkout exact revision
         uses: actions/checkout@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install dependencies
-        run: npm install
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
       - name: TypeScript check
         run: npm run typecheck
-      - name: Unit tests
+      - name: Automated tests
         run: npm test
-      - name: Wrangler dry run
+      - name: Worker build dry run
         run: npx wrangler deploy --dry-run
 
-  audit-pilot:
-    if: >-
-      github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[audit-pilot]')
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install dependencies
-        run: npm install
-      - name: Read-only audit of the four pilot stores
-        run: npm run live-audit
-      - name: Upload pilot audit report
-        uses: actions/upload-artifact@v4
-        with:
-          name: op-watch-v1-pilot-audit
-          path: cloudflare-worker/audit-report.json
-          if-no-files-found: error
-          retention-days: 7
-
   deploy-preview:
+    name: Deploy and audit isolated preview
     if: >-
-      github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[deploy-preview]')
+      (github.event_name == 'push' && github.ref == 'refs/heads/op-watch-v1-test') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/op-watch-v1-test')
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PREVIEW_URL: https://tcg-watch-one-piece-preview.jeremie-touitou-pro.workers.dev
     steps:
-      - name: Checkout branch
+      - name: Checkout exact revision
         uses: actions/checkout@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install dependencies
-        run: npm install
-      - name: Generate KV-aware deployment config
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify preview credentials
+        shell: bash
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret manquant::$name n'est pas configuré."
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Create ephemeral preview audit token
+        shell: bash
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Generate isolated SAFE_PREVIEW config
         run: npm run generate-deploy-config
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+          DEPLOY_WORKER_NAME: tcg-watch-one-piece-preview
+          DEPLOY_BIND_KV: "false"
           DEPLOY_MONITORING_ENABLED: "false"
           DEPLOY_WRITE_STATE: "false"
           DEPLOY_DISCORD_MODE: dry-run
-      - name: Deploy safe preview
+          DEPLOY_ALLOW_PUBLIC_AUDIT: "true"
+      - name: Assert generated deployment safety
+        run: >-
+          node -e "const c=require('./wrangler.generated.json');
+          if(c.name!=='tcg-watch-one-piece-preview'||c.vars.MONITORING_ENABLED!=='false'||
+          c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||
+          c.kv_namespaces?.length||c.triggers?.crons?.length) process.exit(1)"
+      - name: Deploy dedicated preview Worker
         run: npx wrangler deploy --config wrangler.generated.json
+      - name: Install ephemeral audit token
+        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.generated.json
+      - name: Install configured authorized feed secrets
+        shell: bash
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Smoke test deployed preview
+          AUTHORIZED_FEED_PLAYIN_URL: ${{ secrets.AUTHORIZED_FEED_PLAYIN_URL }}
+          AUTHORIZED_FEED_CULTURA_URL: ${{ secrets.AUTHORIZED_FEED_CULTURA_URL }}
+          AUTHORIZED_FEED_MICROMANIA_URL: ${{ secrets.AUTHORIZED_FEED_MICROMANIA_URL }}
+          AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
+          AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
+          AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
+        run: |
+          for name in \
+            AUTHORIZED_FEED_PLAYIN_URL \
+            AUTHORIZED_FEED_CULTURA_URL \
+            AUTHORIZED_FEED_MICROMANIA_URL \
+            AUTHORIZED_FEED_FNAC_URL \
+            AUTHORIZED_FEED_CARREFOUR_URL \
+            AUTHORIZED_FEED_KING_JOUET_URL; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              printf '%s' "$value" | npx wrangler secret put "$name" --config wrangler.generated.json
+            fi
+          done
+      - name: Smoke test real preview
         run: npm run smoke-preview
-        env:
-          PREVIEW_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
-
-  seed-baseline:
-    if: >-
-      github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[seed-baseline]')
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install dependencies
-        run: npm install
-      - name: Seed silent baseline in Cloudflare KV
-        run: npm run seed-baseline
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-      - name: Upload baseline report
+      - name: Audit all 21 shops through preview
+        run: npm run audit-preview
+      - name: Upload 21-shop audit evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tcg-kv-baseline-report
-          path: cloudflare-worker/baseline-report.json
-          if-no-files-found: error
-          retention-days: 7
-
-  simulate-change:
-    if: >-
-      github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[simulate-change]')
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install dependencies
-        run: npm install
-      - name: Simulate a real KV return in stock
-        run: npm run simulate-change
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-      - name: Upload simulation report
-        uses: actions/upload-artifact@v4
-        with:
-          name: tcg-change-simulation-report
-          path: cloudflare-worker/change-simulation-report.json
-          if-no-files-found: error
-          retention-days: 7
-
-  deploy-live:
-    if: >-
-      github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[deploy-live]')
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: cloudflare-worker
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install dependencies
-        run: npm install
-      - name: Ensure all silent baselines exist
-        run: npm run seed-baseline
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-      - name: Generate live deployment config
-        run: npm run generate-deploy-config
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-          DEPLOY_MONITORING_ENABLED: "true"
-          DEPLOY_WRITE_STATE: "true"
-          DEPLOY_DISCORD_MODE: live
-          DEPLOY_CRON: "* * * * *"
-      - name: Install Discord secret in Cloudflare
-        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.generated.json
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      - name: Deploy live monitoring
-        run: npx wrangler deploy --config wrangler.generated.json
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          name: op-watch-safe-preview-audit-${{ github.run_id }}
+          path: cloudflare-worker/audit-report.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -7,19 +7,18 @@
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "live-audit": "tsx scripts/live-audit.ts",
-    "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts",
-    "monitor": "tsx scripts/poll.ts",
-    "generate-deploy-config": "tsx scripts/generate-deploy-config.ts",
-    "simulate-change": "tsx scripts/simulate-change-dry-only.ts",
-    "smoke-preview": "tsx scripts/smoke-preview.ts"
+    "check": "npm run typecheck && npm test && wrangler deploy --dry-run",
+    "monitor": "node --import tsx scripts/poll.ts",
+    "generate-deploy-config": "node --import tsx scripts/generate-deploy-config.ts",
+    "smoke-preview": "node --import tsx scripts/smoke-preview.ts",
+    "audit-preview": "node --import tsx scripts/audit-preview.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
-    "@types/node": "latest",
-    "tsx": "latest",
-    "typescript": "latest",
-    "vitest": "latest",
-    "wrangler": "latest"
+    "@cloudflare/workers-types": "5.20260809.1",
+    "@types/node": "26.2.0",
+    "tsx": "4.23.11",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.120.0"
   }
 }

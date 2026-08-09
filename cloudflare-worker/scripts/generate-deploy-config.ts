@@ -13,38 +13,40 @@ interface KvNamespace {
 
 interface WranglerConfig {
   [key: string]: unknown;
+  name?: string;
   vars?: Record<string, string>;
 }
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
 const namespaceTitle = process.env.CLOUDFLARE_KV_NAMESPACE ?? "tcg-watch-state";
+const bindKv = process.env.DEPLOY_BIND_KV !== "false";
 
-if (!accountId || !apiToken) {
-  throw new Error("CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN sont obligatoires.");
-}
-
-const response = await fetch(
-  `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
-  {
-    headers: { Authorization: `Bearer ${apiToken}` }
+async function resolveKvNamespaceId(): Promise<string> {
+  if (!accountId || !apiToken) {
+    throw new Error("Les identifiants Cloudflare sont obligatoires quand le binding KV est demandé.");
   }
-);
 
-if (!response.ok) {
-  throw new Error(`Impossible de lister les namespaces KV: HTTP ${response.status}`);
-}
-
-const payload = await response.json() as CloudflareEnvelope<KvNamespace[]>;
-if (!payload.success) {
-  throw new Error(`Cloudflare refuse la liste KV: ${JSON.stringify(payload.errors ?? [])}`);
-}
-
-const matches = payload.result.filter((namespace) => namespace.title === namespaceTitle);
-if (matches.length !== 1) {
-  throw new Error(
-    `Namespace KV '${namespaceTitle}' introuvable ou ambigu (${matches.length} résultat(s)).`
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces?per_page=100`,
+    { headers: { Authorization: `Bearer ${apiToken}` } }
   );
+  if (!response.ok) {
+    throw new Error(`Impossible de lister les namespaces KV: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json() as CloudflareEnvelope<KvNamespace[]>;
+  if (!payload.success) {
+    throw new Error(`Cloudflare refuse la liste KV: ${JSON.stringify(payload.errors ?? [])}`);
+  }
+
+  const matches = payload.result.filter((namespace) => namespace.title === namespaceTitle);
+  if (matches.length !== 1) {
+    throw new Error(
+      `Namespace KV '${namespaceTitle}' introuvable ou ambigu (${matches.length} résultat(s)).`
+    );
+  }
+  return matches[0].id;
 }
 
 const baseConfig = JSON.parse(await readFile("wrangler.jsonc", "utf8")) as WranglerConfig;
@@ -61,17 +63,18 @@ if (process.env.DEPLOY_ACTIVE_STORES?.trim()) {
 const cronExpression = process.env.DEPLOY_CRON?.trim();
 const generatedConfig: WranglerConfig = {
   ...baseConfig,
+  name: process.env.DEPLOY_WORKER_NAME?.trim() || baseConfig.name,
   vars,
-  kv_namespaces: [
-    {
-      binding: "TCG_STATE",
-      id: matches[0].id
-    }
-  ],
   triggers: {
     crons: cronExpression ? [cronExpression] : []
   }
 };
+
+if (bindKv) {
+  generatedConfig.kv_namespaces = [{ binding: "TCG_STATE", id: await resolveKvNamespaceId() }];
+} else {
+  delete generatedConfig.kv_namespaces;
+}
 
 await writeFile(
   "wrangler.generated.json",
@@ -87,7 +90,8 @@ await writeFile(
 );
 
 console.log(
-  `Configuration générée: KV=${namespaceTitle}, monitoring=${vars.MONITORING_ENABLED}, ` +
+  `Configuration générée: worker=${generatedConfig.name}, KV=${bindKv ? namespaceTitle : "absent"}, ` +
+  `monitoring=${vars.MONITORING_ENABLED}, ` +
   `writeState=${vars.WRITE_STATE}, discord=${vars.DISCORD_MODE}, publicAudit=${vars.ALLOW_PUBLIC_AUDIT}, ` +
   `cron=${cronExpression ?? "désactivé"}`
 );

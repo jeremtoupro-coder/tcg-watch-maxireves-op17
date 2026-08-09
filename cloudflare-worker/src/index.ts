@@ -1,11 +1,22 @@
-import { WATCH_CONFIG } from "./config";
 import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import { parseActiveStores, runMonitoringCycle } from "./monitor";
-import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
+import { parseActiveStores } from "./monitor";
+import {
+  auditStore,
+  configuredStoreStatus,
+  hasConfiguredAuthorizedFeed
+} from "./storeAudit";
 import opWatchV1Config from "../config/opwatch-v1.json";
-import { activeOfficialProducts, computeWatchWindow, parseOfficialCatalog } from "./opwatchV1";
+import { buildActiveWatchConfig, candidateForActiveProducts } from "./opwatchV1";
+import { loadOfficialCalendar } from "./officialCalendar";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
+
+const CALENDAR_PREVIEW_CACHE_MS = 15 * 60 * 1000;
+let calendarPreviewCache: {
+  expiresAt: number;
+  value: Awaited<ReturnType<typeof loadOfficialCalendar>>;
+} | undefined;
+let calendarPreviewLoad: Promise<Awaited<ReturnType<typeof loadOfficialCalendar>>> | undefined;
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -45,52 +56,77 @@ function authorizedFeedReadiness(env: Env) {
     .map((connector) => ({
       store: connector.key,
       configured: hasConfiguredAuthorizedFeed(connector, env),
-      directPollingDisabledWithoutFeed: connector.directPollingDisabledWithoutFeed === true
+      directPollingDisabledWithoutFeed: connector.directPollingDisabledWithoutFeed === true,
+      status: configuredStoreStatus(connector, env)
     }));
 }
 
+function storeReadiness(env: Env) {
+  return CONNECTORS.map((connector) => ({
+    store: connector.key,
+    name: connector.name,
+    status: configuredStoreStatus(connector, env),
+    sourceKind: connector.authorizedFeedEnv
+      ? hasConfiguredAuthorizedFeed(connector, env) ? "authorized_feed" : "none"
+      : connector.authoritativeStructuredFeed ? "public_structured_feed" : "public_html",
+    commercialAlertsEnabled: connector.commercialAlertsEnabled !== false,
+    authorizedFeedConfigured: hasConfiguredAuthorizedFeed(connector, env),
+    notes: connector.notes
+  }));
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const length = Math.max(left.length, right.length);
+  let mismatch = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+  return mismatch === 0;
+}
+
+function validPreviewAuditToken(request: Request, env: Env): boolean {
+  const expected = env.PREVIEW_AUDIT_TOKEN?.trim();
+  if (!expected) return false;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  const explicit = request.headers.get("x-op-watch-audit-token")?.trim() ?? "";
+  const received = bearer || explicit;
+  return Boolean(received) && constantTimeEqual(received, expected);
+}
+
 async function officialCalendarPreview(now = new Date()) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(opWatchV1Config.officialCatalogUrl, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "OPWatch/1.0 (+read-only release calendar)",
-        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
-        "Accept-Language": "en-US,en;q=0.9"
-      }
-    });
-    if (!response.ok) throw new Error(`Official catalog HTTP ${response.status}`);
-    const html = await response.text();
-    const products = parseOfficialCatalog(html);
-    if (products.length === 0) {
-      throw new Error("Le catalogue officiel a répondu mais aucun produit daté n'a été reconnu.");
-    }
-    const active = activeOfficialProducts(
-      products,
-      now,
-      opWatchV1Config.watchWindow.daysBeforeRelease,
-      opWatchV1Config.watchWindow.daysAfterRelease
-    );
+  if (calendarPreviewCache && calendarPreviewCache.expiresAt > now.getTime()) {
     return {
-      source: opWatchV1Config.officialCatalogUrl,
-      fetchedAt: now.toISOString(),
-      catalogProductsParsed: products.length,
-      activeProducts: active.map((product) => ({
-        ...product,
-        watchWindow: computeWatchWindow(
-          product.releaseDate,
-          now,
-          opWatchV1Config.watchWindow.daysBeforeRelease,
-          opWatchV1Config.watchWindow.daysAfterRelease
-        )
-      }))
+      source: calendarPreviewCache.value.source,
+      fetchedAt: calendarPreviewCache.value.fetchedAt,
+      sourcePages: calendarPreviewCache.value.sourcePages,
+      catalogProductsParsed: calendarPreviewCache.value.catalogProducts.length,
+      activeProducts: calendarPreviewCache.value.activeProducts
+    };
+  }
+
+  calendarPreviewLoad ??= loadOfficialCalendar({
+    sourceUrl: opWatchV1Config.officialCatalogUrl,
+    now,
+    daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
+    daysAfter: opWatchV1Config.watchWindow.daysAfterRelease
+  });
+  let calendar: Awaited<ReturnType<typeof loadOfficialCalendar>>;
+  try {
+    calendar = await calendarPreviewLoad;
+    calendarPreviewCache = {
+      expiresAt: now.getTime() + CALENDAR_PREVIEW_CACHE_MS,
+      value: calendar
     };
   } finally {
-    clearTimeout(timeout);
+    calendarPreviewLoad = undefined;
   }
+  return {
+    source: calendar.source,
+    fetchedAt: calendar.fetchedAt,
+    sourcePages: calendar.sourcePages,
+    catalogProductsParsed: calendar.catalogProducts.length,
+    activeProducts: calendar.activeProducts
+  };
 }
 
 export default {
@@ -112,34 +148,34 @@ export default {
         project: "OP Watch — moteur d'alertes One Piece TCG",
         deployment: mode,
         runtime: {
-          cron: live,
+          cron: false,
           monitoringEnabled: env.MONITORING_ENABLED === "true",
           discordMode: env.DISCORD_MODE ?? "dry-run",
           stateBindingPresent: Boolean(env.TCG_STATE),
           stateWritesEnabled: env.WRITE_STATE === "true",
-          publicStorePollingEnabled: env.ALLOW_PUBLIC_AUDIT === "true",
-          automaticPolling: live,
+          authenticatedAuditEnabled: env.ALLOW_PUBLIC_AUDIT === "true" && Boolean(env.PREVIEW_AUDIT_TOKEN),
+          automaticPolling: false,
           activeStores: parseActiveStores(env.ACTIVE_STORES),
-          schedule: live ? "one task per minute" : "disabled",
+          schedule: live ? "external scheduler only" : "disabled",
           authorizedFeeds: authorizedFeedReadiness(env)
         },
         v1: {
-          mode: opWatchV1Config.mode,
+          mode,
           targetLanguage: opWatchV1Config.language.target,
           strictLanguage: opWatchV1Config.language.strict,
           fastWatchSeconds: opWatchV1Config.polling.fastWatchSeconds,
           discoverySeconds: opWatchV1Config.polling.discoverySeconds,
           watchWindow: opWatchV1Config.watchWindow,
           formats: opWatchV1Config.formats,
-          pilotStores: opWatchV1Config.pilotStores.filter((store) => store.enabled).map((store) => store.id),
+          stores: CONNECTORS.map((connector) => connector.key),
           discordProductImages: opWatchV1Config.discord.includeProductImage,
           calendarPreview: "/opwatch/v1/calendar"
         },
         configuration: {
-          version: WATCH_CONFIG.version,
-          enabledProducts: WATCH_CONFIG.products.filter((product) => product.enabled).length,
-          enabledAlerts: WATCH_CONFIG.alerts.filter((alert) => alert.enabled).length,
-          file: "config/alerts.json"
+          version: opWatchV1Config.version,
+          productSource: "official-calendar-dynamic",
+          notifyOnInitialDiscovery: false,
+          commercialLanguage: "Français confirmé uniquement"
         },
         usage: {
           config: "/config",
@@ -157,6 +193,7 @@ export default {
         monitoringEnabled: env.MONITORING_ENABLED === "true",
         stateBindingPresent: Boolean(env.TCG_STATE),
         authorizedFeeds: authorizedFeedReadiness(env),
+        stores: storeReadiness(env),
         checkedAt: new Date().toISOString()
       });
     }
@@ -175,12 +212,24 @@ export default {
 
     if (url.pathname === "/config") {
       return jsonResponse({
-        version: WATCH_CONFIG.version,
-        settings: WATCH_CONFIG.settings,
-        products: WATCH_CONFIG.products,
-        alerts: WATCH_CONFIG.alerts,
+        version: opWatchV1Config.version,
         opWatchV1: opWatchV1Config,
-        authorizedFeeds: authorizedFeedReadiness(env)
+        alertPolicy: {
+          productSource: "official-calendar-dynamic",
+          notifyOnInitialDiscovery: false,
+          language: "Français confirmé",
+          rejectUnknownAvailability: true,
+          events: [
+            "new_listing",
+            "back_in_stock",
+            "preorder_opened",
+            "became_unavailable",
+            "price_drop",
+            "price_increase"
+          ]
+        },
+        authorizedFeeds: authorizedFeedReadiness(env),
+        stores: storeReadiness(env)
       });
     }
 
@@ -194,6 +243,13 @@ export default {
         mode,
         hint: "Les contrôles automatiques sont exécutés uniquement par le gestionnaire planifié."
       }, 403);
+    }
+
+    if (!validPreviewAuditToken(request, env)) {
+      return jsonResponse({
+        error: "Jeton d'audit absent ou invalide.",
+        mode
+      }, 401);
     }
 
     const requestedStore = url.searchParams.get("store") as StoreKey | null;
@@ -216,8 +272,13 @@ export default {
       });
     }
 
-    const candidates = stores.flatMap((store) => store.candidates);
+    const calendar = await officialCalendarPreview();
+    const candidates = stores
+      .flatMap((store) => store.candidates)
+      .map((candidate) => candidateForActiveProducts(candidate, calendar.activeProducts))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
     const evaluation = await evaluateCandidates(candidates, env, {
+      config: buildActiveWatchConfig(calendar.activeProducts),
       baselineStores: selected
         .filter((connector) => connector.commercialAlertsEnabled !== false)
         .map((connector) => connector.key)
@@ -229,22 +290,5 @@ export default {
       stores,
       evaluation
     });
-  },
-
-  async scheduled(
-    controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<void> {
-    ctx.waitUntil(
-      runMonitoringCycle(env, { scheduledTime: controller.scheduledTime })
-        .then((result) => {
-          console.log(JSON.stringify({ event: "tcg-monitor", ...result }));
-        })
-        .catch((error) => {
-          console.error("TCG monitoring failed", error);
-          throw error;
-        })
-    );
   }
 };

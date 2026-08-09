@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+cloudflare-worker/node_modules/
+cloudflare-worker/.wrangler/
+cloudflare-worker/wrangler.generated.json
+cloudflare-worker/*-report.json
