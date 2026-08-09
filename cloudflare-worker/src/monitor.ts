@@ -5,16 +5,7 @@ import {
   selectConnectors
 } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import type { ConnectorDefinition, Env, StoreKey } from "./types";
-
-const FANTASY_BATCH_SIZE = 2;
-
-export interface MonitoringTask {
-  store: StoreKey;
-  connector: ConnectorDefinition;
-  batchIndex: number;
-  batchCount: number;
-}
+import type { Env, StoreKey } from "./types";
 
 export function parseActiveStores(rawValue?: string): StoreKey[] {
   if (!rawValue?.trim()) return [...DEFAULT_CLOUDFLARE_STORES];
@@ -27,51 +18,12 @@ export function parseActiveStores(rawValue?: string): StoreKey[] {
   return [...new Set(stores)];
 }
 
-export function selectScheduledStore(
-  stores: StoreKey[],
-  scheduledTime: number
-): StoreKey | undefined {
-  if (stores.length === 0) return undefined;
-  const minute = Math.floor(scheduledTime / 60_000);
-  return stores[minute % stores.length];
-}
-
-export function buildMonitoringTasks(stores: StoreKey[]): MonitoringTask[] {
-  const tasks: MonitoringTask[] = [];
-
-  for (const connector of selectConnectors(stores)) {
-    const batchSize = connector.key === "fantasy-sphere"
-      ? FANTASY_BATCH_SIZE
-      : Math.max(1, connector.sources.length);
-    const batchCount = Math.ceil(connector.sources.length / batchSize);
-
-    for (let batchIndex = 0; batchIndex < batchCount; batchIndex += 1) {
-      const sources = connector.sources.slice(
-        batchIndex * batchSize,
-        (batchIndex + 1) * batchSize
-      );
-
-      tasks.push({
-        store: connector.key,
-        connector: { ...connector, sources },
-        batchIndex,
-        batchCount
-      });
-    }
-  }
-
-  return tasks;
-}
-
-export function selectScheduledTask(
-  tasks: MonitoringTask[],
-  scheduledTime: number
-): MonitoringTask | undefined {
-  if (tasks.length === 0) return undefined;
-  const minute = Math.floor(scheduledTime / 60_000);
-  return tasks[minute % tasks.length];
-}
-
+/**
+ * Un cron Cloudflare est déclenché chaque minute. Contrairement à l'ancien
+ * round-robin, un cycle contrôle toutes les boutiques actives : une boutique
+ * ne doit jamais attendre N minutes simplement parce que N boutiques sont
+ * configurées. Chaque connecteur conserve sa propre limitation de concurrence.
+ */
 export async function runMonitoringCycle(
   env: Env,
   options: {
@@ -80,11 +32,9 @@ export async function runMonitoringCycle(
   } = {}
 ): Promise<{
   status: "disabled" | "completed";
-  store?: StoreKey;
-  batchIndex?: number;
-  batchCount?: number;
+  stores?: StoreKey[];
   reason?: string;
-  audit?: Awaited<ReturnType<typeof auditConnector>>;
+  audits?: Awaited<ReturnType<typeof auditConnector>>[];
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
 }> {
   if (env.MONITORING_ENABLED !== "true") {
@@ -105,34 +55,38 @@ export async function runMonitoringCycle(
   const activeStores = options.forceStore
     ? [options.forceStore]
     : parseActiveStores(env.ACTIVE_STORES);
-  const tasks = buildMonitoringTasks(activeStores);
-  const task = selectScheduledTask(tasks, options.scheduledTime ?? Date.now());
+  const connectors = selectConnectors(activeStores);
 
-  if (!task) {
+  if (connectors.length === 0) {
     return {
       status: "disabled",
       reason: "Aucune boutique active."
     };
   }
 
-  const audit = await auditConnector(task.connector);
-  const failedSources = audit.sources.filter((source) => source.error);
-  if (failedSources.length > 0) {
-    throw new Error(
-      `${task.connector.name}: ${failedSources.map((source) => source.error).join(", ")}`
-    );
+  const audits = await Promise.all(connectors.map((connector) => auditConnector(connector)));
+  const failures = audits.flatMap((audit) =>
+    audit.sources
+      .filter((source) => source.error)
+      .map((source) => `${audit.storeName}: ${source.error}`)
+  );
+
+  if (failures.length > 0) {
+    // Fail closed: une source attendue en erreur ne doit jamais être considérée
+    // comme une absence de stock. Le cycle est signalé en échec avant toute
+    // baseline silencieuse qui pourrait effacer un état valide.
+    throw new Error(`Surveillance dégradée: ${failures.join(" | ")}`);
   }
 
-  const evaluation = await evaluateCandidates(audit.candidates, env, {
-    baselineStores: [task.store]
+  const candidates = audits.flatMap((audit) => audit.candidates);
+  const evaluation = await evaluateCandidates(candidates, env, {
+    baselineStores: connectors.map((connector) => connector.key)
   });
 
   return {
     status: "completed",
-    store: task.store,
-    batchIndex: task.batchIndex,
-    batchCount: task.batchCount,
-    audit,
+    stores: connectors.map((connector) => connector.key),
+    audits,
     evaluation
   };
 }
