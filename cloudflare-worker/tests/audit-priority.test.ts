@@ -126,6 +126,33 @@ describe("priorité de la fiche produit", () => {
     expect(audit.candidates[0].availability).toBe("unavailable");
   });
 
+  it("reconnaît le champ Philibert Langue(s) sans contamination du texte anglais", async () => {
+    const productUrl = "https://philibert.test/fr/one-piece/op17-boite-24-boosters.html";
+    const connector: ConnectorDefinition = {
+      key: "philibert",
+      name: "Philibert",
+      sources: [productUrl],
+      productUrlPatterns: [/\/op17-[^/?#]+\.html$/i],
+      notes: []
+    };
+    const html = `
+      <h1>One Piece - OP17 - Boite de 24 Boosters</h1>
+      <p>Boite de boosters en français.</p>
+      <dl><dt>Langue(s)</dt><dd>Français</dd></dl>
+      <p>Jeux de rôle en anglais</p>
+      <p>En stock</p>
+    `;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].language).toBe("Français confirmé");
+  });
+
   it("applique le profil HTTP explicite du connecteur au lieu d'imiter un navigateur", async () => {
     const categoryUrl = "https://oupi.test/fr/413-precommande-one-piece";
     const connector: ConnectorDefinition = {

@@ -145,7 +145,7 @@ function languageFromPrimary(primary: string, fallback: string): LanguageStatus 
 
 function extractStructuredProductLanguage(productText: string): LanguageStatus | undefined {
   const field = productText.match(
-    /\b(?:langue|language)\s*:?[\s-]*(français|francais|french|anglais|english|japonais|japanese|allemand|german|espagnol|spanish|italien|italian|néerlandais|dutch)\b/i
+    /\b(?:langue|language)(?:\(s\)|s)?\s*:?[\s-]*(français|francais|french|anglais|english|japonais|japanese|allemand|german|espagnol|spanish|italien|italian|néerlandais|dutch)\b/i
   );
   if (!field?.[1]) return undefined;
   const detected = detectLanguage(field[1]);

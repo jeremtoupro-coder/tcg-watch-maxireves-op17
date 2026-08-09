@@ -1,6 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { CONNECTORS } from "../src/connectors";
-import { isTransientPreviewStatus } from "../src/previewHttp";
+import {
+  isCommerciallyQualifiedCandidate,
+  isTransientPreviewStatus
+} from "../src/previewHttp";
 import type { StoreAudit } from "../src/types";
 
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
@@ -107,7 +110,16 @@ const summaries = audits.map((audit) => {
     availabilities,
     productsWithPrice: audit.candidates.filter((candidate) => Boolean(candidate.priceText)).length,
     productsWithImage: audit.candidates.filter((candidate) => Boolean(candidate.imageUrl)).length,
-    commerciallyEligibleProducts: audit.candidates.filter((candidate) => candidate.commercialEligible === true).length,
+    frenchConfirmedProducts: audit.candidates.filter(
+      (candidate) => candidate.language === "Français confirmé"
+    ).length,
+    knownAvailabilityProducts: audit.candidates.filter(
+      (candidate) => candidate.availability !== "unknown"
+    ).length,
+    sourceEligibleProducts: audit.candidates.filter(
+      (candidate) => candidate.commercialEligible === true
+    ).length,
+    commerciallyEligibleProducts: audit.candidates.filter(isCommerciallyQualifiedCandidate).length,
     requiredSeller: connector?.requiredSellerLabel ?? null,
     sellerConfirmedProducts: connector?.requiredSellerPatterns?.length
       ? audit.candidates.filter((candidate) => candidate.commercialEligible === true).length

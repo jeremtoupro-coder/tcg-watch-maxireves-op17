@@ -16,7 +16,10 @@ const ENGLISH_PATTERNS = [
   /\benglish\b/i,
   /\banglais\b/i,
   /\bversion\s+anglaise\b/i,
-  /(?:^|[\s–—|()[\]-])eng?(?:$|[\s–—|()[\]-])/i
+  /(?:^|[\s–—|()[\]-])eng(?:$|[\s–—|()[\]-])/i,
+  // L'abréviation anglaise EN n'est fiable qu'en majuscules. En ignorant la
+  // casse, « boosters en français » devenait à tort un produit anglais.
+  /(?:^|[\s–—|()[\]-])EN(?:$|[\s–—|()[\]-])/
 ];
 
 const JAPANESE_PATTERNS = [

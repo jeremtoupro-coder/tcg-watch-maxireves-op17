@@ -81,7 +81,8 @@ const NON_FR_PATTERNS = [
   /\benglish\b/i,
   /\banglais\b/i,
   /\bversion\s+anglaise\b/i,
-  /(?:^|[\s([\-|])eng?(?:$|[\s)\]|-])/i,
+  /(?:^|[\s([\-|])eng(?:$|[\s)\]|-])/i,
+  /(?:^|[\s([\-|])EN(?:$|[\s)\]|-])/,
   /\basia\b/i
 ];
 

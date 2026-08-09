@@ -88,6 +88,14 @@ describe("OP Watch V1 - qualification produit", () => {
     expect(detectFrenchListing("Display OP17 English ENG FR shipping").language).toBe("non_fr");
   });
 
+  it("ne traite pas la préposition 'en français' comme l'abréviation anglaise EN", () => {
+    expect(detectFrenchListing("Display OP17 en français")).toEqual({
+      language: "fr_confirmed",
+      confidence: 100
+    });
+    expect(detectFrenchListing("Display OP17 EN").language).toBe("non_fr");
+  });
+
   it("n'alerte pas quand la langue française n'est pas confirmée", () => {
     const result = qualifyListing({
       store: "fantasy-sphere",

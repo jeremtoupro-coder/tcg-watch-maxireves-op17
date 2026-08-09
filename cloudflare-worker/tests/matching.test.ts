@@ -39,6 +39,13 @@ describe("detectLanguage", () => {
 
   it("détecte l'anglais", () => {
     expect(detectLanguage("Booster OP17 English version")).toBe("Anglais détecté");
+    expect(detectLanguage("Booster OP17 EN")).toBe("Anglais détecté");
+    expect(detectLanguage("Booster OP17 eng")).toBe("Anglais détecté");
+  });
+
+  it("ne confond pas la préposition française en avec l'abréviation EN", () => {
+    expect(detectLanguage("Boite de 24 boosters en français")).toBe("Français confirmé");
+    expect(detectLanguage("Double Pack OP16 (En Français)")).toBe("Français confirmé");
   });
 
   it("donne priorité à une version anglaise explicite même sur le storefront français", () => {
