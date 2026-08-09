@@ -1,0 +1,80 @@
+name: Browser Two Probe
+
+on:
+  push:
+    branches: [cloudflare-workers-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: contains(github.event.head_commit.message, '[browser-two]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: Generate isolated Browser Run config
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const config = {
+            name: 'tcg-watch-browser-two-temp',
+            main: 'scripts/browser-two-worker.ts',
+            compatibility_date: '2026-06-27',
+            workers_dev: true,
+            browser: { binding: 'BROWSER' }
+          };
+          fs.writeFileSync('wrangler.browser-two.json', JSON.stringify(config, null, 2));
+          NODE
+      - name: Deploy isolated Browser Run worker
+        run: npx wrangler deploy --config wrangler.browser-two.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Probe Ludisphere and Micromania
+        shell: bash
+        run: |
+          node <<'NODE'
+          const base = 'https://tcg-watch-browser-two-temp.jeremie-touitou-pro.workers.dev';
+          const out = {};
+          for (const store of ['ludisphere','micromania']) {
+            let last;
+            for (let i=0;i<10;i++) {
+              try {
+                const r = await fetch(`${base}/?store=${store}`, {signal: AbortSignal.timeout(90000)});
+                const text = await r.text();
+                last = {http:r.status, body:text};
+                if (r.ok) break;
+              } catch (e) { last = {error:String(e)}; }
+              await new Promise(res=>setTimeout(res,3000));
+            }
+            try { out[store] = {...last, parsed: JSON.parse(last?.body ?? '{}')}; }
+            catch { out[store] = last; }
+            console.log(store, JSON.stringify(out[store], null, 2));
+          }
+          const {writeFileSync}=require('fs');
+          writeFileSync('browser-two-report.json', JSON.stringify(out,null,2));
+          NODE
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-two-report
+          path: cloudflare-worker/browser-two-report.json
+          retention-days: 7
+      - name: Delete isolated probe worker
+        if: always()
+        run: npx wrangler delete tcg-watch-browser-two-temp --force
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
