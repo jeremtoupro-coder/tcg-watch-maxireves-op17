@@ -2,6 +2,7 @@ import { auditConnector } from "./audit";
 import { WATCH_CONFIG } from "./config";
 import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
+import { stripHtml } from "./matching";
 import { parseActiveStores, runMonitoringCycle } from "./monitor";
 import opWatchV1Config from "../config/opwatch-v1.json";
 import { activeOfficialProducts, computeWatchWindow, parseOfficialCatalog } from "./opwatchV1";
@@ -49,6 +50,31 @@ async function runAudits(connectors: ConnectorDefinition[]) {
   return results;
 }
 
+function browserChallengeReason(html: string, visibleText: string): string | undefined {
+  const title = stripHtml(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+  const prefix = visibleText.slice(0, 1_500);
+
+  if (/^just a moment(?:\.\.\.)?$/i.test(title) || /^just a moment\b/i.test(prefix)) {
+    return "Cloudflare challenge page";
+  }
+  if (/geo\.captcha-delivery\.com|captcha-delivery\.com\/captcha/i.test(html)) {
+    return "DataDome CAPTCHA page";
+  }
+  if (/\bverify (?:you are|that you are) human\b|\baccess denied\b/i.test(`${title} ${prefix}`)) {
+    return "Human verification / access denied page";
+  }
+  if (/\bERR_[A-Z_]+\b|error-code-color|The Chromium Authors/i.test(prefix)) {
+    return "Chromium network error page";
+  }
+  if (/challenge-platform\/h\/g|cf-chl-(?:widget|opt|out|rc)|cdn-cgi\/challenge-platform/i.test(html) && html.length < 100_000) {
+    return "Cloudflare challenge markup";
+  }
+
+  // Ne pas considérer le simple mot « captcha » dans un gros bundle JS comme
+  // une preuve de challenge : certains vrais sites chargent préventivement ces scripts.
+  return undefined;
+}
+
 async function browserProbe(store: string, env: Env) {
   if (!env.BROWSER) throw new Error("Binding Browser Run absent.");
   const target = BROWSER_PROBE_TARGETS[store];
@@ -71,6 +97,18 @@ async function browserProbe(store: string, env: Env) {
     // Certaines versions du binding peuvent renvoyer directement le HTML.
   }
 
+  const visibleText = stripHtml(html);
+  const h1 = stripHtml(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "");
+  const title = stripHtml(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+  const challengeReason = browserChallengeReason(html, visibleText);
+  const primaryText = `${title} ${h1} ${visibleText.slice(0, 8_000)}`;
+  const hasOnePiece = /one[\s-]*piece/i.test(primaryText);
+  const hasOpCode = /\b(?:OP|EB|PRB|ST|DP)[-\s]?\d{1,2}\b/i.test(primaryText);
+  const hasPrice = /(?:\d{1,4}[.,]\d{2}\s*€|€\s*\d{1,4}[.,]\d{2})/i.test(primaryText);
+  const hasAvailabilitySignal = /ajouter\s+au\s+panier|en\s+stock|disponible|indisponible|rupture|épuis[ée]|précommande|precommande/i.test(primaryText);
+  const hasSellerCarrefour = /vendu(?:e)?(?:\s+et\s+(?:livré|expédié)e?)?\s+par\s+carrefour/i.test(visibleText);
+  const semanticProductPage = hasOnePiece && hasOpCode && (h1.length > 0 || /one[\s-]*piece/i.test(title)) && (hasPrice || hasAvailabilitySignal);
+
   return {
     store,
     target,
@@ -78,10 +116,18 @@ async function browserProbe(store: string, env: Env) {
     browserResponseOk: response.ok,
     browserMsUsed: response.headers.get("x-browser-ms-used"),
     bytes: html.length,
-    hasOnePiece: /one[\s-]*piece/i.test(html),
-    hasOpCode: /\b(?:OP|EB|PRB|ST|DP)[-\s]?\d{1,2}\b/i.test(html),
-    hasChallenge: /captcha|verify you are human|access denied|challenge-platform|cf-chl/i.test(html),
-    textPrefix: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 350)
+    title,
+    h1,
+    hasOnePiece,
+    hasOpCode,
+    hasPrice,
+    hasAvailabilitySignal,
+    hasSellerCarrefour,
+    semanticProductPage,
+    hasChallenge: Boolean(challengeReason),
+    challengeReason,
+    usableForReadOnlyProductMonitoring: response.ok && semanticProductPage && !challengeReason,
+    textPrefix: visibleText.slice(0, 500)
   };
 }
 
