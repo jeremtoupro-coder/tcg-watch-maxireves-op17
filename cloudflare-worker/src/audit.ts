@@ -61,12 +61,39 @@ function isCommerceActionUrl(url: string): boolean {
   }
 }
 
+function commercialEligibility(
+  connector: ConnectorDefinition,
+  isDirectProductPage: boolean,
+  productText: string
+): { eligible: boolean; reason?: string } {
+  if (connector.commercialAlertsEnabled === false) {
+    return { eligible: false, reason: "Connecteur en audit uniquement : alertes commerciales désactivées." };
+  }
+
+  if (connector.requiresDirectProductPageForAlerts && !isDirectProductPage) {
+    return { eligible: false, reason: "Fiche produit directe requise avant toute alerte commerciale." };
+  }
+
+  if (connector.requiredSellerPatterns?.length) {
+    const sellerConfirmed = connector.requiredSellerPatterns.some((pattern) => pattern.test(productText));
+    if (!sellerConfirmed) {
+      return {
+        eligible: false,
+        reason: `${connector.requiredSellerLabel ?? "Vendeur attendu"} non confirmé sur la fiche directe.`
+      };
+    }
+  }
+
+  return { eligible: true };
+}
+
 function candidateScore(candidate: ProductCandidate): number {
   let score = Math.min(candidate.title.length, 200);
   if (candidate.priceText) score += 200;
   if (candidate.imageUrl) score += 100;
   if (candidate.language !== "Langue non précisée") score += 400;
   if (candidate.availability !== "unknown") score += 800;
+  if (candidate.commercialEligible === true) score += 50;
 
   // Une fiche produit directe est la source de vérité pour le stock.
   if (candidate.sourceUrl === candidate.url) score += 10_000;
@@ -115,6 +142,7 @@ function extractDirectProductCandidate(
   const availability = detectAvailability(productText);
   const structuredLanguage = extractStructuredProductLanguage(productText);
   const language = structuredLanguage ?? languageFromPrimary(`${title} ${sourceUrl}`, productText);
+  const eligibility = commercialEligibility(connector, true, `${title} ${productText}`);
 
   return {
     store: connector.key,
@@ -127,6 +155,8 @@ function extractDirectProductCandidate(
     language,
     priceText: availability === "unavailable" ? undefined : extractPrice(productText),
     imageUrl: extractProductImage(html, sourceUrl),
+    commercialEligible: eligibility.eligible,
+    commercialEligibilityReason: eligibility.reason,
     excerpt: productText.slice(0, 500)
   };
 }
@@ -192,6 +222,7 @@ function extractCandidates(
 
     const contextHtml = `${before.slice(-1_500)} ${after}`;
     const context = stripHtml(contextHtml);
+    const eligibility = commercialEligibility(connector, false, `${title} ${context}`);
     const candidate: ProductCandidate = {
       store: connector.key,
       storeName: connector.name,
@@ -203,6 +234,8 @@ function extractCandidates(
       language: languageFromPrimary(`${title} ${absoluteUrl}`, context),
       priceText: extractPrice(context),
       imageUrl: extractProductImage(`${rawAnchorText} ${contextHtml}`, sourceUrl),
+      commercialEligible: eligibility.eligible,
+      commercialEligibilityReason: eligibility.reason,
       excerpt: context.slice(0, 500)
     };
 
