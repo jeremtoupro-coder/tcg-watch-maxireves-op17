@@ -123,6 +123,32 @@ jobs:
           }
           console.log(`Oupi accessible depuis Cloudflare: ${successful.length} probe(s) OK.`);
           NODE
+      - name: Verify actual Oupi connector in Worker runtime
+        shell: bash
+        run: |
+          node <<'NODE'
+          const url = 'https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev/opwatch/v1/oupi-audit';
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`Oupi audit endpoint HTTP ${response.status}`);
+          const data = await response.json();
+          console.log(JSON.stringify(data, null, 2));
+          const audit = data.audit;
+          if (!audit || audit.store !== 'oupi') throw new Error('Audit Oupi absent ou invalide.');
+          const failed = (audit.sources || []).filter((source) => source.error || source.status !== 200);
+          if (failed.length) throw new Error(`Source Oupi dégradée: ${JSON.stringify(failed)}`);
+          const op17fr = (audit.candidates || []).filter((candidate) =>
+            (candidate.matchedReferences || []).includes('OP17') &&
+            candidate.language === 'Français confirmé'
+          );
+          if (op17fr.length === 0) throw new Error('Aucun candidat OP17 FR détecté par le vrai connecteur Oupi.');
+          const englishMisclassified = (audit.candidates || []).filter((candidate) =>
+            /anglais|english/i.test(candidate.title || '') && candidate.language === 'Français confirmé'
+          );
+          if (englishMisclassified.length) {
+            throw new Error(`Produit anglais classé FR: ${JSON.stringify(englishMisclassified)}`);
+          }
+          console.log(`Connecteur Oupi réel validé: ${op17fr.length} candidat(s) OP17 FR, aucun EN classé FR.`);
+          NODE
 
   seed-baseline:
     if: >-
