@@ -44,4 +44,36 @@ describe("priorité de la fiche produit", () => {
     expect(candidate?.availability).toBe("unavailable");
     expect(candidate?.sourceUrl).toBe(productUrl);
   });
+
+  it("ignore un bouton add-to-cart WooCommerce qui hérite de l'URL OP17 mais cible un autre produit", async () => {
+    const productUrl = "https://example.test/produit/display-op17-fr/";
+    const connector: ConnectorDefinition = {
+      key: "pixelheart",
+      name: "PixelHeart",
+      sources: [productUrl],
+      productUrlPatterns: [/\/produit\//i],
+      notes: []
+    };
+
+    const html = `
+      <html><head><meta property="og:image" content="/op17.jpg"></head><body>
+        <h1>Display OP17 Version Française</h1>
+        <p>Précommande 249,90 &euro;</p>
+        <a href="${productUrl}?add-to-cart=999" aria-label="Ajouter au panier : Pokemon unrelated">
+          Ajouter au panier : Pokemon unrelated
+        </a>
+      </body></html>
+    `;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].url).toBe(productUrl);
+    expect(audit.candidates[0].title).toBe("Display OP17 Version Française");
+    expect(audit.candidates[0].priceText).toBe("249,90 €");
+  });
 });
