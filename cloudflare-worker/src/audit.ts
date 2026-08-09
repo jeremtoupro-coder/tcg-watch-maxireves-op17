@@ -2,6 +2,7 @@ import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchRefe
 import { extractProductImage } from "./opwatchV1";
 import type {
   ConnectorDefinition,
+  LanguageStatus,
   ProductCandidate,
   SourceAudit,
   StoreAudit
@@ -73,6 +74,28 @@ function candidateScore(candidate: ProductCandidate): number {
   return score;
 }
 
+function languageFromPrimary(primary: string, fallback: string): LanguageStatus {
+  const primaryLanguage = detectLanguage(primary);
+  return primaryLanguage === "Langue non précisée"
+    ? detectLanguage(fallback)
+    : primaryLanguage;
+}
+
+function extractStructuredProductLanguage(productText: string): LanguageStatus | undefined {
+  const field = productText.match(
+    /\b(?:langue|language)\s*:?[\s-]*(français|francais|french|anglais|english|japonais|japanese|allemand|german|espagnol|spanish|italien|italian|néerlandais|dutch)\b/i
+  );
+  if (!field?.[1]) return undefined;
+  const detected = detectLanguage(field[1]);
+  return detected === "Langue non précisée" ? undefined : detected;
+}
+
+function directProductCoreText(html: string, productStart: number): string {
+  const text = stripHtml(html.slice(productStart, Math.min(html.length, productStart + 100_000)));
+  const relatedProductsIndex = text.search(/\b\d+\s+autres?\s+produits?\b/i);
+  return (relatedProductsIndex >= 0 ? text.slice(0, relatedProductsIndex) : text.slice(0, 16_000)).trim();
+}
+
 function extractDirectProductCandidate(
   html: string,
   sourceUrl: string,
@@ -88,9 +111,10 @@ function extractDirectProductCandidate(
   if (!title || matchedReferences.length === 0) return undefined;
 
   const productStart = h1Match?.index ?? titleMatch?.index ?? 0;
-  const productArea = html.slice(productStart, Math.min(html.length, productStart + 7_000));
-  const context = stripHtml(productArea);
-  const availability = detectAvailability(context);
+  const productText = directProductCoreText(html, productStart);
+  const availability = detectAvailability(productText);
+  const structuredLanguage = extractStructuredProductLanguage(productText);
+  const language = structuredLanguage ?? languageFromPrimary(`${title} ${sourceUrl}`, productText);
 
   return {
     store: connector.key,
@@ -100,10 +124,10 @@ function extractDirectProductCandidate(
     sourceUrl,
     matchedReferences,
     availability,
-    language: detectLanguage(`${title} ${sourceUrl} ${context}`),
-    priceText: availability === "unavailable" ? undefined : extractPrice(context),
+    language,
+    priceText: availability === "unavailable" ? undefined : extractPrice(productText),
     imageUrl: extractProductImage(html, sourceUrl),
-    excerpt: context.slice(0, 500)
+    excerpt: productText.slice(0, 500)
   };
 }
 
@@ -176,7 +200,7 @@ function extractCandidates(
       sourceUrl,
       matchedReferences,
       availability: detectAvailability(context),
-      language: detectLanguage(`${title} ${absoluteUrl} ${context}`),
+      language: languageFromPrimary(`${title} ${absoluteUrl}`, context),
       priceText: extractPrice(context),
       imageUrl: extractProductImage(`${rawAnchorText} ${contextHtml}`, sourceUrl),
       excerpt: context.slice(0, 500)
