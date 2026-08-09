@@ -159,6 +159,13 @@ export interface ConnectorDefinition {
   commercialAlertsEnabled?: boolean;
   /** Un HTTP 200 seul ne suffit pas : un marqueur métier doit être présent. */
   responseMustContainAny?: RegExp[];
+  /** Nom du secret Cloudflare contenant l'URL d'un flux produit autorisé. */
+  authorizedFeedEnv?: string;
+  /**
+   * Pour les origines anti-bot connues, évite de les marteler chaque minute
+   * lorsque le flux autorisé n'est pas encore configuré.
+   */
+  directPollingDisabledWithoutFeed?: boolean;
   notes: string[];
 }
 
@@ -170,5 +177,11 @@ export interface Env {
   WRITE_STATE?: string;
   DISCORD_MODE?: "dry-run" | "live";
   DISCORD_WEBHOOK_URL?: string;
+  AUTHORIZED_FEED_PLAYIN_URL?: string;
+  AUTHORIZED_FEED_CULTURA_URL?: string;
+  AUTHORIZED_FEED_MICROMANIA_URL?: string;
+  AUTHORIZED_FEED_FNAC_URL?: string;
+  AUTHORIZED_FEED_CARREFOUR_URL?: string;
+  AUTHORIZED_FEED_KING_JOUET_URL?: string;
   TCG_STATE?: KVNamespace;
 }
