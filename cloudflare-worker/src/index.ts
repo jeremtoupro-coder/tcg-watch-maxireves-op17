@@ -5,6 +5,7 @@ import { evaluateCandidates } from "./engine";
 import { parseActiveStores, runMonitoringCycle } from "./monitor";
 import opWatchV1Config from "../config/opwatch-v1.json";
 import { activeOfficialProducts, computeWatchWindow, parseOfficialCatalog } from "./opwatchV1";
+import { probeOupiFromWorker } from "./oupiProbe";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -159,6 +160,17 @@ export default {
           checkedAt: new Date().toISOString()
         }, 502);
       }
+    }
+
+    if (url.pathname === "/opwatch/v1/oupi-probe") {
+      if (live) {
+        return jsonResponse({ error: "Probe interdit en mode LIVE." }, 403);
+      }
+      return jsonResponse({
+        mode: "SAFE_OUPI_RUNTIME_PROBE",
+        checkedAt: new Date().toISOString(),
+        results: await probeOupiFromWorker()
+      });
     }
 
     if (url.pathname === "/config") {
