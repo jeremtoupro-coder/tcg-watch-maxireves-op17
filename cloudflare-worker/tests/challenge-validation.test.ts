@@ -29,6 +29,23 @@ describe("validation sémantique des sources", () => {
     expect(audit.candidates).toEqual([]);
   });
 
+  it("rejette un challenge Cloudflare encapsulé par un Reader HTTP 200", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+Title: Just a moment...
+URL Source: https://www.play-in.com/fr/gamme/24/one-piece/catalogue
+Warning: This page maybe requiring CAPTCHA, please make sure you are authorized to access this page.
+Markdown Content:
+## www.play-in.com
+## Performing security verification
+One Piece
+    `, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } })));
+
+    const audit = await auditConnector(connector());
+    expect(audit.sources[0].status).toBeUndefined();
+    expect(audit.sources[0].error).toMatch(/Challenge\/anti-bot: Cloudflare challenge/i);
+    expect(audit.candidates).toEqual([]);
+  });
+
   it("rejette une page DataDome/CAPTCHA qui contient artificiellement le nom du produit", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(`
       <html><head><title>Fnac.com</title></head><body>
