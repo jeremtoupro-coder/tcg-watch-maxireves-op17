@@ -41,6 +41,35 @@ jobs:
       - name: Wrangler dry run
         run: npx wrangler deploy --dry-run
 
+  audit-pilot:
+    if: >-
+      github.event_name == 'push' &&
+      contains(github.event.head_commit.message, '[audit-pilot]')
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: Read-only audit of the four pilot stores
+        run: npm run live-audit
+      - name: Upload pilot audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: op-watch-v1-pilot-audit
+          path: cloudflare-worker/audit-report.json
+          if-no-files-found: error
+          retention-days: 7
+
   deploy-preview:
     if: >-
       github.event_name == 'push' &&
