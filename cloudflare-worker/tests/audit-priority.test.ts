@@ -93,6 +93,39 @@ describe("priorité de la fiche produit", () => {
     expect(candidate?.language).toBe("Français confirmé");
   });
 
+  it("privilégie la langue structurée du produit malgré une phrase erronée et des produits liés en anglais", async () => {
+    const productUrl = "https://oupi.test/fr/case-scelle-de-display/7368-case-op-17-francais.html";
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: [productUrl],
+      productUrlPatterns: [/\/\d+-[^/?#]+\.html$/i],
+      notes: []
+    };
+
+    const html = `
+      <h1>Case Scellée de 12 Display OP-17 (Français) - One Piece Card Game</h1>
+      <div>Rupture de stock</div>
+      <p>Découvrez ce carton de boosters en Anglais du jeu One Piece.</p>
+      <section class="product-features">
+        <span>Fiche technique</span>
+        <dl><dt>Langue</dt><dd>Français</dd></dl>
+      </section>
+      <h2>16 autres produits dans la même catégorie :</h2>
+      <a href="/9999-other.html">Display OP-12 (Anglais)</a>
+    `;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].language).toBe("Français confirmé");
+    expect(audit.candidates[0].availability).toBe("unavailable");
+  });
+
   it("applique le profil HTTP explicite du connecteur au lieu d'imiter un navigateur", async () => {
     const categoryUrl = "https://oupi.test/fr/413-precommande-one-piece";
     const connector: ConnectorDefinition = {
