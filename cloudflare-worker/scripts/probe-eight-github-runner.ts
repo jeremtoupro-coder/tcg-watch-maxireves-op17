@@ -55,6 +55,12 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function canonicalShopifyDomains(text: string): string[] {
+  return [...new Set(
+    [...text.matchAll(/[a-z0-9][a-z0-9-]*\.myshopify\.com/gi)].map((match) => match[0].toLowerCase())
+  )].slice(0, 10);
+}
+
 const results: any[] = [];
 for (const [store, urls] of Object.entries(targets)) {
   for (const url of urls) {
@@ -86,6 +92,7 @@ for (const [store, urls] of Object.entries(targets)) {
         hasOnePiece: /one[\s-]*piece/i.test(text),
         challenge: challenge ?? null,
         title: title ?? null,
+        myshopifyDomains: canonicalShopifyDomains(text),
         bodyPrefix: text.slice(0, 300).replace(/\s+/g, " ")
       };
       results.push(item);
