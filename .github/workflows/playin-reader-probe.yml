@@ -1,0 +1,31 @@
+name: Playin Reader Probe
+
+on:
+  push:
+    branches: [cloudflare-workers-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: contains(github.event.head_commit.message, '[probe-playin-reader]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Probe Playin Reader category
+        run: npx tsx scripts/probe-reader-playin.ts
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playin-reader-probe
+          path: cloudflare-worker/playin-reader-probe.json
+          retention-days: 7
