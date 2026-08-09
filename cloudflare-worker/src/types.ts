@@ -61,6 +61,8 @@ export interface ProductCandidate {
   language: LanguageStatus;
   priceText?: string;
   imageUrl?: string;
+  commercialEligible?: boolean;
+  commercialEligibilityReason?: string;
   excerpt: string;
 }
 
@@ -146,6 +148,20 @@ export interface ConnectorDefinition {
   requestHeaders?: Record<string, string>;
   followDiscoveredProductPages?: boolean;
   maxDiscoveredProductPages?: number;
+  /**
+   * Certaines marketplaces ne doivent alerter que lorsque la fiche directe
+   * confirme le vendeur attendu (Fnac, E.Leclerc, Carrefour, Amazon...).
+   * Les cartes de catégorie restent utilisables pour la découverte, jamais
+   * pour une alerte commerciale lorsque ce garde-fou est actif.
+   */
+  requiresDirectProductPageForAlerts?: boolean;
+  requiredSellerPatterns?: RegExp[];
+  requiredSellerLabel?: string;
+  /**
+   * Permet d'intégrer et auditer une source sans autoriser d'alerte commerciale
+   * tant que sa sémantique n'est pas suffisamment validée.
+   */
+  commercialAlertsEnabled?: boolean;
   notes: string[];
 }
 
