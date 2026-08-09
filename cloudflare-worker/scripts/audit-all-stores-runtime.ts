@@ -23,6 +23,33 @@ interface StoreSummary {
   errors: string[];
 }
 
+async function waitForAuditDeployment(): Promise<void> {
+  let lastState = "aucune réponse";
+  for (let attempt = 1; attempt <= 15; attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}/`, {
+        headers: { "User-Agent": "OPWatchRuntimeAudit/1.0" },
+        signal: AbortSignal.timeout(10_000)
+      });
+      const data = response.ok ? await response.json() as any : undefined;
+      const publicAudit = data?.runtime?.publicStorePollingEnabled === true;
+      const allowedStores = Array.isArray(data?.usage?.allowedStores) ? data.usage.allowedStores : [];
+      const allStoresPresent = stores.every((store) => allowedStores.includes(store));
+      lastState = `HTTP ${response.status}, publicAudit=${publicAudit}, stores=${allowedStores.length}`;
+      if (response.ok && publicAudit && allStoresPresent) {
+        console.log(`Déploiement audit propagé après ${attempt} tentative(s): ${lastState}`);
+        return;
+      }
+    } catch (error) {
+      lastState = error instanceof Error ? error.message : String(error);
+    }
+    if (attempt < 15) await new Promise((resolve) => setTimeout(resolve, 3_000));
+  }
+  throw new Error(`Le déploiement SAFE audit n'a pas été observé après propagation: ${lastState}`);
+}
+
+await waitForAuditDeployment();
+
 const summaries: StoreSummary[] = [];
 
 for (const store of stores) {
@@ -92,9 +119,6 @@ const report = {
 await writeFile("all-stores-runtime-audit.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
 console.log(JSON.stringify(report, null, 2));
 
-// L'audit doit collecter les échecs sans fabriquer une réussite. On ne fait
-// échouer le job que si le Worker n'a même pas pu auditer au moins une majorité
-// des boutiques ; les dégradations individuelles seront corrigées une par une.
 if (report.endpointHealthy < 15) {
   throw new Error(`Trop peu de boutiques auditées via Worker: ${report.endpointHealthy}/21`);
 }
