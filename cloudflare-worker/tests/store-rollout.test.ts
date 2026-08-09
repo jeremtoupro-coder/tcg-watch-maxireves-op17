@@ -105,6 +105,33 @@ describe("rollout 21 boutiques", () => {
     expect(partner?.commercialEligibilityReason).toMatch(/Fnac non confirmé/i);
   });
 
+  it("conserve le prix affiché sur une fiche directe en rupture", async () => {
+    const source = "https://shop.test/produit-32907-st36.html";
+    const connector: ConnectorDefinition = {
+      key: "test-shop",
+      name: "Test Shop",
+      sources: [source],
+      productUrlPatterns: [/\/produit-\d+-[^?#]+\.html/i],
+      responseMustContainAny: [/one[\s-]*piece/i],
+      notes: []
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+      <html><head><title>One Piece Card Game</title></head><body>
+        <h1>Starter Deck ST-36 Français</h1>
+        <p>Prix : 19,90 €</p>
+        <p>Rupture de stock</p>
+      </body></html>
+    `, { status: 200 })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0]).toMatchObject({
+      availability: "unavailable",
+      priceText: "19,90 €"
+    });
+  });
+
   it("reste fail-closed si Amazon expédie mais qu'Amazon n'est pas le vendeur", async () => {
     const source = "https://www.amazon.fr/dp/B0ABCDEF12";
     const amazon = CONNECTORS.find((connector) => connector.key === "amazon-fr")!;

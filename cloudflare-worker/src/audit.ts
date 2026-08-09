@@ -187,7 +187,10 @@ function extractDirectProductCandidate(
     matchedReferences,
     availability,
     language,
-    priceText: availability === "unavailable" ? undefined : extractPrice(productText),
+    // Un produit indisponible peut encore afficher un prix de référence. Le
+    // supprimer ici empêchait de suivre correctement ses variations avant le
+    // retour en stock (notamment UltraJeux, VegaStore et Mystic-Ambre).
+    priceText: extractPrice(productText),
     imageUrl: extractProductImage(html, sourceUrl),
     commercialEligible: eligibility.eligible,
     commercialEligibilityReason: eligibility.reason,
