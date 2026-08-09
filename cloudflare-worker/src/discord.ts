@@ -28,24 +28,26 @@ export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
   const oldPrice = previousPrice(match);
   const priceValue = oldPrice && oldPrice !== price ? `${oldPrice} → ${price}` : price;
 
+  const embed: DiscordPayload["embeds"][number] = {
+    title: `${eventLabel} — ${match.matchedProductIds.join(", ")}`,
+    url: candidate.url,
+    description: candidate.title,
+    fields: [
+      { name: "💰 Prix", value: priceValue, inline: true },
+      { name: "🏪 Vendeur", value: candidate.storeName, inline: true },
+      { name: "📦 Disponibilité", value: AVAILABILITY_LABELS[candidate.availability], inline: true },
+      { name: "🇫🇷 Langue", value: candidate.language, inline: true },
+      { name: "🔗 Offre", value: `[Voir le produit](${candidate.url})`, inline: false }
+    ],
+    footer: { text: `OP Watch • ${match.rule.id}` },
+    timestamp: match.change.detectedAt
+  };
+
+  if (candidate.imageUrl) embed.thumbnail = { url: candidate.imageUrl };
+
   return {
-    username: "TCG Watch",
-    embeds: [
-      {
-        title: `${eventLabel} — ${match.matchedProductIds.join(", ")}`,
-        url: candidate.url,
-        description: candidate.title,
-        fields: [
-          { name: "Boutique", value: candidate.storeName, inline: true },
-          { name: "Disponibilité", value: AVAILABILITY_LABELS[candidate.availability], inline: true },
-          { name: "Langue", value: candidate.language, inline: true },
-          { name: "Prix", value: priceValue, inline: true },
-          { name: "Règle", value: match.rule.label, inline: false }
-        ],
-        footer: { text: `Alerte ${match.rule.id}` },
-        timestamp: match.change.detectedAt
-      }
-    ]
+    username: "OP Watch",
+    embeds: [embed]
   };
 }
 
