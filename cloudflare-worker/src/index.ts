@@ -3,6 +3,8 @@ import { WATCH_CONFIG } from "./config";
 import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
 import { parseActiveStores, runMonitoringCycle } from "./monitor";
+import opWatchV1Config from "../config/opwatch-v1.json";
+import { activeOfficialProducts, computeWatchWindow, parseOfficialCatalog } from "./opwatchV1";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -37,6 +39,50 @@ async function runAudits(connectors: ConnectorDefinition[]) {
   return results;
 }
 
+async function officialCalendarPreview(now = new Date()) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(opWatchV1Config.officialCatalogUrl, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "OPWatch/1.0 (+read-only release calendar)",
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        "Accept-Language": "en-US,en;q=0.9"
+      }
+    });
+    if (!response.ok) throw new Error(`Official catalog HTTP ${response.status}`);
+    const html = await response.text();
+    const products = parseOfficialCatalog(html);
+    if (products.length === 0) {
+      throw new Error("Le catalogue officiel a répondu mais aucun produit daté n'a été reconnu.");
+    }
+    const active = activeOfficialProducts(
+      products,
+      now,
+      opWatchV1Config.watchWindow.daysBeforeRelease,
+      opWatchV1Config.watchWindow.daysAfterRelease
+    );
+    return {
+      source: opWatchV1Config.officialCatalogUrl,
+      fetchedAt: now.toISOString(),
+      catalogProductsParsed: products.length,
+      activeProducts: active.map((product) => ({
+        ...product,
+        watchWindow: computeWatchWindow(
+          product.releaseDate,
+          now,
+          opWatchV1Config.watchWindow.daysBeforeRelease,
+          opWatchV1Config.watchWindow.daysAfterRelease
+        )
+      }))
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method !== "GET") {
@@ -53,7 +99,7 @@ export default {
 
     if (url.pathname === "/") {
       return jsonResponse({
-        project: "TCG Watch — moteur d'alertes configurable",
+        project: "OP Watch — moteur d'alertes One Piece TCG",
         deployment: mode,
         runtime: {
           cron: live,
@@ -65,6 +111,18 @@ export default {
           automaticPolling: live,
           activeStores: parseActiveStores(env.ACTIVE_STORES),
           schedule: live ? "one task per minute" : "disabled"
+        },
+        v1: {
+          mode: opWatchV1Config.mode,
+          targetLanguage: opWatchV1Config.language.target,
+          strictLanguage: opWatchV1Config.language.strict,
+          fastWatchSeconds: opWatchV1Config.polling.fastWatchSeconds,
+          discoverySeconds: opWatchV1Config.polling.discoverySeconds,
+          watchWindow: opWatchV1Config.watchWindow,
+          formats: opWatchV1Config.formats,
+          pilotStores: opWatchV1Config.pilotStores.filter((store) => store.enabled).map((store) => store.id),
+          discordProductImages: opWatchV1Config.discord.includeProductImage,
+          calendarPreview: "/opwatch/v1/calendar"
         },
         configuration: {
           version: WATCH_CONFIG.version,
@@ -91,12 +149,25 @@ export default {
       });
     }
 
+    if (url.pathname === "/opwatch/v1/calendar") {
+      try {
+        return jsonResponse({ mode: "SAFE_CALENDAR_PREVIEW", ...(await officialCalendarPreview()) });
+      } catch (error) {
+        return jsonResponse({
+          mode: "SAFE_CALENDAR_PREVIEW",
+          error: error instanceof Error ? error.message : String(error),
+          checkedAt: new Date().toISOString()
+        }, 502);
+      }
+    }
+
     if (url.pathname === "/config") {
       return jsonResponse({
         version: WATCH_CONFIG.version,
         settings: WATCH_CONFIG.settings,
         products: WATCH_CONFIG.products,
-        alerts: WATCH_CONFIG.alerts
+        alerts: WATCH_CONFIG.alerts,
+        opWatchV1: opWatchV1Config
       });
     }
 
