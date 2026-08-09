@@ -16,6 +16,7 @@ function candidate(overrides: Partial<ProductCandidate> = {}): ProductCandidate 
     availability: "unavailable",
     language: "Français confirmé",
     priceText: "119,76 €",
+    imageUrl: "https://oupi.eu/img/op17-display.jpg",
     excerpt: "Display OP-17 FR",
     ...overrides
   };
@@ -69,7 +70,7 @@ describe("règles d'alerte", () => {
     expect(evaluateAlertRules(result.changes, WATCH_CONFIG)).toEqual([]);
   });
 
-  it("génère un aperçu Discord sans envoi réseau", async () => {
+  it("génère un aperçu Discord avec photo sans envoi réseau", async () => {
     const store = new MemoryStateStore();
     await processCandidates([candidate()], store, {
       writeState: true,
@@ -91,6 +92,9 @@ describe("règles d'alerte", () => {
     });
 
     expect(payloads[0].embeds[0].title).toContain("Retour en stock");
+    expect(payloads[0].embeds[0].thumbnail).toEqual({
+      url: "https://oupi.eu/img/op17-display.jpg"
+    });
     expect(dispatch).toEqual({
       mode: "dry-run",
       attempted: 1,
