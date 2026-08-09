@@ -161,7 +161,7 @@ export function extractPrice(value: string): string | undefined {
   if (euroBefore) return euroBefore[0].replace(/\s+/g, " ").trim();
 
   const euroAfter = decoded.match(
-    /(?<![\d.,])(?:\d{1,3}(?:[ .,\u00a0]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?)\s*€/i
+    /(?<![A-Za-z0-9])(?:\d{1,3}(?:[ .,\u00a0]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?)\s*€/i
   );
   return euroAfter?.[0].replace(/\s+/g, " ").trim();
 }
