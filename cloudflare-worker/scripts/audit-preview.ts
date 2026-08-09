@@ -1,34 +1,56 @@
 import { writeFile } from "node:fs/promises";
 import { CONNECTORS } from "../src/connectors";
+import { isTransientPreviewStatus } from "../src/previewHttp";
 import type { StoreAudit } from "../src/types";
 
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
 const auditToken = process.env.PREVIEW_AUDIT_TOKEN ?? "";
 const REQUEST_TIMEOUT_MS = 90_000;
 const CONCURRENCY = 3;
+const MAX_TRANSIENT_ATTEMPTS = 5;
+
+class PermanentAuditError extends Error {}
 
 if (!baseUrl) throw new Error("PREVIEW_URL est obligatoire.");
 if (!auditToken) throw new Error("PREVIEW_AUDIT_TOKEN est obligatoire.");
 
 async function fetchStoreAudit(store: string): Promise<StoreAudit> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${baseUrl}/audit?store=${encodeURIComponent(store)}`, {
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${auditToken}`,
-        "User-Agent": "OPWatchPreviewAudit/1.0"
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${baseUrl}/audit?store=${encodeURIComponent(store)}`, {
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${auditToken}`,
+          "User-Agent": "OPWatchPreviewAudit/1.0"
+        }
+      });
+      const raw = await response.text();
+      let body: { stores?: StoreAudit[]; error?: string };
+      try {
+        body = JSON.parse(raw) as { stores?: StoreAudit[]; error?: string };
+      } catch {
+        throw new Error(`HTTP ${response.status}: réponse non-JSON transitoire`);
       }
-    });
-    const body = await response.json() as { stores?: StoreAudit[]; error?: string };
-    if (!response.ok || body.stores?.length !== 1) {
-      throw new Error(`HTTP ${response.status}: ${body.error ?? "réponse d'audit invalide"}`);
+      if (response.ok && body.stores?.length === 1) return body.stores[0];
+
+      const retryable = isTransientPreviewStatus(response.status);
+      const error = new Error(`HTTP ${response.status}: ${body.error ?? "réponse d'audit invalide"}`);
+      if (!retryable) throw new PermanentAuditError(error.message);
+      if (attempt === MAX_TRANSIENT_ATTEMPTS) throw error;
+      lastError = error;
+    } catch (error) {
+      if (error instanceof PermanentAuditError) throw error;
+      lastError = error;
+      if (attempt === MAX_TRANSIENT_ATTEMPTS) throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    return body.stores[0];
-  } finally {
-    clearTimeout(timeout);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 const audits: StoreAudit[] = [];
