@@ -11,7 +11,8 @@
     "seed-baseline": "tsx scripts/seed-cloudflare-baseline.ts",
     "monitor": "tsx scripts/poll.ts",
     "generate-deploy-config": "tsx scripts/generate-deploy-config.ts",
-    "simulate-change": "tsx scripts/simulate-change-dry-only.ts"
+    "simulate-change": "tsx scripts/simulate-change-dry-only.ts",
+    "smoke-preview": "tsx scripts/smoke-preview.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
