@@ -19,10 +19,9 @@ export function parseActiveStores(rawValue?: string): StoreKey[] {
 }
 
 /**
- * Un cron Cloudflare est déclenché chaque minute. Contrairement à l'ancien
- * round-robin, un cycle contrôle toutes les boutiques actives : une boutique
- * ne doit jamais attendre N minutes simplement parce que N boutiques sont
- * configurées. Chaque connecteur conserve sa propre limitation de concurrence.
+ * Un cron Cloudflare est déclenché chaque minute. Un cycle contrôle toutes les
+ * boutiques actives. Une boutique dégradée est isolée : elle ne peut ni bloquer
+ * les boutiques saines ni modifier son propre état persistant pendant le cycle.
  */
 export async function runMonitoringCycle(
   env: Env,
@@ -33,6 +32,8 @@ export async function runMonitoringCycle(
 ): Promise<{
   status: "disabled" | "completed";
   stores?: StoreKey[];
+  healthyStores?: StoreKey[];
+  degradedStores?: Array<{ store: StoreKey; errors: string[] }>;
   reason?: string;
   audits?: Awaited<ReturnType<typeof auditConnector>>[];
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
@@ -65,27 +66,37 @@ export async function runMonitoringCycle(
   }
 
   const audits = await Promise.all(connectors.map((connector) => auditConnector(connector)));
-  const failures = audits.flatMap((audit) =>
-    audit.sources
-      .filter((source) => source.error)
-      .map((source) => `${audit.storeName}: ${source.error}`)
+  const connectorByKey = new Map(connectors.map((connector) => [connector.key, connector]));
+  const degradedStores = audits
+    .map((audit) => ({
+      store: audit.store,
+      errors: audit.sources.filter((source) => source.error).map((source) => source.error as string)
+    }))
+    .filter((entry) => entry.errors.length > 0);
+  const degradedKeys = new Set(degradedStores.map((entry) => entry.store));
+  const healthyAudits = audits.filter((audit) => !degradedKeys.has(audit.store));
+  const healthyStores = healthyAudits.map((audit) => audit.store);
+
+  // Un candidat non éligible reste visible dans les audits/diagnostics mais ne
+  // touche jamais l'état commercial. C'est notamment le cas d'une marketplace
+  // dont le vendeur officiel n'a pas été confirmé sur la fiche directe.
+  const candidates = healthyAudits.flatMap((audit) => {
+    const connector = connectorByKey.get(audit.store);
+    if (connector?.commercialAlertsEnabled === false) return [];
+    return audit.candidates.filter((candidate) => candidate.commercialEligible !== false);
+  });
+
+  const baselineStores = healthyStores.filter((store) =>
+    connectorByKey.get(store)?.commercialAlertsEnabled !== false
   );
 
-  if (failures.length > 0) {
-    // Fail closed: une source attendue en erreur ne doit jamais être considérée
-    // comme une absence de stock. Le cycle est signalé en échec avant toute
-    // baseline silencieuse qui pourrait effacer un état valide.
-    throw new Error(`Surveillance dégradée: ${failures.join(" | ")}`);
-  }
-
-  const candidates = audits.flatMap((audit) => audit.candidates);
-  const evaluation = await evaluateCandidates(candidates, env, {
-    baselineStores: connectors.map((connector) => connector.key)
-  });
+  const evaluation = await evaluateCandidates(candidates, env, { baselineStores });
 
   return {
     status: "completed",
     stores: connectors.map((connector) => connector.key),
+    healthyStores,
+    degradedStores,
     audits,
     evaluation
   };
