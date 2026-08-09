@@ -29,7 +29,11 @@ const targets: Record<string, string[]> = {
   ],
   "king-jouet": [
     "https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034198-cartes-one-piece-booster-op16-heure-de-la-bataille-decisive.htm",
-    "https://api.king-jouet.com/"
+    "https://api.king-jouet.com/",
+    "https://api.king-jouet.com/V1/stockItems/1034198",
+    "https://api.king-jouet.com/rest/V1/stockItems/1034198",
+    "https://api.king-jouet.com/api/catalogue/articles/1034198/data",
+    "https://api.king-jouet.com/api/catalogue/articles/4582770058703/data"
   ],
   otakuland: [
     "https://otakuland.fr/one-piece-merch/",
@@ -81,7 +85,8 @@ for (const [store, urls] of Object.entries(targets)) {
         durationMs: Date.now() - started,
         hasOnePiece: /one[\s-]*piece/i.test(text),
         challenge: challenge ?? null,
-        title: title ?? null
+        title: title ?? null,
+        bodyPrefix: text.slice(0, 300).replace(/\s+/g, " ")
       };
       results.push(item);
       console.log(JSON.stringify(item));
