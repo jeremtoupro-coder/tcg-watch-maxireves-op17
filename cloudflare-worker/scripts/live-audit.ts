@@ -1,12 +1,12 @@
 import { writeFile } from "node:fs/promises";
 import { auditConnector } from "../src/audit";
 import { fantasySphere } from "../src/connectors/fantasySphere";
-import { ludotrotter } from "../src/connectors/ludotrotter";
 import { maxireves } from "../src/connectors/maxireves";
 import { oupi } from "../src/connectors/oupi";
+import { pixelheart } from "../src/connectors/pixelheart";
 import { evaluateCandidates } from "../src/engine";
 
-const connectors = [maxireves, ludotrotter, oupi, fantasySphere];
+const connectors = [maxireves, oupi, pixelheart, fantasySphere];
 const stores = [];
 
 for (const connector of connectors) {
@@ -55,7 +55,10 @@ const report = {
 await writeFile("audit-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
 console.log("\nRapport écrit dans cloudflare-worker/audit-report.json");
 
-const allSourcesFailed = stores.every((store) => store.sources.every((source) => Boolean(source.error)));
-if (allSourcesFailed) {
-  process.exitCode = 1;
+const unreachableStores = stores
+  .filter((store) => store.sources.length === 0 || store.sources.every((source) => Boolean(source.error)))
+  .map((store) => store.storeName);
+
+if (unreachableStores.length > 0) {
+  throw new Error(`Boutique(s) pilote totalement inaccessible(s): ${unreachableStores.join(", ")}`);
 }
