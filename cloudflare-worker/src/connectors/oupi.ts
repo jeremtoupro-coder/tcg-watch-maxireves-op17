@@ -4,12 +4,13 @@ export const oupi: ConnectorDefinition = {
   key: "oupi",
   name: "Oupi",
   sources: [
-    "https://oupi.eu/en/413-pre-order-one-piece"
+    "https://oupi.eu/fr/413-precommande-one-piece?q=Langue-Fran%C3%A7ais"
   ],
   productUrlPatterns: [/\/\d+-[^/?#]+\.html(?:[?#].*)?$/i],
   notes: [
-    "PrestaShop très probable d'après les routes et la structure publique.",
-    "La page Précommandes One Piece contient 17 produits au lieu des 189 de la catégorie générale.",
-    "Elle expose les fiches OP17, leur prix, leur langue et leur statut sans JavaScript."
+    "PrestaShop confirmé par les routes et la structure publique.",
+    "Source limitée à la catégorie Précommande One Piece filtrée Français.",
+    "Le catalogue public expose titre, prix, langue et disponibilité sans rendu navigateur.",
+    "Si le WAF refuse l'IP d'un hébergeur, le connecteur doit être marqué dégradé plutôt que simuler une absence de stock."
   ]
 };
