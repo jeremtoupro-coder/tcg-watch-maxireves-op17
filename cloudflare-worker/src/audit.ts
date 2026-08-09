@@ -59,7 +59,7 @@ function challengePageReason(html: string): string | undefined {
   const title = stripHtml(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
   const visiblePrefix = stripHtml(html.slice(0, Math.min(html.length, 50_000))).slice(0, 2_000);
 
-  if (/^just a moment(?:\.\.\.)?$/i.test(title) || /^just a moment\b/i.test(visiblePrefix)) {
+  if (/^just a moment(?:\.\.\.)?$/i.test(title) || /^just a moment\b/i.test(visiblePrefix) || /title:\s*just a moment/i.test(visiblePrefix) || /performing security verification|page maybe requiring captcha/i.test(visiblePrefix)) {
     return "Cloudflare challenge page";
   }
   if (/\brobot check\b/i.test(title) || /\/errors\/validateCaptcha|sorry, we just need to make sure you(?:'|’)re not a robot/i.test(html)) {
