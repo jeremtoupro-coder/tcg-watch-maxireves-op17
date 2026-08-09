@@ -43,6 +43,22 @@ function productUrlMatches(url: string, connector: ConnectorDefinition): boolean
   return connector.productUrlPatterns.some((pattern) => pattern.test(url));
 }
 
+function isCommerceActionUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const actionParams = [
+      "add-to-cart",
+      "add_to_cart",
+      "remove_item",
+      "wc-ajax",
+      "quantity"
+    ];
+    return actionParams.some((param) => parsed.searchParams.has(param));
+  } catch {
+    return false;
+  }
+}
+
 function candidateScore(candidate: ProductCandidate): number {
   let score = Math.min(candidate.title.length, 200);
   if (candidate.priceText) score += 200;
@@ -116,6 +132,10 @@ function extractCandidates(
       continue;
     }
 
+    // Les liens d'action WooCommerce peuvent conserver le pathname de la fiche
+    // courante et donc hériter à tort de sa référence (ex. OP17) alors qu'ils
+    // ajoutent un autre produit au panier. Ils ne sont jamais des fiches produit.
+    if (isCommerceActionUrl(absoluteUrl)) continue;
     if (!productUrlMatches(absoluteUrl, connector)) continue;
     if (directCandidate && absoluteUrl === directCandidate.url) continue;
     productUrlsSeen.add(absoluteUrl);
