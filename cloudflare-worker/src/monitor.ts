@@ -1,11 +1,11 @@
-import { auditConnector } from "./audit";
 import {
   DEFAULT_CLOUDFLARE_STORES,
   isStoreKey,
   selectConnectors
 } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import type { Env, StoreKey } from "./types";
+import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
+import type { Env, StoreAudit, StoreKey } from "./types";
 
 const DISCOVERY_INTERVAL_MINUTES = 15;
 
@@ -20,12 +20,6 @@ export function parseActiveStores(rawValue?: string): StoreKey[] {
   return [...new Set(stores)];
 }
 
-/**
- * Les connecteurs discovery-only (commercialAlertsEnabled=false) ne sont pas
- * interrogés à chaque Fast Watch. Ils restent bien intégrés aux 21 boutiques,
- * mais sont vérifiés toutes les 15 minutes afin de détecter l'apparition d'une
- * vraie offre TCG sans transformer une boutique hors cible en panne permanente.
- */
 export function isDiscoveryTick(scheduledTime?: number): boolean {
   if (scheduledTime === undefined) return false;
   const minuteBucket = Math.floor(scheduledTime / 60_000);
@@ -33,10 +27,10 @@ export function isDiscoveryTick(scheduledTime?: number): boolean {
 }
 
 /**
- * Un cron Cloudflare est déclenché chaque minute. Un cycle contrôle toutes les
- * boutiques commerciales actives. Les sources discovery-only sont ajoutées au
- * cycle toutes les 15 minutes. Une boutique dégradée est isolée : elle ne peut
- * ni bloquer les boutiques saines ni modifier son propre état persistant.
+ * Un cron Cloudflare est déclenché chaque minute. Les boutiques commerciales
+ * saines sont contrôlées en Fast Watch. Les boutiques discovery-only passent
+ * toutes les 15 minutes. Une origine anti-bot connue n'est plus martelée si
+ * son flux partenaire autorisé n'a pas encore été configuré.
  */
 export async function runMonitoringCycle(
   env: Env,
@@ -48,10 +42,11 @@ export async function runMonitoringCycle(
   status: "disabled" | "completed";
   stores?: StoreKey[];
   deferredDiscoveryStores?: StoreKey[];
+  pendingAuthorizedFeedStores?: StoreKey[];
   healthyStores?: StoreKey[];
   degradedStores?: Array<{ store: StoreKey; errors: string[] }>;
   reason?: string;
-  audits?: Awaited<ReturnType<typeof auditConnector>>[];
+  audits?: StoreAudit[];
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
 }> {
   if (env.MONITORING_ENABLED !== "true") {
@@ -82,18 +77,30 @@ export async function runMonitoringCycle(
   }
 
   const includeDiscoveryOnly = Boolean(options.forceStore) || isDiscoveryTick(options.scheduledTime);
-  const connectors = requestedConnectors.filter((connector) =>
+  const afterDiscoveryCadence = requestedConnectors.filter((connector) =>
     connector.commercialAlertsEnabled !== false || includeDiscoveryOnly
   );
   const deferredDiscoveryStores = requestedConnectors
     .filter((connector) => connector.commercialAlertsEnabled === false && !includeDiscoveryOnly)
     .map((connector) => connector.key);
 
+  const pendingAuthorizedFeedStores = options.forceStore
+    ? []
+    : afterDiscoveryCadence
+        .filter((connector) =>
+          connector.directPollingDisabledWithoutFeed === true &&
+          !hasConfiguredAuthorizedFeed(connector, env)
+        )
+        .map((connector) => connector.key);
+  const pendingFeedKeys = new Set(pendingAuthorizedFeedStores);
+  const connectors = afterDiscoveryCadence.filter((connector) => !pendingFeedKeys.has(connector.key));
+
   if (connectors.length === 0) {
     return {
       status: "completed",
       stores: [],
       deferredDiscoveryStores,
+      pendingAuthorizedFeedStores,
       healthyStores: [],
       degradedStores: [],
       audits: [],
@@ -101,7 +108,7 @@ export async function runMonitoringCycle(
     };
   }
 
-  const audits = await Promise.all(connectors.map((connector) => auditConnector(connector)));
+  const audits = await Promise.all(connectors.map((connector) => auditStore(connector, env)));
   const connectorByKey = new Map(connectors.map((connector) => [connector.key, connector]));
   const degradedStores = audits
     .map((audit) => ({
@@ -113,9 +120,6 @@ export async function runMonitoringCycle(
   const healthyAudits = audits.filter((audit) => !degradedKeys.has(audit.store));
   const healthyStores = healthyAudits.map((audit) => audit.store);
 
-  // Un candidat non éligible reste visible dans les audits/diagnostics mais ne
-  // touche jamais l'état commercial. C'est notamment le cas d'une marketplace
-  // dont le vendeur officiel n'a pas été confirmé sur la fiche directe.
   const candidates = healthyAudits.flatMap((audit) => {
     const connector = connectorByKey.get(audit.store);
     if (connector?.commercialAlertsEnabled === false) return [];
@@ -132,6 +136,7 @@ export async function runMonitoringCycle(
     status: "completed",
     stores: connectors.map((connector) => connector.key),
     deferredDiscoveryStores,
+    pendingAuthorizedFeedStores,
     healthyStores,
     degradedStores,
     audits,
