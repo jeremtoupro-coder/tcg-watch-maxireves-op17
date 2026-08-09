@@ -12,51 +12,108 @@ jobs:
   probe-browser:
     if: contains(github.event.head_commit.message, '[browser-probe]')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare-worker
     steps:
-      - name: Probe blocked shops through Cloudflare Browser Run
+      - name: Checkout branch
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Generate temporary SAFE browser audit config
+        run: npm run generate-deploy-config
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+          DEPLOY_MONITORING_ENABLED: "false"
+          DEPLOY_WRITE_STATE: "false"
+          DEPLOY_DISCORD_MODE: dry-run
+          DEPLOY_ALLOW_PUBLIC_AUDIT: "true"
+      - name: Inject Browser Run binding only for this test deployment
         shell: bash
         run: |
           node <<'NODE'
-          const targets = [
-            ['playin', 'https://www.play-in.com/fr/produit/646300/display-de-24-boosters-op-16-l-heure-de-la-bataille-decisive-one-piece-fr'],
-            ['cultura', 'https://www.cultura.com/p-booster-one-piece-op16-l-heure-de-la-bataille-decisive-13080126.html'],
-            ['fnac', 'https://www.fnac.com/Cartes-a-collectionner-One-Piece-OP16-Booster-Double-Pack/a23123806/w-4'],
-            ['carrefour', 'https://www.carrefour.fr/p/cartes-booster-one-piece-op14-les-sept-de-la-mer-d-azur-bandai-4582769923166'],
-            ['king-jouet', 'https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034904-cartes-one-piece-double-booster-op16-heure-de-la-bataille-decisive.htm'],
-            ['otakuland', 'https://otakuland.fr/shop/']
-          ];
-          const endpoint = `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/browser-rendering/content`;
+          const fs = require('fs');
+          const path = 'wrangler.generated.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.browser = { binding: 'BROWSER' };
+          fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
+          NODE
+      - name: Deploy temporary SAFE Browser Run probe
+        run: npx wrangler deploy --config wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Probe six blocked shops with Browser Run binding
+        shell: bash
+        run: |
+          node <<'NODE'
+          const base = 'https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev';
+          const stores = ['playin', 'cultura', 'fnac', 'carrefour', 'king-jouet', 'otakuland'];
           const results = [];
-          for (const [store, url] of targets) {
+
+          async function waitForDeployment() {
+            for (let i = 1; i <= 15; i++) {
+              const r = await fetch(base + '/');
+              const d = r.ok ? await r.json() : {};
+              if (d.runtime?.publicStorePollingEnabled === true) return;
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            }
+            throw new Error('Déploiement Browser Run non propagé.');
+          }
+
+          await waitForDeployment();
+          for (let i = 0; i < stores.length; i++) {
+            const store = stores[i];
             const started = Date.now();
             try {
-              const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ url })
+              const response = await fetch(`${base}/opwatch/v1/browser-probe?store=${encodeURIComponent(store)}`, {
+                signal: AbortSignal.timeout(90000)
               });
               const text = await response.text();
-              results.push({
-                store,
-                http: response.status,
-                ok: response.ok,
-                durationMs: Date.now() - started,
-                bytes: text.length,
-                hasOnePiece: /one[\s-]*piece/i.test(text),
-                hasOpCode: /\b(?:OP|EB|PRB|ST|DP)[-\s]?\d{1,2}\b/i.test(text),
-                bodyPrefix: response.ok ? undefined : text.slice(0, 300)
-              });
+              let data;
+              try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 500) }; }
+              results.push({ store, endpointHttp: response.status, durationMs: Date.now() - started, ...data });
             } catch (error) {
               results.push({ store, error: error instanceof Error ? error.message : String(error) });
             }
+            if (i < stores.length - 1) await new Promise(resolve => setTimeout(resolve, 11000));
           }
+          require('fs').writeFileSync('browser-fallback-report.json', JSON.stringify(results, null, 2) + '\n');
           console.log(JSON.stringify(results, null, 2));
-          if (results.every((item) => !item.ok)) process.exitCode = 1;
+          const useful = results.filter(item => item.result?.browserResponseOk && item.result?.hasOnePiece && !item.result?.hasChallenge);
+          if (useful.length === 0) process.exitCode = 1;
           NODE
+      - name: Upload browser probe report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: op-watch-browser-fallback-probe
+          path: cloudflare-worker/browser-fallback-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Generate locked SAFE preview config
+        if: always()
+        run: npm run generate-deploy-config
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
+          DEPLOY_MONITORING_ENABLED: "false"
+          DEPLOY_WRITE_STATE: "false"
+          DEPLOY_DISCORD_MODE: dry-run
+          DEPLOY_ALLOW_PUBLIC_AUDIT: "false"
+      - name: Restore locked SAFE preview without Browser Run binding
+        if: always()
+        run: npx wrangler deploy --config wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
