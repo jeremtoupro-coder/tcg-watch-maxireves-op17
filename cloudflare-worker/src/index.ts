@@ -1,8 +1,8 @@
-import { auditConnector } from "./audit";
 import { WATCH_CONFIG } from "./config";
 import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
 import { parseActiveStores, runMonitoringCycle } from "./monitor";
+import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
 import opWatchV1Config from "../config/opwatch-v1.json";
 import { activeOfficialProducts, computeWatchWindow, parseOfficialCatalog } from "./opwatchV1";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
@@ -31,12 +31,22 @@ function isLive(env: Env): boolean {
     Boolean(env.TCG_STATE);
 }
 
-async function runAudits(connectors: ConnectorDefinition[]) {
+async function runAudits(connectors: ConnectorDefinition[], env: Env) {
   const results = [];
   for (const connector of connectors) {
-    results.push(await auditConnector(connector));
+    results.push(await auditStore(connector, env));
   }
   return results;
+}
+
+function authorizedFeedReadiness(env: Env) {
+  return CONNECTORS
+    .filter((connector) => Boolean(connector.authorizedFeedEnv))
+    .map((connector) => ({
+      store: connector.key,
+      configured: hasConfiguredAuthorizedFeed(connector, env),
+      directPollingDisabledWithoutFeed: connector.directPollingDisabledWithoutFeed === true
+    }));
 }
 
 async function officialCalendarPreview(now = new Date()) {
@@ -110,7 +120,8 @@ export default {
           publicStorePollingEnabled: env.ALLOW_PUBLIC_AUDIT === "true",
           automaticPolling: live,
           activeStores: parseActiveStores(env.ACTIVE_STORES),
-          schedule: live ? "one task per minute" : "disabled"
+          schedule: live ? "one task per minute" : "disabled",
+          authorizedFeeds: authorizedFeedReadiness(env)
         },
         v1: {
           mode: opWatchV1Config.mode,
@@ -145,6 +156,7 @@ export default {
         mode,
         monitoringEnabled: env.MONITORING_ENABLED === "true",
         stateBindingPresent: Boolean(env.TCG_STATE),
+        authorizedFeeds: authorizedFeedReadiness(env),
         checkedAt: new Date().toISOString()
       });
     }
@@ -167,7 +179,8 @@ export default {
         settings: WATCH_CONFIG.settings,
         products: WATCH_CONFIG.products,
         alerts: WATCH_CONFIG.alerts,
-        opWatchV1: opWatchV1Config
+        opWatchV1: opWatchV1Config,
+        authorizedFeeds: authorizedFeedReadiness(env)
       });
     }
 
@@ -193,7 +206,7 @@ export default {
       }, 400);
     }
 
-    const stores = await runAudits(selected);
+    const stores = await runAudits(selected, env);
 
     if (url.pathname === "/audit") {
       return jsonResponse({
@@ -205,7 +218,9 @@ export default {
 
     const candidates = stores.flatMap((store) => store.candidates);
     const evaluation = await evaluateCandidates(candidates, env, {
-      baselineStores: selected.map((connector) => connector.key)
+      baselineStores: selected
+        .filter((connector) => connector.commercialAlertsEnabled !== false)
+        .map((connector) => connector.key)
     });
 
     return jsonResponse({
