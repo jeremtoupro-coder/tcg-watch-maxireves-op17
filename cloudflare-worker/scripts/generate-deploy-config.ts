@@ -53,6 +53,10 @@ const vars = { ...(baseConfig.vars ?? {}) };
 vars.MONITORING_ENABLED = process.env.DEPLOY_MONITORING_ENABLED ?? vars.MONITORING_ENABLED ?? "false";
 vars.WRITE_STATE = process.env.DEPLOY_WRITE_STATE ?? vars.WRITE_STATE ?? "false";
 vars.DISCORD_MODE = process.env.DEPLOY_DISCORD_MODE ?? vars.DISCORD_MODE ?? "dry-run";
+vars.ALLOW_PUBLIC_AUDIT = process.env.DEPLOY_ALLOW_PUBLIC_AUDIT ?? vars.ALLOW_PUBLIC_AUDIT ?? "false";
+if (process.env.DEPLOY_ACTIVE_STORES?.trim()) {
+  vars.ACTIVE_STORES = process.env.DEPLOY_ACTIVE_STORES.trim();
+}
 
 const cronExpression = process.env.DEPLOY_CRON?.trim();
 const generatedConfig: WranglerConfig = {
@@ -84,5 +88,6 @@ await writeFile(
 
 console.log(
   `Configuration générée: KV=${namespaceTitle}, monitoring=${vars.MONITORING_ENABLED}, ` +
-  `writeState=${vars.WRITE_STATE}, discord=${vars.DISCORD_MODE}, cron=${cronExpression ?? "désactivé"}`
+  `writeState=${vars.WRITE_STATE}, discord=${vars.DISCORD_MODE}, publicAudit=${vars.ALLOW_PUBLIC_AUDIT}, ` +
+  `cron=${cronExpression ?? "désactivé"}`
 );
