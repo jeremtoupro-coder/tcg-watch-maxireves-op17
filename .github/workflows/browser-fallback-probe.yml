@@ -87,7 +87,8 @@ jobs:
             }
             if (i < stores.length - 1) await new Promise(resolve => setTimeout(resolve, 11000));
           }
-          require('fs').writeFileSync('browser-fallback-report.json', JSON.stringify(results, null, 2) + '\n');
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync('browser-fallback-report.json', JSON.stringify(results, null, 2) + '\n');
           console.log(JSON.stringify(results, null, 2));
           const useful = results.filter(item => item.result?.browserResponseOk && item.result?.hasOnePiece && !item.result?.hasChallenge);
           if (useful.length === 0) process.exitCode = 1;
