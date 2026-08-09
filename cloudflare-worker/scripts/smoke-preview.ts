@@ -2,6 +2,8 @@ export {};
 
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
 const auditToken = process.env.PREVIEW_AUDIT_TOKEN ?? "";
+const MAX_ATTEMPTS = 12;
+const REQUEST_TIMEOUT_MS = 15_000;
 if (!baseUrl) throw new Error("PREVIEW_URL est obligatoire.");
 if (!auditToken) throw new Error("PREVIEW_AUDIT_TOKEN est obligatoire.");
 
@@ -14,19 +16,33 @@ async function getJson(
   let lastError: unknown;
 
   // Cloudflare peut mettre quelques secondes à propager une nouvelle version.
-  for (let attempt = 1; attempt <= 6; attempt += 1) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
+        signal: controller.signal,
         headers: { "User-Agent": "OPWatchPreviewSmoke/1.0", ...headers }
       });
-      const body = await response.json() as Record<string, any>;
+      const raw = await response.text();
+      let body: Record<string, any>;
+      try {
+        body = JSON.parse(raw) as Record<string, any>;
+      } catch {
+        throw new Error(
+          `${path}: réponse non-JSON HTTP ${response.status} ` +
+          `(${response.headers.get("content-type") ?? "type inconnu"}): ${raw.slice(0, 160)}`
+        );
+      }
       if (response.status !== expectedStatus) {
         throw new Error(`${path}: HTTP ${response.status}, attendu ${expectedStatus}: ${JSON.stringify(body)}`);
       }
       return body;
     } catch (error) {
       lastError = error;
-      if (attempt < 6) await new Promise((resolve) => setTimeout(resolve, 5_000));
+      if (attempt < MAX_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 5_000));
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
