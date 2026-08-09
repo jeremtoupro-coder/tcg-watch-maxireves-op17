@@ -85,10 +85,10 @@ jobs:
             fi
           done
           exit "$missing"
-      - name: Create ephemeral preview audit token
+      - name: Derive isolated stable preview audit token
         shell: bash
         run: |
-          token="$(openssl rand -hex 32)"
+          token="$(npm run --silent derive-preview-audit-token)"
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
       - name: Generate isolated SAFE_PREVIEW config
@@ -108,7 +108,7 @@ jobs:
           c.kv_namespaces?.length||c.triggers?.crons?.length) process.exit(1)"
       - name: Deploy dedicated preview Worker
         run: npx wrangler deploy --config wrangler.generated.json
-      - name: Install ephemeral audit token
+      - name: Install isolated audit token
         run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.generated.json
       - name: Install configured authorized feed secrets
         shell: bash
@@ -133,6 +133,8 @@ jobs:
               printf '%s' "$value" | npx wrangler secret put "$name" --config wrangler.generated.json
             fi
           done
+      - name: Wait for authenticated preview propagation
+        run: npm run stabilize-preview-auth
       - name: Smoke test real preview
         run: npm run smoke-preview
       - name: Audit all 21 shops through preview

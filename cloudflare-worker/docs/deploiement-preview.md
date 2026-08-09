@@ -22,7 +22,7 @@ DISCORD_MODE=dry-run
 ALLOW_PUBLIC_AUDIT=true
 ```
 
-`ALLOW_PUBLIC_AUDIT=true` n'ouvre pas les routes : `/audit` et `/evaluate` exigent aussi `PREVIEW_AUDIT_TOKEN`, généré aléatoirement à chaque run et installé comme secret Cloudflare. Sans ce jeton, la réponse doit être HTTP 401.
+`ALLOW_PUBLIC_AUDIT=true` n'ouvre pas les routes : `/audit` et `/evaluate` exigent aussi `PREVIEW_AUDIT_TOKEN`, installé comme secret Cloudflare. Le jeton est dérivé par HMAC du credential de déploiement avec un contexte dédié : le credential Cloudflare n'est ni transmis au Worker, ni écrit dans un fichier, ni affiché dans les logs. La valeur dédiée reste stable entre deux déploiements afin que les anciennes et nouvelles versions acceptent la même authentification pendant la propagation Cloudflare. Sans ce jeton, la réponse doit être HTTP 401.
 
 ## Gates du workflow
 
@@ -31,9 +31,10 @@ ALLOW_PUBLIC_AUDIT=true
 3. tous les tests Vitest ;
 4. build Wrangler `--dry-run` ;
 5. génération de config et assertion de sûreté ;
-6. déploiement du Worker dédié ;
-7. smoke test sémantique de `/`, `/health`, `/config`, `/opwatch/v1/calendar` et de l'authentification `/audit` ;
-8. audit réel en lecture seule des 21 boutiques ;
-9. conservation du rapport comme artifact GitHub.
+6. déploiement du Worker dédié et installation du secret d'audit ;
+7. huit contrôles authentifiés consécutifs pour exclure une version Cloudflare encore ancienne ;
+8. smoke test sémantique de `/`, `/health`, `/config`, `/opwatch/v1/calendar` et de l'authentification `/audit` ;
+9. audit réel en lecture seule des 21 boutiques ;
+10. conservation du rapport comme artifact GitHub.
 
 Le workflow ne contient aucun job `deploy-live`, aucune initialisation de KV et aucune simulation sur l'état de production.

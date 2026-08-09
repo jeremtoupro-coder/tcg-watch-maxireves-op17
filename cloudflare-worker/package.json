@@ -10,6 +10,8 @@
     "check": "npm run typecheck && npm test && wrangler deploy --dry-run",
     "monitor": "node --import tsx scripts/poll.ts",
     "generate-deploy-config": "node --import tsx scripts/generate-deploy-config.ts",
+    "derive-preview-audit-token": "node --import tsx scripts/derive-preview-audit-token.ts",
+    "stabilize-preview-auth": "node --import tsx scripts/stabilize-preview-auth.ts",
     "smoke-preview": "node --import tsx scripts/smoke-preview.ts",
     "audit-preview": "node --import tsx scripts/audit-preview.ts"
   },
