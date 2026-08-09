@@ -195,4 +195,50 @@ describe("surveillance planifiée", () => {
     expect(fast.deferredFastWatchStores).toEqual(["maxireves"]);
     expect(calls).toEqual([]);
   });
+
+  it("répare les anciennes variantes Amazon du cache Fast Watch sans requêtes en double", async () => {
+    const canonical = "https://www.amazon.fr/dp/B0ABCDEF12";
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response(`
+        <html><head><title>One Piece Card Game</title></head><body>
+          <h1>Display OP-17 Français</h1>
+          <p>En stock - 119,90 €</p><p>Vendu par Amazon.fr</p>
+        </body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
+    }));
+    const stateStore = new MemoryStateStore({
+      writable: true,
+      seedMetadata: {
+        "monitor:last-discovery": "2026-08-09T18:15:00.000Z",
+        "discovery:v1:amazon-fr": JSON.stringify({
+          discoveredAt: "2026-08-09T18:15:00.000Z",
+          entries: [
+            { url: `${canonical}?tag=tracking-21&ref_=sr_1_1`, references: ["OP-17"] },
+            { url: `${canonical}#customerReviews`, references: ["OP-17"] },
+            { url: "https://www.amazon.fr/gp/product/B0ABCDEF12/ref=s9_acsd_hps_bw_c2_x_1_w", references: ["OP-17"] }
+          ]
+        })
+      }
+    });
+
+    const result = await runMonitoringCycle({
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run",
+      ACTIVE_STORES: "amazon-fr"
+    }, {
+      officialProducts: [OP17],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 17, 0)
+    });
+
+    expect(calls).toEqual([canonical]);
+    expect(result.audits?.[0].sources).toHaveLength(1);
+    expect(result.audits?.[0].candidates).toHaveLength(1);
+    expect(result.deferredFastWatchStores).toEqual([]);
+  });
 });

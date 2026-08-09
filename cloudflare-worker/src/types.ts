@@ -167,6 +167,11 @@ export interface ConnectorDefinition {
   name: string;
   sources: string[];
   productUrlPatterns: RegExp[];
+  /**
+   * Ramène les variantes de tracking d'une même fiche vers une URL stable.
+   * Exemple : les multiples formes Amazon d'un même ASIN.
+   */
+  canonicalizeProductUrl?: (url: string) => string;
   maxConcurrency?: number;
   requestHeaders?: Record<string, string>;
   followDiscoveredProductPages?: boolean;

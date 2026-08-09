@@ -168,4 +168,36 @@ describe("rollout 21 boutiques", () => {
     expect(audit.candidates[0].commercialEligible).toBe(false);
     expect(audit.candidates[0].commercialEligibilityReason).toMatch(/Amazon non confirmé/i);
   });
+
+  it("ne télécharge qu'une fois les variantes de tracking d'un même ASIN Amazon", async () => {
+    const search = "https://www.amazon.fr/s?k=one+piece+card+game+francais";
+    const canonical = "https://www.amazon.fr/dp/B0ABCDEF12";
+    const amazon = CONNECTORS.find((connector) => connector.key === "amazon-fr")!;
+    const connector: ConnectorDefinition = { ...amazon, sources: [search] };
+    const searchHtml = `
+      <html><head><title>One Piece Card Game</title></head><body>
+        <a href="/Display-One-Piece/dp/B0ABCDEF12?tag=tracking-21&ref_=sr_1_1">Display OP-17 Français</a>
+        <a href="/dp/B0ABCDEF12#customerReviews">Display OP-17 Français</a>
+        <a href="/gp/product/B0ABCDEF12/ref=s9_acsd_hps_bw_c2_x_1_w">Display OP-17 Français</a>
+      </body></html>`;
+    const productHtml = `
+      <html><head><title>One Piece Card Game</title></head><body>
+        <h1>Display OP-17 Français</h1>
+        <p>En stock - 119,90 €</p><p>Vendu par Amazon.fr</p>
+      </body></html>`;
+    const calls: string[] = [];
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      return new Response(url === search ? searchHtml : productHtml, { status: 200 });
+    }));
+
+    const audit = await auditConnector(connector);
+    expect(calls).toEqual([search, canonical]);
+    expect(audit.sources.map((source) => source.sourceUrl)).toEqual([search, canonical]);
+    expect(audit.sources[0].productLinksSeen).toBe(1);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].url).toBe(canonical);
+  });
 });

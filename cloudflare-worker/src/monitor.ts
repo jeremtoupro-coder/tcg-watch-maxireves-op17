@@ -9,6 +9,7 @@ import { buildActiveWatchConfig, candidateForActiveProducts, type OfficialProduc
 import { createStateStore, type StateStore } from "./state";
 import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
 import { matchReferences } from "./matching";
+import { canonicalProductUrl } from "./connectorUrls";
 import type { Env, StoreAudit, StoreKey } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
 
@@ -53,17 +54,20 @@ function connectorHosts(connector: ReturnType<typeof selectConnectors>[number]):
   }));
 }
 
-function validFastWatchUrl(
+function normalizedFastWatchUrl(
   url: string,
   connector: ReturnType<typeof selectConnectors>[number]
-): boolean {
+): string | undefined {
   try {
-    const parsed = new URL(url);
+    const normalized = canonicalProductUrl(url, connector);
+    const parsed = new URL(normalized);
     return parsed.protocol === "https:" &&
       connectorHosts(connector).has(parsed.hostname) &&
-      connector.productUrlPatterns.some((pattern) => pattern.test(parsed.toString()));
+      connector.productUrlPatterns.some((pattern) => pattern.test(parsed.toString()))
+      ? normalized
+      : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -100,10 +104,12 @@ function configuredDirectUrls(
   connector: ReturnType<typeof selectConnectors>[number],
   activeIds: Set<string>
 ): string[] {
-  return connector.sources.filter((source) =>
-    validFastWatchUrl(source, connector) &&
-    matchReferences(source).some((reference) => activeIds.has(reference))
-  );
+  return connector.sources.flatMap((source) => {
+    const normalized = normalizedFastWatchUrl(source, connector);
+    return normalized && matchReferences(source).some((reference) => activeIds.has(reference))
+      ? [normalized]
+      : [];
+  });
 }
 
 async function fastWatchConnector(
@@ -115,8 +121,10 @@ async function fastWatchConnector(
   const cached = parseDiscoveryCache(await stateStore.getMetadata(discoveryCacheKey(connector.key)));
   const cachedUrls = (cached?.entries ?? [])
     .filter((entry) => entry.references.some((reference) => activeIds.has(reference)))
-    .map((entry) => entry.url)
-    .filter((url) => validFastWatchUrl(url, connector));
+    .flatMap((entry) => {
+      const normalized = normalizedFastWatchUrl(entry.url, connector);
+      return normalized ? [normalized] : [];
+    });
   const sources = [...new Set([...configuredDirectUrls(connector, activeIds), ...cachedUrls])];
   if (sources.length === 0) return undefined;
   return {
@@ -136,11 +144,13 @@ async function persistDiscoveryCache(
   if (!stateStore.writable || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
   const entries = audit.candidates
     .filter((candidate) => candidate.matchedReferences.some((reference) => activeIds.has(reference)))
-    .filter((candidate) => validFastWatchUrl(candidate.url, connector))
-    .map((candidate) => ({
-      url: candidate.url,
-      references: [...new Set(candidate.matchedReferences)].sort()
-    }));
+    .flatMap((candidate) => {
+      const normalized = normalizedFastWatchUrl(candidate.url, connector);
+      return normalized ? [{
+        url: normalized,
+        references: [...new Set(candidate.matchedReferences)].sort()
+      }] : [];
+    });
   const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
   await stateStore.putMetadata(discoveryCacheKey(connector.key), JSON.stringify({
     discoveredAt,

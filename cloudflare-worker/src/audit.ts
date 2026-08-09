@@ -1,5 +1,6 @@
 import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
 import { enrichCandidateIdentity, extractProductImage } from "./opwatchV1";
+import { canonicalProductUrl } from "./connectorUrls";
 import type {
   ConnectorDefinition,
   LanguageStatus,
@@ -163,27 +164,28 @@ function extractDirectProductCandidate(
   sourceUrl: string,
   connector: ConnectorDefinition
 ): ProductCandidate | undefined {
-  if (!productUrlMatches(sourceUrl, connector)) return undefined;
+  const productUrl = canonicalProductUrl(sourceUrl, connector);
+  if (!productUrlMatches(productUrl, connector)) return undefined;
 
   const h1Match = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
   const title = stripHtml(h1Match?.[1] ?? titleMatch?.[1] ?? "");
-  const matchedReferences = matchReferences(`${title} ${sourceUrl}`);
+  const matchedReferences = matchReferences(`${title} ${productUrl} ${sourceUrl}`);
   if (!title || matchedReferences.length === 0) return undefined;
 
   const productStart = h1Match?.index ?? titleMatch?.index ?? 0;
   const productText = directProductCoreText(html, productStart);
   const availability = detectAvailability(productText);
   const structuredLanguage = extractStructuredProductLanguage(productText);
-  const language = structuredLanguage ?? languageFromPrimary(`${title} ${sourceUrl}`, productText);
+  const language = structuredLanguage ?? languageFromPrimary(`${title} ${productUrl}`, productText);
   const eligibility = commercialEligibility(connector, true, `${title} ${productText}`);
 
   return enrichCandidateIdentity({
     store: connector.key,
     storeName: connector.name,
     title,
-    url: sourceUrl,
-    sourceUrl,
+    url: productUrl,
+    sourceUrl: productUrl,
     matchedReferences,
     availability,
     language,
@@ -221,14 +223,15 @@ function extractCandidates(
     const rawHref = decodeHtml(match[2] ?? "").trim();
     if (!rawHref || /^(?:#|javascript:|mailto:|tel:)/i.test(rawHref)) continue;
 
-    let absoluteUrl: string;
+    let resolvedUrl: string;
     try {
-      absoluteUrl = new URL(rawHref, sourceUrl).toString();
+      resolvedUrl = new URL(rawHref, sourceUrl).toString();
     } catch {
       continue;
     }
 
-    if (isCommerceActionUrl(absoluteUrl)) continue;
+    if (isCommerceActionUrl(resolvedUrl)) continue;
+    const absoluteUrl = canonicalProductUrl(resolvedUrl, connector);
     if (!productUrlMatches(absoluteUrl, connector)) continue;
     productUrlsSeen.add(absoluteUrl);
 
@@ -250,7 +253,7 @@ function extractCandidates(
     const heading = nearestHeading(before);
     const title = metadataParts.sort((a, b) => b.length - a.length)[0] || heading;
 
-    let matchedReferences = matchReferences(`${metadata} ${absoluteUrl}`);
+    let matchedReferences = matchReferences(`${metadata} ${absoluteUrl} ${resolvedUrl}`);
     if (matchedReferences.length === 0 && !metadata) {
       matchedReferences = matchReferences(`${heading} ${absoluteUrl}`);
     }
@@ -383,7 +386,7 @@ function allowedDiscoveryHosts(connector: ConnectorDefinition): Set<string> {
 
 function discoveredProductUrls(sources: SourceAudit[], connector: ConnectorDefinition): string[] {
   const hosts = allowedDiscoveryHosts(connector);
-  const configuredSources = new Set(connector.sources);
+  const configuredSources = new Set(connector.sources.map((source) => canonicalProductUrl(source, connector)));
   const discovered = new Set<string>();
 
   for (const source of sources) {
@@ -416,7 +419,8 @@ async function fetchSourcesInBatches(
 
 export async function auditConnector(connector: ConnectorDefinition): Promise<StoreAudit> {
   const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, connector.maxConcurrency ?? 1));
-  const sources = await fetchSourcesInBatches(connector.sources, connector, concurrency);
+  const initialSources = [...new Set(connector.sources.map((source) => canonicalProductUrl(source, connector)))];
+  const sources = await fetchSourcesInBatches(initialSources, connector, concurrency);
 
   if (connector.followDiscoveredProductPages) {
     const productUrls = discoveredProductUrls(sources, connector);
