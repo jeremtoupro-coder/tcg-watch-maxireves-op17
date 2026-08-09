@@ -1,4 +1,5 @@
 import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
+import { extractProductImage } from "./opwatchV1";
 import type {
   ConnectorDefinition,
   ProductCandidate,
@@ -45,12 +46,11 @@ function productUrlMatches(url: string, connector: ConnectorDefinition): boolean
 function candidateScore(candidate: ProductCandidate): number {
   let score = Math.min(candidate.title.length, 200);
   if (candidate.priceText) score += 200;
+  if (candidate.imageUrl) score += 100;
   if (candidate.language !== "Langue non précisée") score += 400;
   if (candidate.availability !== "unknown") score += 800;
 
   // Une fiche produit directe est la source de vérité pour le stock.
-  // Sans ce bonus, une carte issue d'une catégorie peut l'emporter simplement
-  // parce qu'elle contient un prix, même si la fiche directe indique une rupture.
   if (candidate.sourceUrl === candidate.url) score += 10_000;
 
   return score;
@@ -85,6 +85,7 @@ function extractDirectProductCandidate(
     availability,
     language: detectLanguage(`${title} ${sourceUrl} ${context}`),
     priceText: availability === "unavailable" ? undefined : extractPrice(context),
+    imageUrl: extractProductImage(html, sourceUrl),
     excerpt: context.slice(0, 500)
   };
 }
@@ -144,7 +145,8 @@ function extractCandidates(
 
     if (matchedReferences.length === 0 || !title || title.length < 3) continue;
 
-    const context = stripHtml(`${before.slice(-1_500)} ${after}`);
+    const contextHtml = `${before.slice(-1_500)} ${after}`;
+    const context = stripHtml(contextHtml);
     const candidate: ProductCandidate = {
       store: connector.key,
       storeName: connector.name,
@@ -155,6 +157,7 @@ function extractCandidates(
       availability: detectAvailability(context),
       language: detectLanguage(`${title} ${absoluteUrl} ${context}`),
       priceText: extractPrice(context),
+      imageUrl: extractProductImage(`${rawAnchorText} ${contextHtml}`, sourceUrl),
       excerpt: context.slice(0, 500)
     };
 
