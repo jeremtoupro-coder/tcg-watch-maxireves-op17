@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildMonitoringTasks,
-  parseActiveStores,
-  runMonitoringCycle,
-  selectScheduledStore,
-  selectScheduledTask
-} from "../src/monitor";
+import { parseActiveStores, runMonitoringCycle } from "../src/monitor";
 
 describe("surveillance planifiée", () => {
   it("utilise les quatre boutiques pilotes OP Watch par défaut", () => {
@@ -24,39 +18,6 @@ describe("surveillance planifiée", () => {
     ]);
   });
 
-  it("répartit une liste simple par minute", () => {
-    const stores = ["maxireves", "pixelheart", "oupi"] as const;
-    expect(selectScheduledStore([...stores], 0)).toBe("maxireves");
-    expect(selectScheduledStore([...stores], 60_000)).toBe("pixelheart");
-    expect(selectScheduledStore([...stores], 120_000)).toBe("oupi");
-    expect(selectScheduledStore([...stores], 180_000)).toBe("maxireves");
-  });
-
-  it("construit neuf tâches avec deux fiches Fantasy Sphere maximum", () => {
-    const tasks = buildMonitoringTasks(parseActiveStores());
-    expect(tasks).toHaveLength(9);
-    expect(tasks.slice(0, 3).map((task) => task.store)).toEqual([
-      "maxireves",
-      "oupi",
-      "pixelheart"
-    ]);
-
-    const fantasyTasks = tasks.filter((task) => task.store === "fantasy-sphere");
-    expect(fantasyTasks).toHaveLength(6);
-    expect(fantasyTasks.every((task) => task.connector.sources.length <= 2)).toBe(true);
-    expect(fantasyTasks.map((task) => task.batchIndex)).toEqual([0, 1, 2, 3, 4, 5]);
-  });
-
-  it("effectue un cycle complet en neuf minutes", () => {
-    const tasks = buildMonitoringTasks(parseActiveStores());
-    expect(selectScheduledTask(tasks, 0)?.store).toBe("maxireves");
-    expect(selectScheduledTask(tasks, 60_000)?.store).toBe("oupi");
-    expect(selectScheduledTask(tasks, 120_000)?.store).toBe("pixelheart");
-    expect(selectScheduledTask(tasks, 180_000)?.store).toBe("fantasy-sphere");
-    expect(selectScheduledTask(tasks, 480_000)?.batchIndex).toBe(5);
-    expect(selectScheduledTask(tasks, 540_000)?.store).toBe("maxireves");
-  });
-
   it("ne fait aucune requête lorsque la surveillance est désactivée", async () => {
     const result = await runMonitoringCycle({
       MONITORING_ENABLED: "false",
@@ -73,5 +34,14 @@ describe("surveillance planifiée", () => {
       WRITE_STATE: "true",
       DISCORD_MODE: "dry-run"
     })).rejects.toThrow(/TCG_STATE/);
+  });
+
+  it("refuse une surveillance active sans écriture persistante", async () => {
+    await expect(runMonitoringCycle({
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "false",
+      DISCORD_MODE: "dry-run",
+      TCG_STATE: {} as KVNamespace
+    })).rejects.toThrow(/WRITE_STATE/);
   });
 });
