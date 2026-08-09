@@ -2,7 +2,7 @@
 
 Date de mise à jour : 2026-08-09.
 
-La branche `op-watch-v1-test` déclenche uniquement le workflow `OP Watch Test CI and Safe Preview`.
+La branche `op-watch-v1-test` déclenche uniquement le workflow `OP Watch Test CI and Safe Preview`, défini dans `.github/workflows/op-watch-test-preview.yml`.
 
 ## Cible isolée
 
@@ -38,3 +38,11 @@ ALLOW_PUBLIC_AUDIT=true
 10. conservation du rapport comme artifact GitHub.
 
 Le workflow ne contient aucun job `deploy-live`, aucune initialisation de KV et aucune simulation sur l'état de production.
+
+## Séparation avec les workflows historiques
+
+- Le workflow TEST possède désormais son propre chemin et son propre identifiant GitHub Actions ; un commit de `op-watch-v1-test` ne déclenche aucun chemin LIVE.
+- Le workflow `OP Watch - Production Monitor` actuellement visible depuis `main` a été désactivé manuellement dans GitHub Actions le 2026-08-09. Il ne doit pas être réactivé avant une validation LIVE distincte.
+- L'ancien workflow `Cloudflare Audit CI`, défini sur `main` dans `.github/workflows/cloudflare-audit-ci.yml` et historiquement lié à `cloudflare-workers-audit`, est indépendant du nouveau workflow TEST. Il doit être désactivé au niveau GitHub avant le verdict final, car son ancien code contient un chemin de déploiement LIVE par commit magique.
+
+Run de référence après isolation : [31335313909](https://github.com/jeremtoupro-coder/tcg-watch-maxireves-op17/actions/runs/31335313909), deux jobs réussis et artifact d'audit `9044161158`.

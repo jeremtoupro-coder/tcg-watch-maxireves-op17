@@ -25,7 +25,7 @@ Le workflow de test génère une configuration dédiée :
 - `DISCORD_MODE=dry-run` ;
 - aucun binding KV ;
 - aucun cron ;
-- `/audit` et `/evaluate` protégées par un secret éphémère ;
+- `/audit` et `/evaluate` protégées par un secret isolé et stable, dérivé par HMAC du credential de déploiement sans exposer ce credential au Worker ;
 - aucune URL de flux autorisé dans les réponses ou les logs.
 
 Routes publiques :
@@ -85,6 +85,6 @@ npx wrangler deploy --dry-run
 
 ## Production
 
-Le moteur Node peut être appelé par un ordonnanceur externe. Aucun cron Cloudflare n'est utilisé. Le workflow `watch-maxireves.yml` offre un fallback GitHub toutes les cinq minutes et un événement `op-watch-fast-watch`, mais le job entier reste bloqué tant que `OP_WATCH_PRODUCTION_ENABLED != true`.
+Le moteur Node peut être appelé par un ordonnanceur externe. Aucun cron Cloudflare n'est utilisé. La version de branche du workflow `watch-maxireves.yml` offre un fallback GitHub toutes les cinq minutes et un événement `op-watch-fast-watch`, mais le job entier reste bloqué tant que `OP_WATCH_PRODUCTION_ENABLED != true`. Le workflow de production actuellement présent sur `main` a en plus été désactivé manuellement dans GitHub Actions le 2026-08-09 ; il doit le rester.
 
 Cette branche ne doit pas activer cette variable, installer un webhook LIVE, fusionner `main` ou déclencher le workflow de production.

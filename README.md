@@ -15,7 +15,7 @@ La V1 en cours est développée uniquement sur `op-watch-v1-test` dans la PR #4.
 - marketplaces : vendeur officiel obligatoire ;
 - première collecte : baseline silencieuse ;
 - Preview : Worker Cloudflare séparé, sans KV, cron ni Discord live ;
-- production : workflow protégé par `OP_WATCH_PRODUCTION_ENABLED`, désactivé par défaut.
+- production : non activée ; le workflow de production actuellement présent sur `main` a été désactivé manuellement dans GitHub Actions le 2026-08-09, et sa version de branche est en plus protégée par `OP_WATCH_PRODUCTION_ENABLED`.
 
 Le moteur TypeScript se trouve dans [`cloudflare-worker`](cloudflare-worker/README.md). Le watcher Python historique reste présent comme archive de la première version Maxi Rêves ; ce n'est plus la source d'architecture de la V1.
 
@@ -33,8 +33,10 @@ Le lockfile est versionné et les dépendances sont épinglées. Aucun secret ne
 
 ## Workflows
 
-- `OP Watch Test CI and Safe Preview` : validation de la branche test, déploiement du Worker `tcg-watch-one-piece-preview`, smoke test et audit réel des 21 boutiques.
+- `OP Watch Test CI and Safe Preview` (`.github/workflows/op-watch-test-preview.yml`) : validation de la branche test, déploiement du Worker `tcg-watch-one-piece-preview`, smoke test et audit réel des 21 boutiques.
 - `OP Watch - Production Monitor (gated)` : reste inactif tant que la variable GitHub `OP_WATCH_PRODUCTION_ENABLED` n'est pas explicitement égale à `true` sur `main`.
+
+L'ancien workflow `Cloudflare Audit CI` est séparé de la branche TEST et doit être désactivé tant que le LIVE est interdit.
 
 Le workflow test ne contient aucun chemin de déploiement LIVE.
 
@@ -42,6 +44,7 @@ Le workflow test ne contient aucun chemin de déploiement LIVE.
 
 - [Architecture et exploitation](cloudflare-worker/README.md)
 - [État des 21 boutiques](cloudflare-worker/docs/STORES_21_AUDIT.md)
+- [Check-list binaire VERSION TEST](cloudflare-worker/docs/TEST_GATES.md)
 - [Flux partenaires autorisés](cloudflare-worker/docs/PARTNER_FEEDS.md)
 - [Déploiement SAFE Preview](cloudflare-worker/docs/deploiement-preview.md)
 - [Politique des alertes](cloudflare-worker/docs/gestion-alertes.md)
