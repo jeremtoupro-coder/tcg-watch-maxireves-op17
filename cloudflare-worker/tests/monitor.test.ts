@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseActiveStores, runMonitoringCycle } from "../src/monitor";
+import { isDiscoveryTick, parseActiveStores, runMonitoringCycle } from "../src/monitor";
 
 describe("surveillance planifiée", () => {
   it("utilise les vingt-et-une boutiques OP Watch par défaut", () => {
@@ -33,6 +33,13 @@ describe("surveillance planifiée", () => {
       "oupi",
       "maxireves"
     ]);
+  });
+
+  it("déclenche les sources discovery-only toutes les 15 minutes", () => {
+    expect(isDiscoveryTick(Date.UTC(2026, 7, 9, 18, 0, 0))).toBe(true);
+    expect(isDiscoveryTick(Date.UTC(2026, 7, 9, 18, 15, 0))).toBe(true);
+    expect(isDiscoveryTick(Date.UTC(2026, 7, 9, 18, 14, 0))).toBe(false);
+    expect(isDiscoveryTick()).toBe(false);
   });
 
   it("ne fait aucune requête lorsque la surveillance est désactivée", async () => {
