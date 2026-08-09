@@ -8,11 +8,11 @@ import {
 } from "../src/monitor";
 
 describe("surveillance planifiée", () => {
-  it("utilise les quatre boutiques Cloudflare par défaut", () => {
+  it("utilise les quatre boutiques pilotes OP Watch par défaut", () => {
     expect(parseActiveStores()).toEqual([
       "maxireves",
-      "ludotrotter",
       "oupi",
+      "pixelheart",
       "fantasy-sphere"
     ]);
   });
@@ -25,9 +25,9 @@ describe("surveillance planifiée", () => {
   });
 
   it("répartit une liste simple par minute", () => {
-    const stores = ["maxireves", "ludotrotter", "oupi"] as const;
+    const stores = ["maxireves", "pixelheart", "oupi"] as const;
     expect(selectScheduledStore([...stores], 0)).toBe("maxireves");
-    expect(selectScheduledStore([...stores], 60_000)).toBe("ludotrotter");
+    expect(selectScheduledStore([...stores], 60_000)).toBe("pixelheart");
     expect(selectScheduledStore([...stores], 120_000)).toBe("oupi");
     expect(selectScheduledStore([...stores], 180_000)).toBe("maxireves");
   });
@@ -37,8 +37,8 @@ describe("surveillance planifiée", () => {
     expect(tasks).toHaveLength(9);
     expect(tasks.slice(0, 3).map((task) => task.store)).toEqual([
       "maxireves",
-      "ludotrotter",
-      "oupi"
+      "oupi",
+      "pixelheart"
     ]);
 
     const fantasyTasks = tasks.filter((task) => task.store === "fantasy-sphere");
@@ -50,8 +50,8 @@ describe("surveillance planifiée", () => {
   it("effectue un cycle complet en neuf minutes", () => {
     const tasks = buildMonitoringTasks(parseActiveStores());
     expect(selectScheduledTask(tasks, 0)?.store).toBe("maxireves");
-    expect(selectScheduledTask(tasks, 60_000)?.store).toBe("ludotrotter");
-    expect(selectScheduledTask(tasks, 120_000)?.store).toBe("oupi");
+    expect(selectScheduledTask(tasks, 60_000)?.store).toBe("oupi");
+    expect(selectScheduledTask(tasks, 120_000)?.store).toBe("pixelheart");
     expect(selectScheduledTask(tasks, 180_000)?.store).toBe("fantasy-sphere");
     expect(selectScheduledTask(tasks, 480_000)?.batchIndex).toBe(5);
     expect(selectScheduledTask(tasks, 540_000)?.store).toBe("maxireves");
