@@ -115,29 +115,38 @@ export function aliasesForProduct(code: string): string[] {
 }
 
 /**
- * Parse la page publique PRODUCTS officielle. Le parseur n'associe jamais une
- * date globale au hasard : une date doit se trouver dans une petite fenêtre
- * autour du code produit. Les doublons sont fusionnés par identifiant.
+ * Parse la page publique PRODUCTS officielle.
+ *
+ * Règle de sûreté : une date n'est jamais cherchée avant la référence produit.
+ * On limite d'abord l'analyse au bloc compris entre cette référence et la
+ * référence suivante. Cela évite d'attribuer à un produit la date du produit
+ * précédent. Si aucune date n'est trouvée dans ce bloc, le produit n'est pas
+ * activé automatiquement : mieux vaut une absence temporaire qu'une mauvaise
+ * fenêtre de surveillance.
  */
 export function parseOfficialCatalog(html: string): OfficialProduct[] {
   const text = stripHtml(html);
   const codePattern = /\b(OP|EB|PRB|ST|DP|TS)[-\s]?(\d{1,2})\b/gi;
+  const matches = [...text.matchAll(codePattern)];
   const products = new Map<string, OfficialProduct>();
 
-  for (const match of text.matchAll(codePattern)) {
-    const index = match.index ?? 0;
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const matchIndex = match.index ?? 0;
     const canonical = canonicalProductCode(match[0]);
     if (!canonical) continue;
 
-    const before = text.slice(Math.max(0, index - 260), index);
-    const after = text.slice(index, Math.min(text.length, index + 500));
-    const local = `${before} ${match[0]} ${after}`;
-    const releaseDate = parseEnglishDate(local);
+    const nextIndex = matches[index + 1]?.index;
+    const segmentEnd = nextIndex ?? Math.min(text.length, matchIndex + 900);
+    const segment = text.slice(matchIndex, segmentEnd);
+    const releaseDate = parseEnglishDate(segment);
     if (!releaseDate) continue;
 
-    const labelStart = Math.max(0, before.lastIndexOf("  "));
-    const rawLabel = `${before.slice(labelStart)} ${match[0]}`.replace(/\s+/g, " ").trim();
-    const label = rawLabel.length >= 4 && rawLabel.length <= 180 ? rawLabel : canonical;
+    const labelContext = text.slice(Math.max(0, matchIndex - 160), Math.min(text.length, matchIndex + 220));
+    const compactLabel = labelContext.replace(/\s+/g, " ").trim();
+    const label = compactLabel.length >= 4 && compactLabel.length <= 380
+      ? compactLabel
+      : canonical;
 
     const existing = products.get(canonical);
     if (!existing || existing.releaseDate > releaseDate) {
