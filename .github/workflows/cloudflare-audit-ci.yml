@@ -107,6 +107,22 @@ jobs:
         run: npm run smoke-preview
         env:
           PREVIEW_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+      - name: Probe Oupi through deployed Worker runtime
+        shell: bash
+        run: |
+          node <<'NODE'
+          const url = 'https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev/opwatch/v1/oupi-probe';
+          const response = await fetch(url);
+          const data = await response.json();
+          console.log(JSON.stringify(data, null, 2));
+          const successful = Array.isArray(data.results)
+            ? data.results.filter((item) => item.ok && item.status === 200 && item.hasOnePiece)
+            : [];
+          if (successful.length === 0) {
+            throw new Error('Aucun accès Oupi HTTP 200 confirmé depuis le runtime Cloudflare.');
+          }
+          console.log(`Oupi accessible depuis Cloudflare: ${successful.length} probe(s) OK.`);
+          NODE
 
   seed-baseline:
     if: >-
