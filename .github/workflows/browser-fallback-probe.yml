@@ -1,0 +1,62 @@
+name: Browser Fallback Probe
+
+on:
+  push:
+    branches:
+      - cloudflare-workers-audit
+
+permissions:
+  contents: read
+
+jobs:
+  probe-browser:
+    if: contains(github.event.head_commit.message, '[browser-probe]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe blocked shops through Cloudflare Browser Run
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const targets = [
+            ['playin', 'https://www.play-in.com/fr/produit/646300/display-de-24-boosters-op-16-l-heure-de-la-bataille-decisive-one-piece-fr'],
+            ['cultura', 'https://www.cultura.com/p-booster-one-piece-op16-l-heure-de-la-bataille-decisive-13080126.html'],
+            ['fnac', 'https://www.fnac.com/Cartes-a-collectionner-One-Piece-OP16-Booster-Double-Pack/a23123806/w-4'],
+            ['carrefour', 'https://www.carrefour.fr/p/cartes-booster-one-piece-op14-les-sept-de-la-mer-d-azur-bandai-4582769923166'],
+            ['king-jouet', 'https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034904-cartes-one-piece-double-booster-op16-heure-de-la-bataille-decisive.htm'],
+            ['otakuland', 'https://otakuland.fr/shop/']
+          ];
+          const endpoint = `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/browser-rendering/content`;
+          const results = [];
+          for (const [store, url] of targets) {
+            const started = Date.now();
+            try {
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ url })
+              });
+              const text = await response.text();
+              results.push({
+                store,
+                http: response.status,
+                ok: response.ok,
+                durationMs: Date.now() - started,
+                bytes: text.length,
+                hasOnePiece: /one[\s-]*piece/i.test(text),
+                hasOpCode: /\b(?:OP|EB|PRB|ST|DP)[-\s]?\d{1,2}\b/i.test(text),
+                bodyPrefix: response.ok ? undefined : text.slice(0, 300)
+              });
+            } catch (error) {
+              results.push({ store, error: error instanceof Error ? error.message : String(error) });
+            }
+          }
+          console.log(JSON.stringify(results, null, 2));
+          if (results.every((item) => !item.ok)) process.exitCode = 1;
+          NODE
