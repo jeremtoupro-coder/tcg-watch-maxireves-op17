@@ -11,6 +11,7 @@ const MAX_RESPONSE_BYTES = 2_500_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const SOURCE_DELAY_MS = 300;
 const MAX_CONNECTOR_CONCURRENCY = 8;
+const DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES = 12;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,7 +67,6 @@ function candidateScore(candidate: ProductCandidate): number {
   if (candidate.language !== "Langue non précisée") score += 400;
   if (candidate.availability !== "unknown") score += 800;
 
-  // Une fiche produit directe est la source de vérité pour le stock.
   if (candidate.sourceUrl === candidate.url) score += 10_000;
 
   return score;
@@ -132,9 +132,6 @@ function extractCandidates(
       continue;
     }
 
-    // Les liens d'action WooCommerce peuvent conserver le pathname de la fiche
-    // courante et donc hériter à tort de sa référence (ex. OP17) alors qu'ils
-    // ajoutent un autre produit au panier. Ils ne sont jamais des fiches produit.
     if (isCommerceActionUrl(absoluteUrl)) continue;
     if (!productUrlMatches(absoluteUrl, connector)) continue;
     if (directCandidate && absoluteUrl === directCandidate.url) continue;
@@ -193,6 +190,15 @@ function extractCandidates(
   };
 }
 
+function buildRequestHeaders(connector: ConnectorDefinition): Record<string, string> {
+  return {
+    "User-Agent": "TCGWatcherAudit/0.1 (+personal read-only stock audit)",
+    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.6",
+    ...(connector.requestHeaders ?? {})
+  };
+}
+
 async function fetchSource(
   sourceUrl: string,
   connector: ConnectorDefinition
@@ -206,11 +212,7 @@ async function fetchSource(
       method: "GET",
       redirect: "follow",
       signal: controller.signal,
-      headers: {
-        "User-Agent": "TCGWatcherAudit/0.1 (+personal read-only stock audit)",
-        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
-        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.6"
-      }
+      headers: buildRequestHeaders(connector)
     });
 
     const body = await response.arrayBuffer();
@@ -253,15 +255,69 @@ async function fetchSource(
   }
 }
 
-export async function auditConnector(connector: ConnectorDefinition): Promise<StoreAudit> {
-  const sources: SourceAudit[] = [];
-  const requestedConcurrency = (connector as ConnectorDefinition & { maxConcurrency?: number }).maxConcurrency ?? 1;
-  const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, requestedConcurrency));
+function allowedDiscoveryHosts(connector: ConnectorDefinition): Set<string> {
+  const hosts = new Set<string>();
+  for (const source of connector.sources) {
+    try {
+      hosts.add(new URL(source).host);
+    } catch {
+    }
+  }
+  return hosts;
+}
 
-  for (let index = 0; index < connector.sources.length; index += concurrency) {
+function discoveredProductUrls(
+  sources: SourceAudit[],
+  connector: ConnectorDefinition
+): string[] {
+  const hosts = allowedDiscoveryHosts(connector);
+  const configuredSources = new Set(connector.sources);
+  const discovered = new Set<string>();
+
+  for (const source of sources) {
+    for (const candidate of source.candidates) {
+      if (candidate.sourceUrl === candidate.url) continue;
+      if (configuredSources.has(candidate.url)) continue;
+      try {
+        if (!hosts.has(new URL(candidate.url).host)) continue;
+      } catch {
+        continue;
+      }
+      discovered.add(candidate.url);
+    }
+  }
+
+  const limit = Math.max(
+    0,
+    Math.min(50, connector.maxDiscoveredProductPages ?? DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES)
+  );
+  return [...discovered].slice(0, limit);
+}
+
+async function fetchSourcesInBatches(
+  sourceUrls: string[],
+  connector: ConnectorDefinition,
+  concurrency: number
+): Promise<SourceAudit[]> {
+  const sources: SourceAudit[] = [];
+  for (let index = 0; index < sourceUrls.length; index += concurrency) {
     if (index > 0) await sleep(SOURCE_DELAY_MS);
-    const batch = connector.sources.slice(index, index + concurrency);
+    const batch = sourceUrls.slice(index, index + concurrency);
     sources.push(...await Promise.all(batch.map((sourceUrl) => fetchSource(sourceUrl, connector))));
+  }
+  return sources;
+}
+
+export async function auditConnector(connector: ConnectorDefinition): Promise<StoreAudit> {
+  const requestedConcurrency = connector.maxConcurrency ?? 1;
+  const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, requestedConcurrency));
+  const sources = await fetchSourcesInBatches(connector.sources, connector, concurrency);
+
+  if (connector.followDiscoveredProductPages) {
+    const productUrls = discoveredProductUrls(sources, connector);
+    if (productUrls.length > 0) {
+      sources.push(...await fetchSourcesInBatches(productUrls, connector, concurrency));
+    }
   }
 
   const uniqueCandidates = new Map<string, ProductCandidate>();
