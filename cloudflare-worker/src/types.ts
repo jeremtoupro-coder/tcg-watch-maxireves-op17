@@ -61,6 +61,8 @@ export interface ProductCandidate {
   language: LanguageStatus;
   priceText?: string;
   imageUrl?: string;
+  commercialEligible?: boolean;
+  commercialEligibilityReason?: string;
   excerpt: string;
 }
 
@@ -146,6 +148,10 @@ export interface ConnectorDefinition {
   requestHeaders?: Record<string, string>;
   followDiscoveredProductPages?: boolean;
   maxDiscoveredProductPages?: number;
+  requiresDirectProductPageForAlerts?: boolean;
+  requiredSellerPatterns?: RegExp[];
+  requiredSellerLabel?: string;
+  commercialAlertsEnabled?: boolean;
   notes: string[];
 }
 
