@@ -3,6 +3,7 @@ import { maxireves } from "./maxireves";
 import { oupi } from "./oupi";
 import { pixelheart } from "./pixelheart";
 import { ROLLOUT_CONNECTORS } from "./rollout";
+import { applyEightStoreProbeOverrides } from "./eightStoreProbeOverrides";
 import type { ConnectorDefinition, StoreKey } from "../types";
 
 export const CONNECTORS: ConnectorDefinition[] = [
@@ -10,7 +11,7 @@ export const CONNECTORS: ConnectorDefinition[] = [
   oupi,
   pixelheart,
   fantasySphere,
-  ...ROLLOUT_CONNECTORS
+  ...ROLLOUT_CONNECTORS.map(applyEightStoreProbeOverrides)
 ];
 
 export const DEFAULT_CLOUDFLARE_STORES: StoreKey[] = CONNECTORS.map((connector) => connector.key);
