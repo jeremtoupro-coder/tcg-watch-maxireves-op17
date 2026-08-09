@@ -1,146 +1,36 @@
-# Gérer les alertes sans modifier le moteur
+# Politique des alertes OP Watch V1
 
-Toutes les références et règles se trouvent dans :
+Les références ne sont plus ajoutées manuellement. Le catalogue officiel français alimente automatiquement les familles OP, EB, PRB, ST, DP et TS lorsqu'une date de sortie complète est publiée.
 
-```text
-cloudflare-worker/config/alerts.json
-```
+## Conditions commerciales cumulatives
 
-Le fichier est contrôlé automatiquement par les tests et par `alerts.schema.json`.
+Une fiche ne peut produire une alerte que si :
 
-## Désactiver temporairement une alerte
+- sa référence correspond exactement à un seul produit actif J-120/J+30 ;
+- son format est booster, display, case, double pack ou starter deck ;
+- le français est explicitement confirmé ;
+- le stock est déterminé (`available`, `preorder` ou `unavailable`) ;
+- ce n'est ni un accessoire ni une carte à l'unité ;
+- le connecteur et la source sont sains ;
+- pour une marketplace, le vendeur officiel attendu est confirmé.
 
-Repérer la règle dans `alerts`, puis passer :
+La langue inconnue, le stock inconnu et toute donnée ambiguë sont fail-closed.
 
-```json
-"enabled": false
-```
-
-La règle reste dans le fichier et peut être réactivée plus tard.
-
-## Ne plus surveiller complètement une référence
-
-Dans `products`, passer le produit à :
-
-```json
-"enabled": false
-```
-
-Le moteur ne cherchera plus ses alias dans les pages des boutiques.
-
-## Ajouter une nouvelle référence
-
-Exemple pour OP19 :
-
-```json
-{
-  "id": "OP19",
-  "label": "One Piece Card Game OP19",
-  "enabled": true,
-  "aliases": ["OP19", "OP-19", "OP 19"]
-}
-```
-
-Ensuite, au choix :
-
-1. ajouter `OP19` à la liste `productIds` d'une règle existante ;
-2. créer une nouvelle règle dédiée.
-
-Exemple de règle dédiée :
-
-```json
-{
-  "id": "op19-fr-stock",
-  "label": "OP19 français disponible",
-  "enabled": true,
-  "productIds": ["OP19"],
-  "stores": ["*"],
-  "languages": ["Français confirmé", "Langue non précisée"],
-  "events": ["back_in_stock", "preorder_opened"],
-  "availabilities": ["available", "preorder"],
-  "notifyOnInitialDiscovery": false
-}
-```
-
-## Limiter une alerte à certaines boutiques
-
-Toutes les boutiques :
-
-```json
-"stores": ["*"]
-```
-
-Une sélection :
-
-```json
-"stores": ["maxireves", "oupi"]
-```
-
-Valeurs disponibles :
-
-- `maxireves`
-- `ludotrotter`
-- `oupi`
-- `fantasy-sphere`
-
-## Limiter une alerte par langue
-
-Français confirmé, avec tolérance lorsque le site ne précise pas la langue :
-
-```json
-"languages": ["Français confirmé", "Langue non précisée"]
-```
-
-Toutes les langues :
-
-```json
-"languages": ["*"]
-```
-
-## Limiter une alerte par prix
-
-Le prix est exprimé en centimes. Exemple : ne pas alerter au-dessus de 130 € :
-
-```json
-"maxPriceCents": 13000
-```
-
-Il suffit de supprimer la propriété pour ne fixer aucune limite.
-
-## Événements disponibles
+## Événements
 
 | Événement | Signification |
 |---|---|
-| `new_listing` | Nouvelle fiche jamais vue auparavant |
-| `back_in_stock` | Produit auparavant indisponible, désormais en stock |
-| `preorder_opened` | Passage en précommande |
-| `price_drop` | Baisse du prix détecté |
-| `price_increase` | Hausse du prix détecté |
+| `new_listing` | Nouvelle fiche après la baseline silencieuse |
+| `back_in_stock` | Retour en stock |
+| `preorder_opened` | Précommande ouverte |
+| `price_drop` | Baisse de prix |
+| `price_increase` | Hausse de prix |
 | `became_unavailable` | Produit devenu indisponible |
-| `details_changed` | Titre, langue ou références modifiés |
 
-## Première mise en service
+Si stock et prix changent dans le même relevé, OP Watch choisit un seul événement prioritaire et le message inclut le prix courant. Une transition ne génère donc pas deux messages.
 
-La configuration actuelle utilise :
+## Discord
 
-```json
-"notifyOnInitialDiscovery": false
-```
+Le payload contient : boutique, produit, format, référence, prix, vendeur lorsqu'il existe, disponibilité, langue, heure Europe/Paris, image et lien d'achat.
 
-La première collecte constitue donc une base silencieuse. Les fiches déjà existantes ne déclenchent pas une pluie d'alertes au démarrage.
-
-## Sécurité Discord
-
-Tant que `DISCORD_MODE` vaut `dry-run`, les messages sont seulement construits et visibles dans le rapport. Aucun appel au webhook n'est effectué.
-
-## Vérification automatique
-
-Chaque modification du fichier déclenche :
-
-```text
-npm run typecheck
-npm test
-npx wrangler deploy --dry-run
-```
-
-Une référence inconnue, un identifiant dupliqué ou une règle incomplète fait échouer le contrôle avant tout déploiement.
+En `dry-run`, le payload est construit sans appel réseau. En LIVE, l'état produit n'est écrit qu'après livraison réussie et écriture du reçu anti-doublon.
