@@ -2,10 +2,10 @@ import type { ConnectorDefinition } from "../types";
 
 const PROBE_SOURCES: Record<string, string[]> = {
   ludisphere: [
+    "https://020d06-2.myshopify.com/collections/one-piece-card-game-precommande/products.json?limit=250",
+    "https://020d06-2.myshopify.com/products/one-piece-op17-display-24-boosters-jcc-fr.js",
     "https://ludisphere.fr/collections/one-piece-card-game-precommande/products.json?limit=250",
-    "https://ludisphere.fr/products/one-piece-op17-display-24-boosters-jcc-fr.js",
-    "https://ludisphere.fr/products/one-piece-op17-double-pack-2-boosters-jcc-fr.js",
-    "https://ludisphere.fr/collections/cartes-tcg-jce"
+    "https://ludisphere.fr/products/one-piece-op17-display-24-boosters-jcc-fr.js"
   ],
   playin: [
     "https://www.play-in.com/fr/gamme/24/one-piece/catalogue",
@@ -32,9 +32,9 @@ const PROBE_SOURCES: Record<string, string[]> = {
     "https://www.carrefour.fr/p/cartes-booster-one-piece-op14-les-sept-de-la-mer-d-azur-bandai-4582769923166"
   ],
   "king-jouet": [
-    "https://www.king-jouet.com/jeux-jouets/tous-les-jouets-one-piece/jeux-societes/page1.htm",
-    "https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034198-cartes-one-piece-booster-op16-heure-de-la-bataille-decisive.htm",
-    "https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034904-cartes-one-piece-double-booster-op16-heure-de-la-bataille-decisive.htm"
+    "https://api.king-jouet.com/",
+    "https://api.king-jouet.com/api/catalogue/articles/1034198/data",
+    "https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034198-cartes-one-piece-booster-op16-heure-de-la-bataille-decisive.htm"
   ],
   otakuland: [
     "https://otakuland.fr/one-piece-merch/",
