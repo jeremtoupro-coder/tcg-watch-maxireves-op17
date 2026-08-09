@@ -91,6 +91,7 @@ export function decodeHtml(value: string): string {
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&euro;/gi, "€")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">");
 }
@@ -136,10 +137,12 @@ export function matchReferences(value: string): string[] {
 }
 
 export function detectLanguage(value: string): LanguageStatus {
-  if (FRENCH_PATTERNS.some((pattern) => pattern.test(value))) return "Français confirmé";
-  if (ENGLISH_PATTERNS.some((pattern) => pattern.test(value))) return "Anglais détecté";
+  // La langue explicite du produit est prioritaire sur la langue du storefront.
+  // Ex.: une fiche "/fr/...version-anglaise" doit rester EN et ne jamais alerter en FR.
   if (JAPANESE_PATTERNS.some((pattern) => pattern.test(value))) return "Japonais détecté";
+  if (ENGLISH_PATTERNS.some((pattern) => pattern.test(value))) return "Anglais détecté";
   if (OTHER_LANGUAGE_PATTERNS.some((pattern) => pattern.test(value))) return "Autre langue détectée";
+  if (FRENCH_PATTERNS.some((pattern) => pattern.test(value))) return "Français confirmé";
   return "Langue non précisée";
 }
 
@@ -151,12 +154,13 @@ export function detectAvailability(value: string): Availability {
 }
 
 export function extractPrice(value: string): string | undefined {
-  const euroBefore = value.match(
+  const decoded = decodeHtml(value);
+  const euroBefore = decoded.match(
     /€\s*(?:\d{1,3}(?:[ .,\u00a0]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?)(?![\d.,])/i
   );
   if (euroBefore) return euroBefore[0].replace(/\s+/g, " ").trim();
 
-  const euroAfter = value.match(
+  const euroAfter = decoded.match(
     /(?<![\d.,])(?:\d{1,3}(?:[ .,\u00a0]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?)\s*€/i
   );
   return euroAfter?.[0].replace(/\s+/g, " ").trim();
