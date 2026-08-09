@@ -2,6 +2,16 @@ export type StoreKey = string;
 
 export type Availability = "available" | "preorder" | "unavailable" | "unknown";
 
+export type ProductFormat = "booster" | "display" | "case" | "double_pack" | "starter" | "other";
+
+export type StoreConfiguredStatus =
+  | "active_fast_watch"
+  | "discovery_only"
+  | "pending_authorized_feed"
+  | "disabled";
+
+export type StoreRuntimeStatus = "healthy" | "degraded" | "pending" | "disabled";
+
 export type LanguageStatus =
   | "Français confirmé"
   | "Langue non précisée"
@@ -57,6 +67,11 @@ export interface ProductCandidate {
   url: string;
   sourceUrl: string;
   matchedReferences: string[];
+  format?: ProductFormat;
+  /** Identité commerciale stable, indépendante d'une éventuelle réécriture d'URL. */
+  identityKey?: string;
+  externalId?: string;
+  seller?: string;
   availability: Availability;
   language: LanguageStatus;
   priceText?: string;
@@ -73,6 +88,8 @@ export interface ProductSnapshot {
   title: string;
   url: string;
   matchedReferences: string[];
+  format?: ProductFormat;
+  identityKey?: string;
   availability: Availability;
   language: LanguageStatus;
   priceText?: string;
@@ -137,6 +154,12 @@ export interface StoreAudit {
   sources: SourceAudit[];
   candidates: ProductCandidate[];
   notes: string[];
+  configuredStatus?: StoreConfiguredStatus;
+  runtimeStatus?: StoreRuntimeStatus;
+  sourceKind?: "public_html" | "public_structured_feed" | "authorized_feed" | "none";
+  fastWatchCapable?: boolean;
+  discoveryCapable?: boolean;
+  commercialEligible?: boolean;
 }
 
 export interface ConnectorDefinition {
@@ -166,6 +189,8 @@ export interface ConnectorDefinition {
    * lorsque le flux autorisé n'est pas encore configuré.
    */
   directPollingDisabledWithoutFeed?: boolean;
+  /** Une source structurée publique peut faire foi sans relire chaque fiche HTML. */
+  authoritativeStructuredFeed?: boolean;
   notes: string[];
 }
 
@@ -177,6 +202,7 @@ export interface Env {
   WRITE_STATE?: string;
   DISCORD_MODE?: "dry-run" | "live";
   DISCORD_WEBHOOK_URL?: string;
+  PREVIEW_AUDIT_TOKEN?: string;
   AUTHORIZED_FEED_PLAYIN_URL?: string;
   AUTHORIZED_FEED_CULTURA_URL?: string;
   AUTHORIZED_FEED_MICROMANIA_URL?: string;

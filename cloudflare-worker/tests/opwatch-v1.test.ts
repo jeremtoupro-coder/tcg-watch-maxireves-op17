@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   activeOfficialProducts,
   aliasesForProduct,
+  buildActiveWatchConfig,
+  candidateForActiveProducts,
   canonicalProductCode,
   computeWatchWindow,
   detectFrenchListing,
@@ -60,6 +62,15 @@ describe("OP Watch V1 - calendrier officiel", () => {
       ["ST-31", "2026-07-31"],
       ["OP-17", "2026-08-28"]
     ]);
+  });
+
+  it("parse aussi une date officielle française", () => {
+    const parsed = parseOfficialCatalog(`
+      <article>BOOSTER [OP-17] Date de sortie 28 août 2026</article>
+      <article>EXTRA BOOSTER [EB-05] Date de sortie Octobre 2026</article>
+    `);
+    expect(parsed.map((product) => [product.id, product.releaseDate]))
+      .toEqual([["OP-17", "2026-08-28"]]);
   });
 });
 
@@ -121,5 +132,46 @@ describe("OP Watch V1 - qualification produit", () => {
   it("récupère og:image et résout les URLs relatives", () => {
     const html = `<html><head><meta property="og:image" content="/img/eb05-display.jpg"></head></html>`;
     expect(extractProductImage(html, "https://shop.test/product/eb05")).toBe("https://shop.test/img/eb05-display.jpg");
+  });
+
+  it("ne rend commercial qu'un format ciblé, FR confirmé et dans la fenêtre active", () => {
+    const base = {
+      store: "shop",
+      storeName: "Shop",
+      title: "Display OP-17 Français",
+      url: "https://shop.test/op17",
+      sourceUrl: "https://shop.test/op17",
+      matchedReferences: ["OP17"],
+      availability: "preorder" as const,
+      language: "Français confirmé" as const,
+      commercialEligible: true,
+      excerpt: "Précommande"
+    };
+    expect(candidateForActiveProducts(base, [OP17])).toMatchObject({
+      matchedReferences: ["OP-17"],
+      format: "display"
+    });
+    expect(candidateForActiveProducts({ ...base, language: "Anglais détecté" }, [OP17])).toBeUndefined();
+    expect(candidateForActiveProducts({ ...base, availability: "unknown" }, [OP17])).toBeUndefined();
+    expect(candidateForActiveProducts({ ...base, title: "Sleeves OP-17 Français" }, [OP17])).toBeUndefined();
+    expect(candidateForActiveProducts(base, [EB05])).toBeUndefined();
+  });
+
+  it("rejette les dates calendaires impossibles au lieu de les normaliser", () => {
+    expect(() => computeWatchWindow("2026-02-31")).toThrow(/date de sortie invalide/i);
+  });
+
+  it("construit des règles dynamiques strictement françaises", () => {
+    const config = buildActiveWatchConfig([OP17, EB05]);
+    expect(config.products.map((product) => product.id)).toEqual(["OP-17", "EB-05"]);
+    expect(config.alerts.every((alert) => alert.languages.length === 1 && alert.languages[0] === "Français confirmé"))
+      .toBe(true);
+    expect(config.alerts.flatMap((alert) => alert.events)).toEqual(expect.arrayContaining([
+      "preorder_opened",
+      "back_in_stock",
+      "became_unavailable",
+      "price_drop",
+      "price_increase"
+    ]));
   });
 });

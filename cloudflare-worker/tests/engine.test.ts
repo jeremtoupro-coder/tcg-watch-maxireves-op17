@@ -2,15 +2,21 @@ import { describe, expect, it } from "vitest";
 import { evaluateCandidates } from "../src/engine";
 import { MemoryStateStore } from "../src/state";
 import type { ProductCandidate } from "../src/types";
+import { TEST_WATCH_CONFIG } from "./testConfig";
 
-function candidate(url: string, availability: ProductCandidate["availability"]): ProductCandidate {
+function candidate(
+  url: string,
+  availability: ProductCandidate["availability"],
+  externalId: string
+): ProductCandidate {
   return {
     store: "oupi",
     storeName: "Oupi",
     title: "Display OP-17 FR",
     url,
     sourceUrl: "https://oupi.eu/en/413-pre-order-one-piece",
-    matchedReferences: ["OP17"],
+    matchedReferences: ["OP-17"],
+    externalId,
     availability,
     language: "Français confirmé",
     priceText: "119,76 €",
@@ -28,9 +34,10 @@ describe("marqueurs de base par boutique", () => {
     };
 
     const baseline = await evaluateCandidates([
-      candidate("https://example.test/op17-baseline", "unavailable")
+      candidate("https://example.test/op17-baseline", "unavailable", "sku-baseline")
     ], env, {
       stateStore,
+      config: TEST_WATCH_CONFIG,
       now: "2026-06-27T10:00:00.000Z",
       baselineStores: ["oupi"]
     });
@@ -41,9 +48,10 @@ describe("marqueurs de base par boutique", () => {
     expect(baseline.alertMatches).toEqual([]);
 
     const futureListing = await evaluateCandidates([
-      candidate("https://example.test/op17-future", "available")
+      candidate("https://example.test/op17-future", "available", "sku-future")
     ], env, {
       stateStore,
+      config: TEST_WATCH_CONFIG,
       now: "2026-06-28T10:00:00.000Z",
       baselineStores: ["oupi"]
     });
@@ -64,6 +72,7 @@ describe("marqueurs de base par boutique", () => {
       DISCORD_MODE: "dry-run"
     }, {
       stateStore,
+      config: TEST_WATCH_CONFIG,
       baselineStores: ["maxireves", "ludotrotter", "oupi"],
       now: "2026-06-27T10:00:00.000Z"
     });

@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateAlertRules } from "../src/alerts";
-import { WATCH_CONFIG } from "../src/config";
 import { buildDiscordPayloads, dispatchDiscordPayloads } from "../src/discord";
 import { MemoryStateStore, processCandidates } from "../src/state";
 import type { ProductCandidate } from "../src/types";
+import { TEST_WATCH_CONFIG } from "./testConfig";
+
+afterEach(() => vi.unstubAllGlobals());
 
 function candidate(overrides: Partial<ProductCandidate> = {}): ProductCandidate {
   return {
@@ -12,7 +14,7 @@ function candidate(overrides: Partial<ProductCandidate> = {}): ProductCandidate 
     title: "Display OP-17 FR",
     url: "https://oupi.eu/produit/op-17-fr.html",
     sourceUrl: "https://oupi.eu/en/413-pre-order-one-piece",
-    matchedReferences: ["OP17"],
+    matchedReferences: ["OP-17"],
     availability: "unavailable",
     language: "Français confirmé",
     priceText: "119,76 €",
@@ -29,7 +31,7 @@ describe("règles d'alerte", () => {
       now: "2026-06-27T10:00:00.000Z"
     });
 
-    expect(evaluateAlertRules(result.changes, WATCH_CONFIG)).toEqual([]);
+    expect(evaluateAlertRules(result.changes, TEST_WATCH_CONFIG)).toEqual([]);
   });
 
   it("déclenche l'alerte française sur un retour en stock", async () => {
@@ -46,9 +48,9 @@ describe("règles d'alerte", () => {
       now: "2026-06-27T10:05:00.000Z"
     });
 
-    const matches = evaluateAlertRules(result.changes, WATCH_CONFIG);
+    const matches = evaluateAlertRules(result.changes, TEST_WATCH_CONFIG);
     expect(matches).toHaveLength(1);
-    expect(matches[0].rule.id).toBe("target-products-available-fr");
+    expect(matches[0].rule.id).toBe("active-products-availability-fr");
   });
 
   it("écarte la version anglaise de l'alerte de disponibilité FR", async () => {
@@ -67,7 +69,7 @@ describe("règles d'alerte", () => {
       now: "2026-06-27T10:05:00.000Z"
     });
 
-    expect(evaluateAlertRules(result.changes, WATCH_CONFIG)).toEqual([]);
+    expect(evaluateAlertRules(result.changes, TEST_WATCH_CONFIG)).toEqual([]);
   });
 
   it("génère un aperçu Discord avec photo sans envoi réseau", async () => {
@@ -84,7 +86,7 @@ describe("règles d'alerte", () => {
       now: "2026-06-27T10:05:00.000Z"
     });
 
-    const payloads = buildDiscordPayloads(evaluateAlertRules(result.changes, WATCH_CONFIG));
+    const payloads = buildDiscordPayloads(evaluateAlertRules(result.changes, TEST_WATCH_CONFIG));
     const dispatch = await dispatchDiscordPayloads(payloads, {
       AUDIT_MODE: "true",
       DISCORD_MODE: "dry-run",
@@ -101,5 +103,15 @@ describe("règles d'alerte", () => {
       sent: 0,
       errors: []
     });
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const unsafeDispatch = await dispatchDiscordPayloads(payloads, {
+      DISCORD_MODE: "live",
+      DISCORD_WEBHOOK_URL: "https://example.test/api/webhooks/123/stolen-token"
+    });
+    expect(unsafeDispatch.sent).toBe(0);
+    expect(unsafeDispatch.errors[0]).toMatch(/endpoint webhook Discord officiel/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

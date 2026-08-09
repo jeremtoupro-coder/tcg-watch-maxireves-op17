@@ -89,6 +89,8 @@ export async function deliverAlertMatches(
     suppressedByClaim: number;
     receiptsWritten: number;
   };
+  /** États produit à ne pas valider tant que l'alerte correspondante n'est pas livrée. */
+  blockedProductKeys: string[];
 }> {
   const mode = env.DISCORD_MODE ?? "dry-run";
   const payloads = buildDiscordPayloads(matches);
@@ -102,7 +104,8 @@ export async function deliverAlertMatches(
         suppressedByReceipt: 0,
         suppressedByClaim: 0,
         receiptsWritten: 0
-      }
+      },
+      blockedProductKeys: [...new Set(matches.map((match) => match.change.current.key))]
     };
   }
 
@@ -122,7 +125,8 @@ export async function deliverAlertMatches(
         suppressedByReceipt: 0,
         suppressedByClaim: 0,
         receiptsWritten: 0
-      }
+      },
+      blockedProductKeys: [...new Set(matches.map((match) => match.change.current.key))]
     };
   }
 
@@ -138,6 +142,7 @@ export async function deliverAlertMatches(
     suppressedByClaim: 0,
     receiptsWritten: 0
   };
+  const blockedProductKeys = new Set<string>();
 
   const now = options.now ?? new Date().toISOString();
   const nowMs = Date.parse(now);
@@ -158,6 +163,7 @@ export async function deliverAlertMatches(
       const claimedAtMs = Date.parse(existingClaim.claimedAt);
       if (Number.isFinite(claimedAtMs) && nowMs - claimedAtMs < CLAIM_STALE_AFTER_MS) {
         dedupe.suppressedByClaim += 1;
+        blockedProductKeys.add(match.change.current.key);
         continue;
       }
     }
@@ -167,6 +173,7 @@ export async function deliverAlertMatches(
 
     if (!(await ownsStableClaim(store, claimKey, token, settleMs))) {
       dedupe.suppressedByClaim += 1;
+      blockedProductKeys.add(match.change.current.key);
       continue;
     }
 
@@ -181,8 +188,17 @@ export async function deliverAlertMatches(
         JSON.stringify({ deliveredAt: new Date().toISOString(), token })
       );
       dedupe.receiptsWritten += 1;
+    } else {
+      // Le propriétaire du claim a terminé sans livraison. Le claim devient
+      // immédiatement récupérable au prochain cycle au lieu de retarder la
+      // nouvelle tentative pendant cinq minutes.
+      await store.putMetadata(
+        claimKey,
+        JSON.stringify({ token, claimedAt: "1970-01-01T00:00:00.000Z" })
+      );
+      blockedProductKeys.add(match.change.current.key);
     }
   }
 
-  return { payloads, dispatch, dedupe };
+  return { payloads, dispatch, dedupe, blockedProductKeys: [...blockedProductKeys] };
 }

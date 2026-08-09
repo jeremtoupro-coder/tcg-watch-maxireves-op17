@@ -9,11 +9,10 @@ import {
 
 describe("matchReferences", () => {
   it.each([
-    ["Display OP-17 FR", ["OP17"]],
-    ["Booster OP 18", ["OP18"]],
-    ["Illustration Box Vol.7", ["IB-07"]],
-    ["Illustration Box Volume 8", ["IB-08"]],
-    ["IB07 et IB-08", ["IB-07", "IB-08"]]
+    ["Display OP-17 FR", ["OP-17"]],
+    ["Booster OP 18", ["OP-18"]],
+    ["Starter Deck ST31", ["ST-31"]],
+    ["Extra Booster PRB 03", ["PRB-03"]]
   ])("reconnaît %s", (input, expected) => {
     expect(matchReferences(input)).toEqual(expected);
   });
@@ -55,7 +54,7 @@ describe("detectLanguage", () => {
   });
 
   it("ne rejette pas une langue absente", () => {
-    expect(detectLanguage("Illustration Box Vol.7")).toBe("Langue non précisée");
+    expect(detectLanguage("Booster sans langue indiquée")).toBe("Langue non précisée");
   });
 });
 

@@ -1,4 +1,3 @@
-import { WATCH_CONFIG } from "./config";
 import type { AlertMatch, AlertRule, ProductChange, WatchConfig } from "./types";
 
 function includesWildcard<T extends string>(values: Array<T | "*">, value: T): boolean {
@@ -38,7 +37,7 @@ function matchesRule(change: ProductChange, rule: AlertRule, config: WatchConfig
 
 export function evaluateAlertRules(
   changes: ProductChange[],
-  config: WatchConfig = WATCH_CONFIG
+  config: WatchConfig
 ): AlertMatch[] {
   const matches: AlertMatch[] = [];
   const seen = new Set<string>();
@@ -62,5 +61,26 @@ export function evaluateAlertRules(
     }
   }
 
-  return matches;
+  // Un même relevé peut produire simultanément, par exemple, un retour en
+  // stock et une baisse de prix. Le message de disponibilité contient déjà
+  // le nouveau prix : une seule notification par produit et par cycle évite
+  // le doublon commercial sans perdre l'information utile.
+  const eventPriority: Record<ProductChange["type"], number> = {
+    new_listing: 0,
+    preorder_opened: 1,
+    back_in_stock: 2,
+    became_unavailable: 3,
+    price_drop: 4,
+    price_increase: 5,
+    details_changed: 6
+  };
+  const byProduct = new Map<string, AlertMatch>();
+  for (const match of matches) {
+    const key = match.change.current.key;
+    const existing = byProduct.get(key);
+    if (!existing || eventPriority[match.change.type] < eventPriority[existing.change.type]) {
+      byProduct.set(key, match);
+    }
+  }
+  return [...byProduct.values()];
 }

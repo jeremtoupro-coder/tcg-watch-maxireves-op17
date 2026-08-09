@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { evaluateCandidates } from "../src/engine";
 import { MemoryStateStore, productStateKey } from "../src/state";
 import type { ProductCandidate, ProductSnapshot } from "../src/types";
+import { TEST_WATCH_CONFIG } from "./testConfig";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -14,7 +15,7 @@ function candidate(): ProductCandidate {
     title: "OP-17 Booster Box French",
     url: "https://example.test/op17-fr",
     sourceUrl: "https://example.test/category",
-    matchedReferences: ["OP17"],
+    matchedReferences: ["OP-17"],
     availability: "available",
     language: "Français confirmé",
     priceText: "119,90 €",
@@ -55,11 +56,12 @@ describe("anti-doublon persistant", () => {
       AUDIT_MODE: "true",
       WRITE_STATE: "true",
       DISCORD_MODE: "live" as const,
-      DISCORD_WEBHOOK_URL: "https://discord.example.test/webhook"
+      DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/test-token"
     };
 
     const first = await evaluateCandidates([currentCandidate], env, {
       stateStore,
+      config: TEST_WATCH_CONFIG,
       baselineStores: ["oupi"],
       now: "2026-06-27T10:10:00.000Z",
       claimSettleMs: 0
@@ -73,6 +75,7 @@ describe("anti-doublon persistant", () => {
 
     const duplicate = await evaluateCandidates([currentCandidate], env, {
       stateStore,
+      config: TEST_WATCH_CONFIG,
       baselineStores: ["oupi"],
       now: "2026-06-27T10:10:00.000Z",
       claimSettleMs: 0
@@ -112,9 +115,10 @@ describe("anti-doublon persistant", () => {
     const result = await evaluateCandidates([currentCandidate], {
       WRITE_STATE: "false",
       DISCORD_MODE: "live",
-      DISCORD_WEBHOOK_URL: "https://discord.example.test/webhook"
+      DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/test-token"
     }, {
       stateStore,
+      config: TEST_WATCH_CONFIG,
       baselineStores: ["oupi"],
       now: "2026-06-27T10:10:00.000Z",
       claimSettleMs: 0

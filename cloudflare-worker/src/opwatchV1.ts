@@ -1,6 +1,7 @@
 import { decodeHtml, normalizeForMatching, stripHtml } from "./matching";
+import type { ProductCandidate, ProductFormat, WatchConfig } from "./types";
 
-export type ProductFormat = "booster" | "display" | "case" | "double_pack" | "starter" | "other";
+export type { ProductFormat } from "./types";
 export type ProductFamily = "OP" | "EB" | "PRB" | "ST" | "DP" | "TS" | "OTHER";
 export type ListingLanguage = "fr_confirmed" | "non_fr" | "unknown";
 
@@ -41,7 +42,22 @@ const MONTHS: Record<string, number> = {
   september: 8,
   october: 9,
   november: 10,
-  december: 11
+  december: 11,
+  janvier: 0,
+  fevrier: 1,
+  février: 1,
+  mars: 2,
+  avril: 3,
+  mai: 4,
+  juin: 5,
+  juillet: 6,
+  aout: 7,
+  août: 7,
+  septembre: 8,
+  octobre: 9,
+  novembre: 10,
+  decembre: 11,
+  décembre: 11
 };
 
 const ACCESSORY_PATTERNS = [
@@ -78,8 +94,16 @@ const FR_PATTERNS = [
   /\bvf\b/i
 ];
 
-function isoDateUtc(year: number, month: number, day: number): string {
-  return new Date(Date.UTC(year, month, day, 12, 0, 0)).toISOString().slice(0, 10);
+function isoDateUtc(year: number, month: number, day: number): string | undefined {
+  const date = new Date(Date.UTC(year, month, day, 12, 0, 0));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return date.toISOString().slice(0, 10);
 }
 
 function parseEnglishDate(value: string): string | undefined {
@@ -93,6 +117,23 @@ function parseEnglishDate(value: string): string | undefined {
   const year = Number(match[3]);
   if (day < 1 || day > 31) return undefined;
   return isoDateUtc(year, month, day);
+}
+
+function parseFrenchDate(value: string): string | undefined {
+  const match = value.match(
+    /\b(\d{1,2})\s+(janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)\s+(20\d{2})\b/i
+  );
+  if (!match) return undefined;
+  const month = MONTHS[match[2].toLowerCase()];
+  if (month === undefined) return undefined;
+  const day = Number(match[1]);
+  const year = Number(match[3]);
+  if (day < 1 || day > 31) return undefined;
+  return isoDateUtc(year, month, day);
+}
+
+function parseOfficialDate(value: string): string | undefined {
+  return parseEnglishDate(value) ?? parseFrenchDate(value);
 }
 
 function familyFromCode(code: string): ProductFamily {
@@ -139,7 +180,7 @@ export function parseOfficialCatalog(html: string): OfficialProduct[] {
     const nextIndex = matches[index + 1]?.index;
     const segmentEnd = nextIndex ?? Math.min(text.length, matchIndex + 900);
     const segment = text.slice(matchIndex, segmentEnd);
-    const releaseDate = parseEnglishDate(segment);
+    const releaseDate = parseOfficialDate(segment);
     if (!releaseDate) continue;
 
     const labelContext = text.slice(Math.max(0, matchIndex - 160), Math.min(text.length, matchIndex + 220));
@@ -169,8 +210,12 @@ export function computeWatchWindow(
   daysBefore = 120,
   daysAfter = 30
 ): WatchWindow {
-  const release = new Date(`${releaseDate}T12:00:00.000Z`);
-  if (Number.isNaN(release.getTime())) throw new Error(`Date de sortie invalide: ${releaseDate}`);
+  const match = releaseDate.match(/^(20\d{2})-(\d{2})-(\d{2})$/);
+  const strictDate = match
+    ? isoDateUtc(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : undefined;
+  if (strictDate !== releaseDate) throw new Error(`Date de sortie invalide: ${releaseDate}`);
+  const release = new Date(`${strictDate}T12:00:00.000Z`);
 
   const starts = new Date(release.getTime() - daysBefore * 86_400_000);
   const ends = new Date(release.getTime() + daysAfter * 86_400_000);
@@ -244,8 +289,113 @@ function findMatchedProductId(value: string, activeProducts: OfficialProduct[]):
   return matches.length === 1 ? matches[0].id : undefined;
 }
 
-export function listingIdentity(store: string, productId: string, format: ProductFormat): string {
-  return `${store.trim().toLowerCase()}|${productId}|${format}|fr`;
+function normalizedIdentityDiscriminator(value: string): string {
+  return normalizeForMatching(value)
+    .replace(/(?:op|eb|prb|st|dp|ts)\d{1,2}/g, "")
+    .replace(/(?:francais|french|versionfr|vf)/g, "")
+    .slice(0, 120);
+}
+
+export function listingIdentity(
+  store: string,
+  productId: string,
+  format: ProductFormat,
+  discriminator = ""
+): string {
+  const stablePart = normalizedIdentityDiscriminator(discriminator);
+  return `${store.trim().toLowerCase()}|${productId}|${format}|fr${stablePart ? `|${stablePart}` : ""}`;
+}
+
+export function enrichCandidateIdentity(candidate: ProductCandidate): ProductCandidate {
+  const canonicalReferences = [...new Set(candidate.matchedReferences
+    .map((reference) => canonicalProductCode(reference) ?? reference.toUpperCase()))]
+    .sort();
+  const format = candidate.format ?? detectProductFormat(`${candidate.title} ${candidate.url} ${candidate.excerpt}`);
+  const reference = canonicalReferences.length === 1 ? canonicalReferences[0] : undefined;
+  const discriminator = candidate.externalId || candidate.title;
+
+  return {
+    ...candidate,
+    matchedReferences: canonicalReferences,
+    format,
+    identityKey: reference && format !== "other"
+      ? listingIdentity(candidate.store, reference, format, discriminator)
+      : candidate.identityKey
+  };
+}
+
+export function candidateForActiveProducts(
+  candidate: ProductCandidate,
+  activeProducts: OfficialProduct[]
+): ProductCandidate | undefined {
+  const enriched = enrichCandidateIdentity(candidate);
+  const activeIds = new Set(activeProducts.map((product) => product.id));
+  const activeReferences = enriched.matchedReferences.filter((reference) => activeIds.has(reference));
+
+  if (activeReferences.length !== 1) return undefined;
+  if (!enriched.format || enriched.format === "other") return undefined;
+  if (enriched.language !== "Français confirmé") return undefined;
+  if (enriched.availability === "unknown") return undefined;
+  if (enriched.commercialEligible === false) return undefined;
+  if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) return undefined;
+
+  return {
+    ...enriched,
+    matchedReferences: activeReferences,
+    identityKey: listingIdentity(
+      enriched.store,
+      activeReferences[0],
+      enriched.format,
+      enriched.externalId || enriched.title
+    )
+  };
+}
+
+export function buildActiveWatchConfig(products: OfficialProduct[]): WatchConfig {
+  if (products.length === 0) {
+    throw new Error("Impossible de construire la surveillance sans produit officiel actif.");
+  }
+
+  const productIds = products.map((product) => product.id);
+  return {
+    version: 3,
+    settings: {
+      notifyOnInitialDiscovery: false,
+      defaultLanguages: ["Français confirmé"]
+    },
+    products: products.map((product) => ({
+      id: product.id,
+      label: product.label,
+      game: "one-piece",
+      enabled: true,
+      aliases: product.aliases,
+      searchTerms: product.aliases
+    })),
+    alerts: [
+      {
+        id: "active-products-availability-fr",
+        label: "Disponibilité des produits officiels actifs FR",
+        enabled: true,
+        productIds,
+        stores: ["*"],
+        languages: ["Français confirmé"],
+        events: ["new_listing", "back_in_stock", "preorder_opened", "became_unavailable"],
+        availabilities: ["available", "preorder", "unavailable"],
+        notifyOnInitialDiscovery: false
+      },
+      {
+        id: "active-products-price-fr",
+        label: "Variation de prix des produits officiels actifs FR",
+        enabled: true,
+        productIds,
+        stores: ["*"],
+        languages: ["Français confirmé"],
+        events: ["price_drop", "price_increase"],
+        availabilities: ["*"],
+        notifyOnInitialDiscovery: false
+      }
+    ]
+  };
 }
 
 export function qualifyListing(input: {

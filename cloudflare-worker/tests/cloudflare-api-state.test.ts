@@ -15,7 +15,7 @@ function snapshot(overrides: Partial<ProductSnapshot> = {}): ProductSnapshot {
     storeName: "Oupi",
     title: "OP-17 Booster Box (French)",
     url: "https://oupi.example/op17.html",
-    matchedReferences: ["OP17"],
+    matchedReferences: ["OP-17"],
     availability: "unavailable",
     language: "Français confirmé",
     priceText: undefined,
@@ -31,11 +31,10 @@ afterEach(() => {
 });
 
 describe("budget d'écritures Cloudflare KV", () => {
-  it("n'écrit pas un snapshot inchangé à chaque passage", async () => {
-    const values = new Map<string, string>([
-      ["product:oupi:abc", JSON.stringify(snapshot())]
-    ]);
+  it("n'ajoute pas une relecture cachée avant une écriture déjà décidée par le moteur", async () => {
+    const values = new Map<string, string>();
     let puts = 0;
+    let gets = 0;
 
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -47,6 +46,7 @@ describe("budget d'écritures Cloudflare KV", () => {
         return new Response(null, { status: 200 });
       }
 
+      gets += 1;
       const value = values.get(key);
       return value === undefined
         ? new Response(null, { status: 404 })
@@ -56,15 +56,11 @@ describe("budget d'écritures Cloudflare KV", () => {
     const store = new CloudflareApiStateStore(credentials, "namespace");
 
     await store.put("product:oupi:abc", snapshot({
-      lastSeenAt: "2026-06-28T00:05:00.000Z"
-    }));
-    expect(puts).toBe(0);
-
-    await store.put("product:oupi:abc", snapshot({
       availability: "preorder",
       lastSeenAt: "2026-06-28T00:10:00.000Z"
     }));
     expect(puts).toBe(1);
+    expect(gets).toBe(0);
   });
 
   it("limite le heartbeat de succès à une écriture par heure", async () => {

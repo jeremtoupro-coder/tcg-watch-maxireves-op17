@@ -1,4 +1,3 @@
-import { getEnabledProducts } from "./config";
 import type { Availability, LanguageStatus } from "./types";
 
 const FRENCH_PATTERNS = [
@@ -124,16 +123,10 @@ export function normalizeForMatching(value: string): string {
 }
 
 export function matchReferences(value: string): string[] {
-  const normalizedValue = normalizeForMatching(value);
+  const canonical = [...decodeHtml(value).matchAll(/\b(OP|EB|PRB|ST|DP|TS)[-\s]?(\d{1,2})\b/gi)]
+    .map((match) => `${match[1].toUpperCase()}-${match[2].padStart(2, "0")}`);
 
-  return getEnabledProducts()
-    .filter((product) =>
-      product.aliases.some((alias) => {
-        const normalizedAlias = normalizeForMatching(alias);
-        return normalizedAlias.length > 0 && normalizedValue.includes(normalizedAlias);
-      })
-    )
-    .map((product) => product.id);
+  return [...new Set(canonical)];
 }
 
 export function detectLanguage(value: string): LanguageStatus {
