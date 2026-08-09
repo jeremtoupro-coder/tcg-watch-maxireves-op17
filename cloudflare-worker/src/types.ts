@@ -143,6 +143,9 @@ export interface ConnectorDefinition {
   sources: string[];
   productUrlPatterns: RegExp[];
   maxConcurrency?: number;
+  requestHeaders?: Record<string, string>;
+  followDiscoveredProductPages?: boolean;
+  maxDiscoveredProductPages?: number;
   notes: string[];
 }
 
