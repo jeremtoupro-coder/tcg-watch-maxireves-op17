@@ -1,0 +1,98 @@
+name: Oupi Runtime Validation
+
+on:
+  push:
+    branches:
+      - cloudflare-workers-audit
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oupi-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-oupi-runtime:
+    if: contains(github.event.head_commit.message, '[oupi-runtime]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify Oupi direct-page truth on deployed Worker
+        shell: bash
+        run: |
+          node <<'NODE'
+          const url = 'https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev/opwatch/v1/oupi-audit';
+          const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
+          if (!response.ok) throw new Error(`Oupi audit endpoint HTTP ${response.status}`);
+          const data = await response.json();
+          const audit = data.audit;
+          if (!audit || audit.store !== 'oupi') throw new Error('Audit Oupi absent ou invalide.');
+
+          const configuredCategoryPaths = [
+            '/fr/413-precommande-one-piece',
+            '/fr/414-display-one-piece',
+            '/fr/513-case-scelle-de-display',
+            '/fr/415-starter-deck-one-piece',
+            '/fr/417-collection-pack-speciaux-one-piece'
+          ];
+          for (const path of configuredCategoryPaths) {
+            const source = (audit.sources || []).find((item) => new URL(item.sourceUrl).pathname === path);
+            if (!source) throw new Error(`Source Oupi absente: ${path}`);
+            if (source.error || source.status !== 200) {
+              throw new Error(`Source Oupi dégradée ${path}: ${source.error || source.status}`);
+            }
+          }
+
+          const failed = (audit.sources || []).filter((source) => source.error || source.status !== 200);
+          if (failed.length) throw new Error(`Source Oupi dégradée: ${JSON.stringify(failed)}`);
+
+          const displayUrl = 'https://oupi.eu/fr/display-one-piece/7367-display-op-17-boite-de-booster-francais-one-piece-card-game.html';
+          const caseUrl = 'https://oupi.eu/fr/case-scelle-de-display/7368-case-scellee-de-12-display-op-17-francais-one-piece-card-game.html';
+          const byUrl = new Map((audit.candidates || []).map((candidate) => [candidate.url, candidate]));
+          const display = byUrl.get(displayUrl);
+          const sealedCase = byUrl.get(caseUrl);
+          if (!display) throw new Error('Display OP17 FR Oupi non détecté.');
+          if (!sealedCase) throw new Error('Case OP17 FR Oupi non détectée.');
+
+          for (const [label, candidate, expectedUrl] of [
+            ['display', display, displayUrl],
+            ['case', sealedCase, caseUrl]
+          ]) {
+            if (candidate.language !== 'Français confirmé') {
+              throw new Error(`${label} OP17 mal classé en langue: ${candidate.language}`);
+            }
+            if (candidate.sourceUrl !== expectedUrl) {
+              throw new Error(`${label} OP17 non vérifié sur sa fiche directe: ${candidate.sourceUrl}`);
+            }
+            if (candidate.availability !== 'unavailable') {
+              throw new Error(`${label} OP17 faux positif stock: attendu unavailable, reçu ${candidate.availability}`);
+            }
+          }
+
+          const directDisplaySource = (audit.sources || []).find((source) => source.sourceUrl === displayUrl);
+          const directCaseSource = (audit.sources || []).find((source) => source.sourceUrl === caseUrl);
+          if (!directDisplaySource || directDisplaySource.status !== 200 || directDisplaySource.error) {
+            throw new Error('La fiche directe du display OP17 n’a pas été relue avec succès.');
+          }
+          if (!directCaseSource || directCaseSource.status !== 200 || directCaseSource.error) {
+            throw new Error('La fiche directe de la case OP17 n’a pas été relue avec succès.');
+          }
+
+          const englishMisclassified = (audit.candidates || []).filter((candidate) =>
+            /anglais|english/i.test(candidate.title || '') && candidate.language === 'Français confirmé'
+          );
+          if (englishMisclassified.length) {
+            throw new Error(`Produit anglais classé FR: ${JSON.stringify(englishMisclassified)}`);
+          }
+
+          console.log(JSON.stringify({
+            result: 'OUPI_DIRECT_PAGE_TRUTH_VALIDATED',
+            categories200: configuredCategoryPaths.length,
+            display: { availability: display.availability, direct: display.sourceUrl === display.url },
+            case: { availability: sealedCase.availability, direct: sealedCase.sourceUrl === sealedCase.url },
+            englishMisclassified: englishMisclassified.length,
+            totalSources: audit.sources.length,
+            totalCandidates: audit.candidates.length
+          }, null, 2));
+          NODE
