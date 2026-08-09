@@ -2,12 +2,29 @@ import { describe, expect, it } from "vitest";
 import { parseActiveStores, runMonitoringCycle } from "../src/monitor";
 
 describe("surveillance planifiée", () => {
-  it("utilise les quatre boutiques pilotes OP Watch par défaut", () => {
+  it("utilise les vingt-et-une boutiques OP Watch par défaut", () => {
     expect(parseActiveStores()).toEqual([
       "maxireves",
       "oupi",
       "pixelheart",
-      "fantasy-sphere"
+      "fantasy-sphere",
+      "ludisphere",
+      "parkage",
+      "ultrajeux",
+      "playin",
+      "philibert",
+      "cultura",
+      "micromania",
+      "fnac",
+      "leclerc",
+      "carrefour",
+      "king-jouet",
+      "joueclub",
+      "amazon-fr",
+      "mystic-ambre",
+      "ludiworld",
+      "vegastore",
+      "otakuland"
     ]);
   });
 
