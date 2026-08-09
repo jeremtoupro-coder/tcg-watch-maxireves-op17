@@ -173,7 +173,13 @@ export async function loadOfficialCalendar(options: CalendarOptions): Promise<Of
   for (const html of htmlPages) {
     for (const product of parseOfficialCatalog(html)) {
       const existing = productsById.get(product.id);
-      if (!existing || product.releaseDate > existing.releaseDate) {
+      if (existing && existing.releaseDate !== product.releaseDate) {
+        throw new Error(
+          `Dates officielles contradictoires pour ${product.id}: ` +
+          `${existing.releaseDate} / ${product.releaseDate}`
+        );
+      }
+      if (!existing) {
         productsById.set(product.id, product);
       }
     }

@@ -168,6 +168,34 @@ export function aliasesForProduct(code: string): string[] {
   return [canonical, `${match[1]}${match[2]}`, `${match[1]} ${match[2]}`];
 }
 
+function officialProductLabel(text: string, codeIndex: number, canonical: string): string {
+  const family = familyFromCode(canonical);
+  const patterns: Partial<Record<ProductFamily, RegExp>> = {
+    OP: /\bBOOSTER\b/gi,
+    EB: /\bEXTRA\s+BOOSTER\b/gi,
+    PRB: /\bPREMIUM\s+BOOSTER\b/gi,
+    ST: /\b(?:DECK\s+POUR\s+D[ÉE]BUTANT|STARTER\s+DECK)\b/gi,
+    DP: /\bDOUBLE\s+PACK\b/gi
+  };
+  const pattern = patterns[family];
+  if (!pattern) return canonical;
+
+  const context = text.slice(Math.max(0, codeIndex - 240), codeIndex);
+  const starts = [...context.matchAll(pattern)];
+  const start = starts.at(-1)?.index;
+  if (start === undefined) return canonical;
+
+  const title = context
+    .slice(start)
+    .replace(/\[\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (title.length < 4 || title.length > 180 || /\b(?:Date de sortie|Release Date)\b/i.test(title)) {
+    return canonical;
+  }
+  return `${title} [${canonical}]`;
+}
+
 /**
  * Parse la page publique PRODUCTS officielle.
  *
@@ -196,14 +224,16 @@ export function parseOfficialCatalog(html: string): OfficialProduct[] {
     const releaseDate = parseFirstReleaseDateField(segment);
     if (!releaseDate) continue;
 
-    const labelContext = text.slice(Math.max(0, matchIndex - 160), Math.min(text.length, matchIndex + 220));
-    const compactLabel = labelContext.replace(/\s+/g, " ").trim();
-    const label = compactLabel.length >= 4 && compactLabel.length <= 380
-      ? compactLabel
-      : canonical;
+    const label = officialProductLabel(text, matchIndex, canonical);
 
     const existing = products.get(canonical);
-    if (!existing || existing.releaseDate > releaseDate) {
+    if (existing && existing.releaseDate !== releaseDate) {
+      throw new Error(
+        `Dates officielles contradictoires pour ${canonical}: ` +
+        `${existing.releaseDate} / ${releaseDate}`
+      );
+    }
+    if (!existing) {
       products.set(canonical, {
         id: canonical,
         family: familyFromCode(canonical),

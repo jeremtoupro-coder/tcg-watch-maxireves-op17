@@ -27,8 +27,12 @@ const PAGE_2 = `
 
 describe("calendrier officiel français", () => {
   it("parse les dates françaises exactes et ignore un mois sans jour", () => {
-    expect(parseOfficialCatalog(PAGE_1).map((product) => [product.id, product.releaseDate]))
-      .toEqual([["OP-17", "2026-08-28"]]);
+    expect(parseOfficialCatalog(PAGE_1).map((product) => [product.id, product.label, product.releaseDate]))
+      .toEqual([[
+        "OP-17",
+        "BOOSTER -LES GUERRIERS LES PLUS PUISSANTS- [OP-17]",
+        "2026-08-28"
+      ]]);
   });
 
   it("n'attribue pas à une référence mensuelle la date exacte d'un accessoire voisin", () => {
@@ -37,6 +41,13 @@ describe("calendrier officiel français", () => {
       <article>OFFICIAL CARD SLEEVES 16 Date de sortie 28 août 2026</article>
     `;
     expect(parseOfficialCatalog(html)).toEqual([]);
+  });
+
+  it("refuse deux dates exactes contradictoires pour une même référence", () => {
+    expect(() => parseOfficialCatalog(`
+      <article>BOOSTER -TEST- [OP-17] Date de sortie 28 août 2026</article>
+      <article>BOOSTER -TEST- [OP-17] Date de sortie 29 août 2026</article>
+    `)).toThrow(/dates officielles contradictoires.*OP-17/i);
   });
 
   it("détermine le nombre de pages sans dépasser la limite de sûreté", () => {
@@ -62,6 +73,10 @@ describe("calendrier officiel français", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(calendar.sourcePages).toBe(2);
     expect(calendar.catalogProducts.map((product) => product.id)).toEqual(["ST-31", "OP-17"]);
+    expect(calendar.catalogProducts.map((product) => product.label)).toEqual([
+      "DECK POUR DÉBUTANT [ST-31]",
+      "BOOSTER -LES GUERRIERS LES PLUS PUISSANTS- [OP-17]"
+    ]);
     expect(calendar.activeProducts.map((product) => product.id)).toEqual(["ST-31", "OP-17"]);
     expect(calendar.activeProducts.every((product) => product.watchWindow.active)).toBe(true);
   });
