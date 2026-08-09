@@ -1,3 +1,5 @@
+export {};
+
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
 if (!baseUrl) throw new Error("PREVIEW_URL est obligatoire.");
 
