@@ -152,6 +152,8 @@ export interface ConnectorDefinition {
   requiredSellerPatterns?: RegExp[];
   requiredSellerLabel?: string;
   commercialAlertsEnabled?: boolean;
+  /** Un HTTP 200 n'est pas suffisant : au moins un marqueur métier doit être présent. */
+  responseMustContainAny?: RegExp[];
   notes: string[];
 }
 
