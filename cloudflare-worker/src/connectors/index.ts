@@ -7,15 +7,15 @@ import type { ConnectorDefinition, StoreKey } from "../types";
 export const CONNECTORS: ConnectorDefinition[] = [
   maxireves,
   oupi,
-  fantasySphere,
-  pixelheart
+  pixelheart,
+  fantasySphere
 ];
 
 export const DEFAULT_CLOUDFLARE_STORES: StoreKey[] = [
   "maxireves",
   "oupi",
-  "fantasy-sphere",
-  "pixelheart"
+  "pixelheart",
+  "fantasy-sphere"
 ];
 
 export function selectConnectors(storeKeys: StoreKey[]): ConnectorDefinition[] {
