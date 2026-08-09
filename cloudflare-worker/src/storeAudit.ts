@@ -1,6 +1,11 @@
 import { auditConnector } from "./audit";
 import { auditAuthorizedFeed } from "./authorizedFeed";
-import type { ConnectorDefinition, Env, StoreAudit } from "./types";
+import type {
+  ConnectorDefinition,
+  Env,
+  StoreAudit,
+  StoreConfiguredStatus
+} from "./types";
 
 function readEnvString(env: Env, key?: string): string | undefined {
   if (!key) return undefined;
@@ -16,6 +21,51 @@ export function hasConfiguredAuthorizedFeed(connector: ConnectorDefinition, env:
   return Boolean(configuredAuthorizedFeedUrl(connector, env));
 }
 
+export function configuredStoreStatus(
+  connector: ConnectorDefinition,
+  env: Env
+): StoreConfiguredStatus {
+  if (connector.commercialAlertsEnabled === false) return "discovery_only";
+  if (
+    connector.directPollingDisabledWithoutFeed === true &&
+    !hasConfiguredAuthorizedFeed(connector, env)
+  ) {
+    return "pending_authorized_feed";
+  }
+  return "active_fast_watch";
+}
+
+function withOperationalStatus(
+  audit: StoreAudit,
+  connector: ConnectorDefinition,
+  env: Env,
+  sourceKind: StoreAudit["sourceKind"]
+): StoreAudit {
+  const configuredStatus = configuredStoreStatus(connector, env);
+  const hasErrors = audit.sources.some((source) => Boolean(source.error));
+  const hasHealthySource = audit.sources.some((source) => !source.error);
+  const runtimeStatus = configuredStatus === "pending_authorized_feed"
+    ? "pending"
+    : configuredStatus === "disabled"
+      ? "disabled"
+      : hasErrors || !hasHealthySource
+        ? "degraded"
+        : "healthy";
+
+  return {
+    ...audit,
+    configuredStatus,
+    runtimeStatus,
+    sourceKind,
+    fastWatchCapable: configuredStatus === "active_fast_watch" && runtimeStatus === "healthy",
+    discoveryCapable:
+      configuredStatus !== "disabled" &&
+      configuredStatus !== "pending_authorized_feed" &&
+      runtimeStatus === "healthy",
+    commercialEligible: configuredStatus === "active_fast_watch" && runtimeStatus === "healthy"
+  };
+}
+
 /**
  * Une boutique protégée peut basculer vers un flux produit obtenu auprès de
  * son programme d'affiliation / partenaire. L'URL reste un secret Cloudflare
@@ -23,6 +73,33 @@ export function hasConfiguredAuthorizedFeed(connector: ConnectorDefinition, env:
  */
 export async function auditStore(connector: ConnectorDefinition, env: Env): Promise<StoreAudit> {
   const feedUrl = configuredAuthorizedFeedUrl(connector, env);
-  if (feedUrl) return auditAuthorizedFeed(connector, feedUrl);
-  return auditConnector(connector);
+  if (feedUrl) {
+    return withOperationalStatus(
+      await auditAuthorizedFeed(connector, feedUrl),
+      connector,
+      env,
+      "authorized_feed"
+    );
+  }
+
+  if (connector.directPollingDisabledWithoutFeed === true) {
+    return withOperationalStatus({
+      store: connector.key,
+      storeName: connector.name,
+      checkedAt: new Date().toISOString(),
+      sources: [],
+      candidates: [],
+      notes: [
+        ...connector.notes,
+        `Flux autorisé en attente (${connector.authorizedFeedEnv ?? "secret non déclaré"}) : origine protégée non interrogée.`
+      ]
+    }, connector, env, "none");
+  }
+
+  return withOperationalStatus(
+    await auditConnector(connector),
+    connector,
+    env,
+    connector.authoritativeStructuredFeed ? "public_structured_feed" : "public_html"
+  );
 }

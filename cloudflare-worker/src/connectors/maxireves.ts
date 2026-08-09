@@ -8,6 +8,10 @@ export const maxireves: ConnectorDefinition = {
     "https://maxireves.fr/selection-jeux/nouveautes-et-precommandes/"
   ],
   productUrlPatterns: [/\/produit\//i, /\/product\//i],
+  responseMustContainAny: [/one[\s-]*piece/i],
+  followDiscoveredProductPages: true,
+  maxDiscoveredProductPages: 20,
+  requiresDirectProductPageForAlerts: true,
   notes: [
     "WordPress/WooCommerce confirmé par la structure publique.",
     "La catégorie One Piece expose nom, prix et quantité sans JavaScript.",

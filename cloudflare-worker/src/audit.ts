@@ -1,5 +1,5 @@
 import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
-import { extractProductImage } from "./opwatchV1";
+import { enrichCandidateIdentity, extractProductImage } from "./opwatchV1";
 import type {
   ConnectorDefinition,
   LanguageStatus,
@@ -107,7 +107,16 @@ function commercialEligibility(
     return { eligible: false, reason: "Fiche produit directe requise avant toute alerte commerciale." };
   }
   if (connector.requiredSellerPatterns?.length) {
-    const sellerConfirmed = connector.requiredSellerPatterns.some((pattern) => pattern.test(productText));
+    const sellerStarts = [...productText.matchAll(
+      /\bvendu(?:e)?(?:\s+et\s+(?:exp[eé]di[eé]|livr[eé])(?:e)?)?\s+par\b/gi
+    )]
+      .map((match) => match.index ?? 0);
+    const sellerStatements = sellerStarts.map((start, index) =>
+      productText.slice(start, Math.min(sellerStarts[index + 1] ?? productText.length, start + 180))
+    );
+    const sellerConfirmed = sellerStatements.length > 0 && sellerStatements.every((statement) =>
+      connector.requiredSellerPatterns?.some((pattern) => pattern.test(statement))
+    );
     if (!sellerConfirmed) {
       return {
         eligible: false,
@@ -169,7 +178,7 @@ function extractDirectProductCandidate(
   const language = structuredLanguage ?? languageFromPrimary(`${title} ${sourceUrl}`, productText);
   const eligibility = commercialEligibility(connector, true, `${title} ${productText}`);
 
-  return {
+  return enrichCandidateIdentity({
     store: connector.key,
     storeName: connector.name,
     title,
@@ -183,7 +192,7 @@ function extractDirectProductCandidate(
     commercialEligible: eligibility.eligible,
     commercialEligibilityReason: eligibility.reason,
     excerpt: productText.slice(0, 500)
-  };
+  });
 }
 
 function extractCandidates(
@@ -199,6 +208,10 @@ function extractCandidates(
   if (directCandidate) {
     candidatesByUrl.set(directCandidate.url, directCandidate);
     productUrlsSeen.add(directCandidate.url);
+    // Une fiche directe contient souvent un carrousel de produits liés. Ils ne
+    // doivent jamais contaminer le stock, la langue ou la référence de la
+    // fiche actuellement contrôlée.
+    return { candidates: [directCandidate], productLinksSeen: 1 };
   }
 
   for (const match of html.matchAll(anchorPattern)) {
@@ -214,7 +227,6 @@ function extractCandidates(
 
     if (isCommerceActionUrl(absoluteUrl)) continue;
     if (!productUrlMatches(absoluteUrl, connector)) continue;
-    if (directCandidate && absoluteUrl === directCandidate.url) continue;
     productUrlsSeen.add(absoluteUrl);
 
     const fullAnchor = match[0] ?? "";
@@ -244,7 +256,7 @@ function extractCandidates(
     const contextHtml = `${before.slice(-1_500)} ${after}`;
     const context = stripHtml(contextHtml);
     const eligibility = commercialEligibility(connector, false, `${title} ${context}`);
-    const candidate: ProductCandidate = {
+    const candidate: ProductCandidate = enrichCandidateIdentity({
       store: connector.key,
       storeName: connector.name,
       title,
@@ -258,7 +270,7 @@ function extractCandidates(
       commercialEligible: eligibility.eligible,
       commercialEligibilityReason: eligibility.reason,
       excerpt: context.slice(0, 500)
-    };
+    });
 
     const existing = candidatesByUrl.get(absoluteUrl);
     if (!existing || candidateScore(candidate) > candidateScore(existing)) {
@@ -305,6 +317,10 @@ async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): P
   const started = performance.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let status: number | undefined;
+  let finalUrl: string | undefined;
+  let contentType: string | undefined;
+  let responseBytes: number | undefined;
 
   try {
     const response = await fetch(sourceUrl, {
@@ -313,21 +329,23 @@ async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): P
       signal: controller.signal,
       headers: buildRequestHeaders(connector)
     });
+    status = response.status;
+    finalUrl = response.url || sourceUrl;
+    contentType = response.headers.get("content-type") ?? undefined;
     const body = await response.arrayBuffer();
-    const responseBytes = body.byteLength;
+    responseBytes = body.byteLength;
     if (responseBytes > MAX_RESPONSE_BYTES) throw new Error(`Réponse trop volumineuse: ${responseBytes} octets`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     let html = new TextDecoder("utf-8").decode(body);
-    const contentType = response.headers.get("content-type") ?? "";
-    if (connector.key === "ludisphere" && /application\/json/i.test(contentType)) { html = normalizeLudisphereShopifyJson(html); }
+    if (connector.key === "ludisphere" && /application\/json/i.test(contentType ?? "")) { html = normalizeLudisphereShopifyJson(html); }
     validateSemanticResponse(html, connector);
     const extracted = extractCandidates(html, response.url || sourceUrl, connector);
     return {
       sourceUrl,
-      finalUrl: response.url || sourceUrl,
-      status: response.status,
-      contentType: response.headers.get("content-type") ?? undefined,
+      finalUrl,
+      status,
+      contentType,
       responseBytes,
       durationMs: Math.round(performance.now() - started),
       etag: response.headers.get("etag") ?? undefined,
@@ -338,6 +356,10 @@ async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): P
   } catch (error) {
     return {
       sourceUrl,
+      finalUrl,
+      status,
+      contentType,
+      responseBytes,
       durationMs: Math.round(performance.now() - started),
       productLinksSeen: 0,
       candidates: [],

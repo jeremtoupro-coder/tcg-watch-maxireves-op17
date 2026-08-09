@@ -24,7 +24,7 @@ describe("validation sémantique des sources", () => {
     `, { status: 200 })));
 
     const audit = await auditConnector(connector());
-    expect(audit.sources[0].status).toBeUndefined();
+    expect(audit.sources[0].status).toBe(200);
     expect(audit.sources[0].error).toMatch(/Challenge\/anti-bot: Cloudflare challenge/i);
     expect(audit.candidates).toEqual([]);
   });
@@ -41,7 +41,7 @@ One Piece
     `, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } })));
 
     const audit = await auditConnector(connector());
-    expect(audit.sources[0].status).toBeUndefined();
+    expect(audit.sources[0].status).toBe(200);
     expect(audit.sources[0].error).toMatch(/Challenge\/anti-bot: Cloudflare challenge/i);
     expect(audit.candidates).toEqual([]);
   });

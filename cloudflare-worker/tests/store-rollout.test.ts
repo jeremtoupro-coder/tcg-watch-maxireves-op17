@@ -34,6 +34,7 @@ describe("rollout 21 boutiques", () => {
     expect(CONNECTORS.map((connector) => connector.key)).toEqual(EXPECTED_STORES);
     expect(new Set(DEFAULT_CLOUDFLARE_STORES).size).toBe(21);
     expect(DEFAULT_CLOUDFLARE_STORES).toEqual(EXPECTED_STORES);
+    expect(CONNECTORS.every((connector) => (connector.responseMustContainAny?.length ?? 0) > 0)).toBe(true);
   });
 
   it("refuse une carte marketplace tant que la fiche directe n'est pas relue", async () => {
@@ -102,5 +103,42 @@ describe("rollout 21 boutiques", () => {
     expect(partner?.sourceUrl).toBe(partnerProduct);
     expect(partner?.commercialEligible).toBe(false);
     expect(partner?.commercialEligibilityReason).toMatch(/Fnac non confirmé/i);
+  });
+
+  it("reste fail-closed si Amazon expédie mais qu'Amazon n'est pas le vendeur", async () => {
+    const source = "https://www.amazon.fr/dp/B0ABCDEF12";
+    const amazon = CONNECTORS.find((connector) => connector.key === "amazon-fr")!;
+    const connector: ConnectorDefinition = { ...amazon, sources: [source] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+      <html><head><title>One Piece Card Game</title></head><body>
+        <h1>Display OP-17 Français</h1>
+        <p>En stock - 119,90 €</p>
+        <p>Vendu par Boutique Tiers</p><p>Expédié par Amazon</p>
+      </body></html>
+    `, { status: 200 })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].commercialEligible).toBe(false);
+    expect(audit.candidates[0].commercialEligibilityReason).toMatch(/Amazon non confirmé/i);
+  });
+
+  it("reste fail-closed si une fiche marketplace mélange vendeur officiel et vendeur tiers", async () => {
+    const source = "https://www.amazon.fr/dp/B0ABCDEF12";
+    const amazon = CONNECTORS.find((connector) => connector.key === "amazon-fr")!;
+    const connector: ConnectorDefinition = { ...amazon, sources: [source] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+      <html><head><title>One Piece Card Game</title></head><body>
+        <h1>Display OP-17 Français</h1>
+        <p>En stock - 119,90 €</p>
+        <p>Vendu par Amazon.fr</p>
+        <section>Autre offre : vendu par Boutique Tiers</section>
+      </body></html>
+    `, { status: 200 })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].commercialEligible).toBe(false);
+    expect(audit.candidates[0].commercialEligibilityReason).toMatch(/Amazon non confirmé/i);
   });
 });

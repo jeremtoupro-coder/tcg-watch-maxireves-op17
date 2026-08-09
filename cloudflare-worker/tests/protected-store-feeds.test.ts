@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { CONNECTORS } from "../src/connectors";
-import { auditStore, hasConfiguredAuthorizedFeed } from "../src/storeAudit";
+import {
+  auditStore,
+  configuredStoreStatus,
+  hasConfiguredAuthorizedFeed
+} from "../src/storeAudit";
 import type { Env } from "../src/types";
 
 const EXPECTED_FEEDS: Record<string, string> = {
@@ -33,6 +37,25 @@ describe("remédiation des boutiques protégées", () => {
   it("maintient Otakuland en découverte uniquement", () => {
     const otakuland = CONNECTORS.find((connector) => connector.key === "otakuland");
     expect(otakuland?.commercialAlertsEnabled).toBe(false);
+    expect(configuredStoreStatus(otakuland!, {})).toBe("discovery_only");
+  });
+
+  it("classe un marchand protégé sans secret en attente de flux sans requête réseau", async () => {
+    const playin = CONNECTORS.find((connector) => connector.key === "playin")!;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditStore(playin, {});
+    expect(configuredStoreStatus(playin, {})).toBe("pending_authorized_feed");
+    expect(audit).toMatchObject({
+      configuredStatus: "pending_authorized_feed",
+      runtimeStatus: "pending",
+      sourceKind: "none",
+      fastWatchCapable: false,
+      commercialEligible: false
+    });
+    expect(audit.sources).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("détecte uniquement un flux réellement configuré", () => {
@@ -83,5 +106,20 @@ describe("remédiation des boutiques protégées", () => {
 
     expect(audit.candidates).toHaveLength(1);
     expect(audit.candidates[0].commercialEligible).toBe(false);
+  });
+
+  it("garde aussi Cultura fail-closed sans vendeur Cultura explicite", async () => {
+    const cultura = CONNECTORS.find((connector) => connector.key === "cultura")!;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "title,url,price,stock,language,seller\nOne Piece OP17 Display FR,https://www.cultura.com/p-op17-1.html,149.90,disponible,français,Vendeur Partenaire",
+      { status: 200, headers: { "content-type": "text/csv" } }
+    )));
+
+    const audit = await auditStore(cultura, {
+      AUTHORIZED_FEED_CULTURA_URL: "https://feed.example/cultura.csv"
+    });
+
+    expect(audit.candidates[0].commercialEligible).toBe(false);
+    expect(audit.candidates[0].commercialEligibilityReason).toMatch(/Cultura non confirmé/i);
   });
 });

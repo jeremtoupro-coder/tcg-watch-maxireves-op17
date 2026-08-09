@@ -1,4 +1,5 @@
 import { detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
+import { enrichCandidateIdentity } from "./opwatchV1";
 import type { Availability, ConnectorDefinition, ProductCandidate, StoreAudit } from "./types";
 
 const MAX_FEED_BYTES = 5_000_000;
@@ -178,6 +179,7 @@ export function parseAuthorizedFeed(raw: string, contentType = ""): FeedRow[] {
 function explicitAvailability(value: string): Availability {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return "unknown";
+  if (/^\d+$/.test(normalized)) return Number(normalized) > 0 ? "available" : "unavailable";
   if (/^(?:1|true|yes|oui|in stock|instock|available|disponible)$/i.test(normalized)) return "available";
   if (/pre[- ]?order|precommande|précommande/i.test(normalized)) return "preorder";
   if (/^(?:0|false|no|non|out of stock|oos|unavailable|indisponible|rupture|epuise|épuisé)$/i.test(normalized)) return "unavailable";
@@ -196,9 +198,47 @@ function commercialEligibility(connector: ConnectorDefinition, seller: string): 
   return { eligible: true };
 }
 
+function safeHttpUrl(value: string): string | undefined {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function privateOrLocalHostname(hostname: string): boolean {
+  const value = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (value === "localhost" || value.endsWith(".localhost") || value === "::1") return true;
+  if (/^(?:fc|fd)[0-9a-f]{2}:|^fe8[0-9a-f]:/i.test(value)) return true;
+
+  const parts = value.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  return parts[0] === 0 ||
+    parts[0] === 10 ||
+    parts[0] === 127 ||
+    (parts[0] === 169 && parts[1] === 254) ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168) ||
+    parts[0] >= 224;
+}
+
+function safeFeedError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/^(?:L'URL du flux autorisé|Flux autorisé|Redirection du flux autorisé)/i.test(message)) {
+    return message;
+  }
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "Flux autorisé: délai réseau dépassé";
+  }
+  return "Flux autorisé: échec réseau sans détail sensible";
+}
+
 function rowToCandidate(row: FeedRow, connector: ConnectorDefinition): ProductCandidate | undefined {
   const title = pick(row, FIELD_ALIASES.title);
-  const url = pick(row, FIELD_ALIASES.url);
+  const url = safeHttpUrl(pick(row, FIELD_ALIASES.url));
   if (!title || !url) return undefined;
 
   const description = pick(row, FIELD_ALIASES.description);
@@ -216,21 +256,23 @@ function rowToCandidate(row: FeedRow, connector: ConnectorDefinition): ProductCa
   const availability = explicitAvailability(stock || context);
   const extractedPrice = priceRaw ? extractPrice(`${priceRaw} €`) ?? extractPrice(priceRaw) : extractPrice(context);
 
-  return {
+  return enrichCandidateIdentity({
     store: connector.key,
     storeName: connector.name,
     title,
     url,
     sourceUrl: `authorized-feed:${connector.key}`,
     matchedReferences,
+    externalId: id || undefined,
+    seller: seller || undefined,
     availability,
     language,
     priceText: availability === "unavailable" ? undefined : extractedPrice,
-    imageUrl: pick(row, FIELD_ALIASES.image) || undefined,
+    imageUrl: safeHttpUrl(pick(row, FIELD_ALIASES.image)),
     commercialEligible: eligibility.eligible,
     commercialEligibilityReason: eligibility.reason,
     excerpt: stripHtml(description || context).slice(0, 500)
-  };
+  });
 }
 
 export async function auditAuthorizedFeed(
@@ -243,6 +285,15 @@ export async function auditAuthorizedFeed(
   const safeSourceUrl = `authorized-feed:${connector.key}`;
 
   try {
+    const parsedFeedUrl = new URL(feedUrl);
+    if (
+      parsedFeedUrl.protocol !== "https:" ||
+      parsedFeedUrl.username ||
+      parsedFeedUrl.password ||
+      privateOrLocalHostname(parsedFeedUrl.hostname)
+    ) {
+      throw new Error("L'URL du flux autorisé doit utiliser HTTPS");
+    }
     const response = await fetch(feedUrl, {
       method: "GET",
       redirect: "follow",
@@ -252,6 +303,10 @@ export async function auditAuthorizedFeed(
         "Accept": "text/csv,text/tab-separated-values,application/json,application/xml,text/xml;q=0.9,*/*;q=0.5"
       }
     });
+    const finalFeedUrl = new URL(response.url || feedUrl);
+    if (finalFeedUrl.protocol !== "https:" || privateOrLocalHostname(finalFeedUrl.hostname)) {
+      throw new Error("Redirection du flux autorisé vers une destination non sûre");
+    }
     const body = await response.arrayBuffer();
     if (body.byteLength > MAX_FEED_BYTES) throw new Error(`Flux autorisé trop volumineux: ${body.byteLength} octets`);
     if (!response.ok) throw new Error(`Flux autorisé HTTP ${response.status}`);
@@ -289,7 +344,7 @@ export async function auditAuthorizedFeed(
         durationMs: Math.round(performance.now() - started),
         productLinksSeen: 0,
         candidates: [],
-        error: error instanceof Error ? error.message : String(error)
+        error: safeFeedError(error)
       }],
       candidates: [],
       notes: connector.notes

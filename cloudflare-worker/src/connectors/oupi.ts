@@ -11,6 +11,7 @@ export const oupi: ConnectorDefinition = {
     "https://oupi.eu/fr/417-collection-pack-speciaux-one-piece"
   ],
   productUrlPatterns: [/\/\d+-[^/?#]+\.html(?:[?#].*)?$/i],
+  responseMustContainAny: [/one[\s-]*piece/i],
   maxConcurrency: 2,
   requestHeaders: {
     "User-Agent": "OPWatch/1.0 (+personal read-only stock monitor)",
@@ -19,6 +20,7 @@ export const oupi: ConnectorDefinition = {
   },
   followDiscoveredProductPages: true,
   maxDiscoveredProductPages: 16,
+  requiresDirectProductPageForAlerts: true,
   notes: [
     "PrestaShop confirmé par les routes et la structure publique.",
     "Les catégories publiques couvrent précommandes, displays, cases, starters et packs spéciaux.",
