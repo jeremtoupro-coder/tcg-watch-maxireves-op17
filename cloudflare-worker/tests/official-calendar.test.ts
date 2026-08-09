@@ -31,6 +31,14 @@ describe("calendrier officiel français", () => {
       .toEqual([["OP-17", "2026-08-28"]]);
   });
 
+  it("n'attribue pas à une référence mensuelle la date exacte d'un accessoire voisin", () => {
+    const html = `
+      <article>EXTRA BOOSTER [EB-05] Date de sortie Octobre 2026</article>
+      <article>OFFICIAL CARD SLEEVES 16 Date de sortie 28 août 2026</article>
+    `;
+    expect(parseOfficialCatalog(html)).toEqual([]);
+  });
+
   it("détermine le nombre de pages sans dépasser la limite de sûreté", () => {
     expect(parseOfficialCatalogPageCount(PAGE_1)).toBe(2);
     expect(() => parseOfficialCatalogPageCount(PAGE_1.replace("1 / 2", "1 / 99")))

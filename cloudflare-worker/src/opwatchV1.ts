@@ -136,6 +136,18 @@ function parseOfficialDate(value: string): string | undefined {
   return parseEnglishDate(value) ?? parseFrenchDate(value);
 }
 
+function parseFirstReleaseDateField(value: string): string | undefined {
+  const markers = [...value.matchAll(/\b(?:Date de sortie|Release Date)\b/gi)];
+  const first = markers[0];
+  if (!first) return undefined;
+  const start = first.index ?? 0;
+  const next = markers[1]?.index ?? value.length;
+  // Une date exacte doit appartenir au premier champ de sortie placé après
+  // la référence. Si ce champ ne contient qu'un mois (ex. « Octobre 2026 »),
+  // on ne cherche jamais une date dans la carte produit/accessoire suivante.
+  return parseOfficialDate(value.slice(start, Math.min(next, start + 120)));
+}
+
 function familyFromCode(code: string): ProductFamily {
   const prefix = code.split("-")[0];
   if (["OP", "EB", "PRB", "ST", "DP", "TS"].includes(prefix)) return prefix as ProductFamily;
@@ -180,7 +192,7 @@ export function parseOfficialCatalog(html: string): OfficialProduct[] {
     const nextIndex = matches[index + 1]?.index;
     const segmentEnd = nextIndex ?? Math.min(text.length, matchIndex + 900);
     const segment = text.slice(matchIndex, segmentEnd);
-    const releaseDate = parseOfficialDate(segment);
+    const releaseDate = parseFirstReleaseDateField(segment);
     if (!releaseDate) continue;
 
     const labelContext = text.slice(Math.max(0, matchIndex - 160), Math.min(text.length, matchIndex + 220));
