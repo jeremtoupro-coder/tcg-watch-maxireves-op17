@@ -48,16 +48,50 @@ function productUrlMatches(url: string, connector: ConnectorDefinition): boolean
 function isCommerceActionUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    const actionParams = [
-      "add-to-cart",
-      "add_to_cart",
-      "remove_item",
-      "wc-ajax",
-      "quantity"
-    ];
-    return actionParams.some((param) => parsed.searchParams.has(param));
+    return ["add-to-cart", "add_to_cart", "remove_item", "wc-ajax", "quantity"]
+      .some((param) => parsed.searchParams.has(param));
   } catch {
     return false;
+  }
+}
+
+function challengePageReason(html: string): string | undefined {
+  const title = stripHtml(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+  const visiblePrefix = stripHtml(html.slice(0, Math.min(html.length, 50_000))).slice(0, 2_000);
+
+  if (/^just a moment(?:\.\.\.)?$/i.test(title) || /^just a moment\b/i.test(visiblePrefix)) {
+    return "Cloudflare challenge page";
+  }
+  if (/\brobot check\b/i.test(title) || /\/errors\/validateCaptcha|sorry, we just need to make sure you(?:'|’)re not a robot/i.test(html)) {
+    return "Amazon robot/CAPTCHA page";
+  }
+  if (/\bverify (?:you are|that you are) human\b|\baccess denied\b/i.test(`${title} ${visiblePrefix}`)) {
+    return "Human verification / access denied page";
+  }
+  if (/si vous êtes un humain|vérifions ensemble que vous n[’']êtes pas un robot|enable javascript and cookies to continue/i.test(visiblePrefix)) {
+    return "French human verification page";
+  }
+  if (/\bERR_[A-Z_]+\b|error-code-color|The Chromium Authors/i.test(visiblePrefix)) {
+    return "Chromium network error page";
+  }
+  if (/geo\.captcha-delivery\.com|captcha-delivery\.com\/captcha/i.test(html) && html.length < 100_000) {
+    return "DataDome CAPTCHA page";
+  }
+  if (/challenge-platform\/h\/g|cf-chl-(?:widget|opt|out|rc)|cdn-cgi\/challenge-platform/i.test(html) && html.length < 100_000) {
+    return "Cloudflare challenge markup";
+  }
+  return undefined;
+}
+
+function validateSemanticResponse(html: string, connector: ConnectorDefinition): void {
+  const challenge = challengePageReason(html);
+  if (challenge) throw new Error(`Challenge/anti-bot: ${challenge}`);
+
+  if (connector.responseMustContainAny?.length) {
+    const text = stripHtml(html);
+    if (!connector.responseMustContainAny.some((pattern) => pattern.test(text))) {
+      throw new Error("HTTP 200 mais contenu métier attendu absent");
+    }
   }
 }
 
@@ -69,11 +103,9 @@ function commercialEligibility(
   if (connector.commercialAlertsEnabled === false) {
     return { eligible: false, reason: "Connecteur en audit uniquement : alertes commerciales désactivées." };
   }
-
   if (connector.requiresDirectProductPageForAlerts && !isDirectProductPage) {
     return { eligible: false, reason: "Fiche produit directe requise avant toute alerte commerciale." };
   }
-
   if (connector.requiredSellerPatterns?.length) {
     const sellerConfirmed = connector.requiredSellerPatterns.some((pattern) => pattern.test(productText));
     if (!sellerConfirmed) {
@@ -83,7 +115,6 @@ function commercialEligibility(
       };
     }
   }
-
   return { eligible: true };
 }
 
@@ -94,18 +125,13 @@ function candidateScore(candidate: ProductCandidate): number {
   if (candidate.language !== "Langue non précisée") score += 400;
   if (candidate.availability !== "unknown") score += 800;
   if (candidate.commercialEligible === true) score += 50;
-
-  // Une fiche produit directe est la source de vérité pour le stock.
   if (candidate.sourceUrl === candidate.url) score += 10_000;
-
   return score;
 }
 
 function languageFromPrimary(primary: string, fallback: string): LanguageStatus {
   const primaryLanguage = detectLanguage(primary);
-  return primaryLanguage === "Langue non précisée"
-    ? detectLanguage(fallback)
-    : primaryLanguage;
+  return primaryLanguage === "Langue non précisée" ? detectLanguage(fallback) : primaryLanguage;
 }
 
 function extractStructuredProductLanguage(productText: string): LanguageStatus | undefined {
@@ -134,7 +160,6 @@ function extractDirectProductCandidate(
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
   const title = stripHtml(h1Match?.[1] ?? titleMatch?.[1] ?? "");
   const matchedReferences = matchReferences(`${title} ${sourceUrl}`);
-
   if (!title || matchedReferences.length === 0) return undefined;
 
   const productStart = h1Match?.index ?? titleMatch?.index ?? 0;
@@ -187,9 +212,6 @@ function extractCandidates(
       continue;
     }
 
-    // Les liens d'action WooCommerce peuvent conserver le pathname de la fiche
-    // courante et donc hériter à tort de sa référence (ex. OP17) alors qu'ils
-    // ajoutent un autre produit au panier. Ils ne sont jamais des fiches produit.
     if (isCommerceActionUrl(absoluteUrl)) continue;
     if (!productUrlMatches(absoluteUrl, connector)) continue;
     if (directCandidate && absoluteUrl === directCandidate.url) continue;
@@ -217,7 +239,6 @@ function extractCandidates(
     if (matchedReferences.length === 0 && !metadata) {
       matchedReferences = matchReferences(`${heading} ${absoluteUrl}`);
     }
-
     if (matchedReferences.length === 0 || !title || title.length < 3) continue;
 
     const contextHtml = `${before.slice(-1_500)} ${after}`;
@@ -245,10 +266,7 @@ function extractCandidates(
     }
   }
 
-  return {
-    candidates: [...candidatesByUrl.values()],
-    productLinksSeen: productUrlsSeen.size
-  };
+  return { candidates: [...candidatesByUrl.values()], productLinksSeen: productUrlsSeen.size };
 }
 
 function buildRequestHeaders(connector: ConnectorDefinition): Record<string, string> {
@@ -260,10 +278,7 @@ function buildRequestHeaders(connector: ConnectorDefinition): Record<string, str
   };
 }
 
-async function fetchSource(
-  sourceUrl: string,
-  connector: ConnectorDefinition
-): Promise<SourceAudit> {
+async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): Promise<SourceAudit> {
   const started = performance.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -275,21 +290,14 @@ async function fetchSource(
       signal: controller.signal,
       headers: buildRequestHeaders(connector)
     });
-
     const body = await response.arrayBuffer();
     const responseBytes = body.byteLength;
-
-    if (responseBytes > MAX_RESPONSE_BYTES) {
-      throw new Error(`Réponse trop volumineuse: ${responseBytes} octets`);
-    }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    if (responseBytes > MAX_RESPONSE_BYTES) throw new Error(`Réponse trop volumineuse: ${responseBytes} octets`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const html = new TextDecoder("utf-8").decode(body);
+    validateSemanticResponse(html, connector);
     const extracted = extractCandidates(html, response.url || sourceUrl, connector);
-
     return {
       sourceUrl,
       finalUrl: response.url || sourceUrl,
@@ -303,13 +311,12 @@ async function fetchSource(
       candidates: extracted.candidates
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     return {
       sourceUrl,
       durationMs: Math.round(performance.now() - started),
       productLinksSeen: 0,
       candidates: [],
-      error: message
+      error: error instanceof Error ? error.message : String(error)
     };
   } finally {
     clearTimeout(timeout);
@@ -319,41 +326,27 @@ async function fetchSource(
 function allowedDiscoveryHosts(connector: ConnectorDefinition): Set<string> {
   const hosts = new Set<string>();
   for (const source of connector.sources) {
-    try {
-      hosts.add(new URL(source).host);
-    } catch {
-      // Une source invalide échouera ensuite dans fetchSource ; elle ne doit pas
-      // autoriser le suivi d'une URL vers un domaine tiers.
-    }
+    try { hosts.add(new URL(source).host); } catch { /* source invalide gérée au fetch */ }
   }
   return hosts;
 }
 
-function discoveredProductUrls(
-  sources: SourceAudit[],
-  connector: ConnectorDefinition
-): string[] {
+function discoveredProductUrls(sources: SourceAudit[], connector: ConnectorDefinition): string[] {
   const hosts = allowedDiscoveryHosts(connector);
   const configuredSources = new Set(connector.sources);
   const discovered = new Set<string>();
 
   for (const source of sources) {
     for (const candidate of source.candidates) {
-      if (candidate.sourceUrl === candidate.url) continue;
-      if (configuredSources.has(candidate.url)) continue;
+      if (candidate.sourceUrl === candidate.url || configuredSources.has(candidate.url)) continue;
       try {
         if (!hosts.has(new URL(candidate.url).host)) continue;
-      } catch {
-        continue;
-      }
+      } catch { continue; }
       discovered.add(candidate.url);
     }
   }
 
-  const limit = Math.max(
-    0,
-    Math.min(50, connector.maxDiscoveredProductPages ?? DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES)
-  );
+  const limit = Math.max(0, Math.min(50, connector.maxDiscoveredProductPages ?? DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES));
   return [...discovered].slice(0, limit);
 }
 
@@ -372,13 +365,9 @@ async function fetchSourcesInBatches(
 }
 
 export async function auditConnector(connector: ConnectorDefinition): Promise<StoreAudit> {
-  const requestedConcurrency = connector.maxConcurrency ?? 1;
-  const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, requestedConcurrency));
+  const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, connector.maxConcurrency ?? 1));
   const sources = await fetchSourcesInBatches(connector.sources, connector, concurrency);
 
-  // Certains catalogues annoncent « précommande » dans une carte de catégorie alors
-  // que la fiche produit est réellement en rupture. Pour les connecteurs qui le
-  // demandent, on vérifie donc les fiches publiques découvertes avant toute décision.
   if (connector.followDiscoveredProductPages) {
     const productUrls = discoveredProductUrls(sources, connector);
     if (productUrls.length > 0) {
@@ -390,9 +379,7 @@ export async function auditConnector(connector: ConnectorDefinition): Promise<St
   for (const source of sources) {
     for (const candidate of source.candidates) {
       const existing = uniqueCandidates.get(candidate.url);
-      if (!existing || candidateScore(candidate) > candidateScore(existing)) {
-        uniqueCandidates.set(candidate.url, candidate);
-      }
+      if (!existing || candidateScore(candidate) > candidateScore(existing)) uniqueCandidates.set(candidate.url, candidate);
     }
   }
 
