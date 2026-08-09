@@ -7,6 +7,8 @@ import {
 import { evaluateCandidates } from "./engine";
 import type { Env, StoreKey } from "./types";
 
+const DISCOVERY_INTERVAL_MINUTES = 15;
+
 export function parseActiveStores(rawValue?: string): StoreKey[] {
   if (!rawValue?.trim()) return [...DEFAULT_CLOUDFLARE_STORES];
 
@@ -19,9 +21,22 @@ export function parseActiveStores(rawValue?: string): StoreKey[] {
 }
 
 /**
+ * Les connecteurs discovery-only (commercialAlertsEnabled=false) ne sont pas
+ * interrogés à chaque Fast Watch. Ils restent bien intégrés aux 21 boutiques,
+ * mais sont vérifiés toutes les 15 minutes afin de détecter l'apparition d'une
+ * vraie offre TCG sans transformer une boutique hors cible en panne permanente.
+ */
+export function isDiscoveryTick(scheduledTime?: number): boolean {
+  if (scheduledTime === undefined) return false;
+  const minuteBucket = Math.floor(scheduledTime / 60_000);
+  return minuteBucket % DISCOVERY_INTERVAL_MINUTES === 0;
+}
+
+/**
  * Un cron Cloudflare est déclenché chaque minute. Un cycle contrôle toutes les
- * boutiques actives. Une boutique dégradée est isolée : elle ne peut ni bloquer
- * les boutiques saines ni modifier son propre état persistant pendant le cycle.
+ * boutiques commerciales actives. Les sources discovery-only sont ajoutées au
+ * cycle toutes les 15 minutes. Une boutique dégradée est isolée : elle ne peut
+ * ni bloquer les boutiques saines ni modifier son propre état persistant.
  */
 export async function runMonitoringCycle(
   env: Env,
@@ -32,6 +47,7 @@ export async function runMonitoringCycle(
 ): Promise<{
   status: "disabled" | "completed";
   stores?: StoreKey[];
+  deferredDiscoveryStores?: StoreKey[];
   healthyStores?: StoreKey[];
   degradedStores?: Array<{ store: StoreKey; errors: string[] }>;
   reason?: string;
@@ -56,12 +72,32 @@ export async function runMonitoringCycle(
   const activeStores = options.forceStore
     ? [options.forceStore]
     : parseActiveStores(env.ACTIVE_STORES);
-  const connectors = selectConnectors(activeStores);
+  const requestedConnectors = selectConnectors(activeStores);
 
-  if (connectors.length === 0) {
+  if (requestedConnectors.length === 0) {
     return {
       status: "disabled",
       reason: "Aucune boutique active."
+    };
+  }
+
+  const includeDiscoveryOnly = Boolean(options.forceStore) || isDiscoveryTick(options.scheduledTime);
+  const connectors = requestedConnectors.filter((connector) =>
+    connector.commercialAlertsEnabled !== false || includeDiscoveryOnly
+  );
+  const deferredDiscoveryStores = requestedConnectors
+    .filter((connector) => connector.commercialAlertsEnabled === false && !includeDiscoveryOnly)
+    .map((connector) => connector.key);
+
+  if (connectors.length === 0) {
+    return {
+      status: "completed",
+      stores: [],
+      deferredDiscoveryStores,
+      healthyStores: [],
+      degradedStores: [],
+      audits: [],
+      evaluation: await evaluateCandidates([], env, { baselineStores: [] })
     };
   }
 
@@ -95,6 +131,7 @@ export async function runMonitoringCycle(
   return {
     status: "completed",
     stores: connectors.map((connector) => connector.key),
+    deferredDiscoveryStores,
     healthyStores,
     degradedStores,
     audits,
