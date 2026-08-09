@@ -34,7 +34,7 @@ Verdict courant : **TEST NON VALIDÉ** tant que les lignes `BLOQUÉ` ne sont pas
 | E3 — pages erreur/challenge | PASS | calendrier refusé si source non officielle, challenge HTTP 200 ou dates contradictoires |
 | F1 — audit des 21 boutiques exécuté | PASS | 21/21 dans l'artifact `9044161158` |
 | F2 — statuts observables et documentés | PASS | 13 saines, 6 pending authorized feed, 2 dégradées dans `STORES_21_AUDIT.md` |
-| F3 — couverture commerciale externe complète | **BLOQUÉ** | 0/6 feeds partenaires ; Amazon dégradé au run ; Otakuland HTTP 503 et discovery-only |
+| F3 — couverture commerciale externe complète | **BLOQUÉ** | 0/6 feeds partenaires ; Amazon reste fail-closed sans disponibilité et vendeur confirmés ; Otakuland HTTP 503 et discovery-only |
 | G1 — parseur de feeds | PASS | CSV, TSV, JSON, XML ; titre, URL, prix, stock, langue, image, vendeur et identifiant |
 | G2 — sécurité des feeds | PASS | HTTPS uniquement, réseaux privés refusés, URL secrète expurgée des erreurs et rapports |
 | G3 — feeds partenaires obtenus | **BLOQUÉ** | Playin, Cultura, Micromania, Fnac, Carrefour et King Jouet nécessitent inscription/validation externe |
@@ -52,4 +52,4 @@ Verdict courant : **TEST NON VALIDÉ** tant que les lignes `BLOQUÉ` ne sont pas
 1. Obtenir et valider les flux partenaires autorisés : 0/6 actuellement. Cela exige des comptes éditeur, l'acceptation de CGU et/ou une validation des marchands.
 2. Après réception de chaque feed : le stocker en secret, exécuter sa recette FR/stock/prix/image/URL/vendeur, ajouter les régressions et relancer l'audit Preview.
 
-Amazon et Otakuland restent des états runtime dégradés correctement fail-closed. Ils ne sont pas masqués et ne peuvent générer ni fausse rupture ni fausse alerte.
+Amazon peut osciller entre source lisible et source dégradée. Lors du run `31336313582`, sa source était techniquement saine mais aucun produit n'était commercialement qualifié : disponibilité inconnue et vendeur Amazon non confirmé. Otakuland restait dégradé en HTTP 503. Ces états ne sont pas masqués et ne peuvent générer ni fausse rupture ni fausse alerte.
