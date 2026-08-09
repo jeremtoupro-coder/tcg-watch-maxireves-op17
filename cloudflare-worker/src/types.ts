@@ -60,6 +60,7 @@ export interface ProductCandidate {
   availability: Availability;
   language: LanguageStatus;
   priceText?: string;
+  imageUrl?: string;
   excerpt: string;
 }
 
@@ -107,6 +108,7 @@ export interface DiscordPayload {
     url: string;
     description: string;
     fields: DiscordEmbedField[];
+    thumbnail?: { url: string };
     footer: { text: string };
     timestamp: string;
   }>;
