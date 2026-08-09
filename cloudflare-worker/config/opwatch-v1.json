@@ -24,50 +24,29 @@
     "starter"
   ],
   "pilotStores": [
-    {
-      "id": "maxireves",
-      "name": "Maxi Rêves",
-      "baseUrl": "https://maxireves.fr/",
-      "enabled": true
-    },
-    {
-      "id": "fantasy-sphere",
-      "name": "Fantasy Sphere",
-      "baseUrl": "https://www.fantasysphere.net/",
-      "enabled": true
-    },
-    {
-      "id": "oupi",
-      "name": "Oupi",
-      "baseUrl": "https://oupi.eu/fr/",
-      "enabled": true
-    },
-    {
-      "id": "pixelheart",
-      "name": "PixelHeart",
-      "baseUrl": "https://www.pixelheart.eu/fr/",
-      "enabled": true
-    }
+    { "id": "maxireves", "name": "Maxi Rêves", "baseUrl": "https://maxireves.fr/", "enabled": true },
+    { "id": "fantasy-sphere", "name": "Fantasy Sphere", "baseUrl": "https://www.fantasysphere.net/", "enabled": true },
+    { "id": "oupi", "name": "Oupi", "baseUrl": "https://oupi.eu/fr/", "enabled": true },
+    { "id": "pixelheart", "name": "PixelHeart", "baseUrl": "https://www.pixelheart.eu/fr/", "enabled": true },
+    { "id": "ludisphere", "name": "Ludisphere", "baseUrl": "https://ludisphere.fr/", "enabled": true },
+    { "id": "parkage", "name": "Parkage", "baseUrl": "https://www.parkage.com/fr/", "enabled": true },
+    { "id": "ultrajeux", "name": "UltraJeux", "baseUrl": "https://www.ultrajeux.com/", "enabled": true },
+    { "id": "playin", "name": "Playin", "baseUrl": "https://www.play-in.com/fr/", "enabled": true },
+    { "id": "philibert", "name": "Philibert", "baseUrl": "https://www.philibertnet.com/fr/", "enabled": true },
+    { "id": "cultura", "name": "Cultura", "baseUrl": "https://www.cultura.com/", "enabled": true },
+    { "id": "micromania", "name": "Micromania", "baseUrl": "https://www.micromania.fr/", "enabled": true },
+    { "id": "fnac", "name": "Fnac", "baseUrl": "https://www.fnac.com/", "enabled": true },
+    { "id": "leclerc", "name": "E.Leclerc", "baseUrl": "https://www.e.leclerc/", "enabled": true },
+    { "id": "carrefour", "name": "Carrefour", "baseUrl": "https://www.carrefour.fr/", "enabled": true },
+    { "id": "king-jouet", "name": "King Jouet", "baseUrl": "https://www.king-jouet.com/", "enabled": true },
+    { "id": "joueclub", "name": "JouéClub", "baseUrl": "https://www.joueclub.fr/", "enabled": true },
+    { "id": "amazon-fr", "name": "Amazon FR", "baseUrl": "https://www.amazon.fr/", "enabled": true },
+    { "id": "mystic-ambre", "name": "Mystic-Ambre", "baseUrl": "https://www.mystic-ambre.fr/", "enabled": true },
+    { "id": "ludiworld", "name": "Ludiworld", "baseUrl": "https://www.ludiworld.com/", "enabled": true },
+    { "id": "vegastore", "name": "VegaStore", "baseUrl": "https://www.vegastore.fr/", "enabled": true },
+    { "id": "otakuland", "name": "Otakuland", "baseUrl": "https://otakuland.fr/", "enabled": true }
   ],
-  "storeRolloutQueue": [
-    "ludisphere",
-    "parkage",
-    "ultrajeux",
-    "playin",
-    "philibert",
-    "cultura",
-    "micromania",
-    "fnac",
-    "leclerc",
-    "carrefour",
-    "king-jouet",
-    "joueclub",
-    "amazon-fr",
-    "mystic-ambre",
-    "ludiworld",
-    "vegastore",
-    "otakuland"
-  ],
+  "storeRolloutQueue": [],
   "discord": {
     "includeProductImage": true,
     "sendAmbiguousListings": false,
