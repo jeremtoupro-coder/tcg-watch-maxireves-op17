@@ -2,6 +2,17 @@
 
 État vérifié le 2026-08-09. Aucun CAPTCHA, challenge, endpoint privé ou URL supposée n'a été contourné.
 
+## Ce que signifie « accès partenaire »
+
+Il ne s'agit pas d'une autorisation de scraper ni d'un contact personnel avec la direction des boutiques. Il s'agit d'un compte éditeur sur un réseau d'affiliation officiel, puis d'une candidature au programme du marchand. Une fois acceptée, la plateforme peut fournir un flux catalogue prévu pour les éditeurs.
+
+- Awin peut couvrir Cultura et Fnac ;
+- Kwanko peut couvrir Micromania et Carrefour ;
+- Playin renvoie publiquement vers un parcours « Devenir affilié », mais aucun feed exploitable n'est encore obtenu ;
+- King Jouet n'expose actuellement aucun programme/flux public fiable : il peut rester `pending_authorized_feed` sans qu'aucune capacité soit inventée.
+
+Aucun appel téléphonique n'est requis. Une inscription peut toutefois demander l'identité du propriétaire, un support de diffusion, l'acceptation de CGU et une validation du marchand. Même après acceptation, un flux n'est déclaré fonctionnel que s'il contient réellement les champs nécessaires à OP Watch.
+
 | Boutique | Voie officielle trouvée | Accès actuel | Suite nécessaire |
 |---|---|---|---|
 | Playin | Le site officiel affiche « Devenir affilié » dans son pied de page | Page d'adhésion non récupérable sans passer la protection du site | Demander à Playin un flux catalogue autorisé ; ne pas interroger l'origine en attendant |
@@ -29,3 +40,7 @@ Avant activation d'un feed, la recette binaire est :
 10. audit Preview sans fuite du secret.
 
 L'inscription Awin/Kwanko implique une identité, l'acceptation de conditions et une validation externe. OP Watch ne peut ni l'effectuer automatiquement au nom du propriétaire ni transformer cette dépendance en succès technique.
+
+## Cas Amazon FR
+
+Amazon ne fait pas partie des six variables `AUTHORIZED_FEED_*`. Sa voie officielle éventuelle est la Product Advertising API du Club Partenaires Amazon, soumise à un compte Partenaires, aux conditions de l'API et aux performances du compte. Tant qu'un accès conforme n'est pas choisi et validé, Amazon reste fail-closed et peut être classé `degraded` sans bloquer ni contaminer les autres boutiques.
