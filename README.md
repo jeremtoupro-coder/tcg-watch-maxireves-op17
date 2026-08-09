@@ -36,7 +36,7 @@ Le lockfile est versionné et les dépendances sont épinglées. Aucun secret ne
 - `OP Watch Test CI and Safe Preview` (`.github/workflows/op-watch-test-preview.yml`) : validation de la branche test, déploiement du Worker `tcg-watch-one-piece-preview`, smoke test et audit réel des 21 boutiques.
 - `OP Watch - Production Monitor (gated)` : reste inactif tant que la variable GitHub `OP_WATCH_PRODUCTION_ENABLED` n'est pas explicitement égale à `true` sur `main`.
 
-L'ancien workflow `Cloudflare Audit CI` est séparé de la branche TEST et doit être désactivé tant que le LIVE est interdit.
+L'ancien workflow `Cloudflare Audit CI` est séparé de la branche TEST. Il a été désactivé manuellement le 2026-08-09 et doit le rester tant que le LIVE est interdit.
 
 Le workflow test ne contient aucun chemin de déploiement LIVE.
 

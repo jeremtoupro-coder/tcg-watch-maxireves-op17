@@ -23,7 +23,7 @@ Verdict courant : **TEST NON VALIDÉ** tant que les lignes `BLOQUÉ` ne sont pas
 | C2 — SAFE Preview réellement déployée | PASS | Worker `tcg-watch-one-piece-preview`, job de déploiement réussi dans le run `31335313909` |
 | C3 — Preview verrouillée | PASS | `MONITORING_ENABLED=false`, `WRITE_STATE=false`, `DISCORD_MODE=dry-run`, aucun KV, aucun cron |
 | C4 — workflow de production | PASS | `TCG Watch - Production Monitor` est `disabled_manually` depuis 2026-08-09 20:01:14 UTC |
-| C5 — ancien workflow à chemin LIVE | **BLOQUÉ** | `Cloudflare Audit CI` est encore `active` sur `main` et contient le commit magique `[deploy-live]` sur l'ancienne branche |
+| C5 — ancien workflow à chemin LIVE | PASS | `Cloudflare Audit CI` est `disabled_manually` depuis 2026-08-09 21:09:05 UTC |
 | D1 — `/` | PASS | réponse `SAFE_PREVIEW`, 21 boutiques, polling automatique désactivé |
 | D2 — `/health` | PASS | réponse `ok`, aucun binding d'état, six feeds en attente observables |
 | D3 — `/config` | PASS | FR strict, cinq formats, calendrier dynamique, politique d'alertes exacte |
@@ -49,8 +49,7 @@ Verdict courant : **TEST NON VALIDÉ** tant que les lignes `BLOQUÉ` ne sont pas
 
 ## Blockers exacts avant le verdict 100 %
 
-1. Désactiver dans GitHub Actions l'ancien workflow `Cloudflare Audit CI` (ID `303112857`).
-2. Obtenir et valider les flux partenaires autorisés : 0/6 actuellement. Cela exige des comptes éditeur, l'acceptation de CGU et/ou une validation des marchands.
-3. Après réception de chaque feed : le stocker en secret, exécuter sa recette FR/stock/prix/image/URL/vendeur, ajouter les régressions et relancer l'audit Preview.
+1. Obtenir et valider les flux partenaires autorisés : 0/6 actuellement. Cela exige des comptes éditeur, l'acceptation de CGU et/ou une validation des marchands.
+2. Après réception de chaque feed : le stocker en secret, exécuter sa recette FR/stock/prix/image/URL/vendeur, ajouter les régressions et relancer l'audit Preview.
 
 Amazon et Otakuland restent des états runtime dégradés correctement fail-closed. Ils ne sont pas masqués et ne peuvent générer ni fausse rupture ni fausse alerte.
