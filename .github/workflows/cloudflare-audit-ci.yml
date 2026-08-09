@@ -74,6 +74,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Smoke test deployed preview
+        run: npm run smoke-preview
+        env:
+          PREVIEW_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
 
   seed-baseline:
     if: >-
