@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "mode": "SAFE_PREVIEW",
+  "officialCatalogUrl": "https://en.onepiece-cardgame.com/products/",
+  "watchWindow": {
+    "daysBeforeRelease": 120,
+    "daysAfterRelease": 30
+  },
+  "polling": {
+    "fastWatchSeconds": 60,
+    "discoverySeconds": 900,
+    "sourceFailureAlertAfter": 5
+  },
+  "language": {
+    "target": "fr",
+    "strict": true,
+    "minimumAlertConfidence": 90
+  },
+  "formats": [
+    "booster",
+    "display",
+    "case",
+    "double_pack",
+    "starter"
+  ],
+  "pilotStores": [
+    {
+      "id": "maxireves",
+      "name": "Maxi Rêves",
+      "baseUrl": "https://maxireves.fr/",
+      "enabled": true
+    },
+    {
+      "id": "fantasy-sphere",
+      "name": "Fantasy Sphere",
+      "baseUrl": "https://www.fantasysphere.net/",
+      "enabled": true
+    },
+    {
+      "id": "oupi",
+      "name": "Oupi",
+      "baseUrl": "https://oupi.eu/fr/",
+      "enabled": true
+    },
+    {
+      "id": "pixelheart",
+      "name": "PixelHeart",
+      "baseUrl": "https://www.pixelheart.eu/fr/",
+      "enabled": true
+    }
+  ],
+  "storeRolloutQueue": [
+    "ludisphere",
+    "parkage",
+    "ultrajeux",
+    "playin",
+    "philibert",
+    "cultura",
+    "micromania",
+    "fnac",
+    "leclerc",
+    "carrefour",
+    "king-jouet",
+    "joueclub",
+    "amazon-fr",
+    "mystic-ambre",
+    "ludiworld",
+    "vegastore",
+    "otakuland"
+  ],
+  "discord": {
+    "includeProductImage": true,
+    "sendAmbiguousListings": false,
+    "username": "OP Watch"
+  }
+}
