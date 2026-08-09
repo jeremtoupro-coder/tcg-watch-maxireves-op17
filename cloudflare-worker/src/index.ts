@@ -8,6 +8,15 @@ import { activeOfficialProducts, computeWatchWindow, parseOfficialCatalog } from
 import { probeOupiFromWorker } from "./oupiProbe";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
+const BROWSER_PROBE_TARGETS: Record<string, string> = {
+  playin: "https://www.play-in.com/fr/produit/646300/display-de-24-boosters-op-16-l-heure-de-la-bataille-decisive-one-piece-fr",
+  cultura: "https://www.cultura.com/p-booster-one-piece-op16-l-heure-de-la-bataille-decisive-13080126.html",
+  fnac: "https://www.fnac.com/Cartes-a-collectionner-One-Piece-OP16-Booster-Double-Pack/a23123806/w-4",
+  carrefour: "https://www.carrefour.fr/p/cartes-booster-one-piece-op14-les-sept-de-la-mer-d-azur-bandai-4582769923166",
+  "king-jouet": "https://www.king-jouet.com/jeu-jouet/jeux-societes/cartes-a-collectionner/ref-1034904-cartes-one-piece-double-booster-op16-heure-de-la-bataille-decisive.htm",
+  otakuland: "https://otakuland.fr/shop/"
+};
+
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
@@ -38,6 +47,42 @@ async function runAudits(connectors: ConnectorDefinition[]) {
     results.push(await auditConnector(connector));
   }
   return results;
+}
+
+async function browserProbe(store: string, env: Env) {
+  if (!env.BROWSER) throw new Error("Binding Browser Run absent.");
+  const target = BROWSER_PROBE_TARGETS[store];
+  if (!target) throw new Error(`Boutique non autorisée pour le probe navigateur: ${store}`);
+
+  const response = await env.BROWSER.quickAction("content", {
+    url: target,
+    gotoOptions: {
+      waitUntil: "domcontentloaded",
+      timeout: 20_000
+    },
+    rejectResourceTypes: ["image", "media", "font"]
+  });
+  const raw = await response.text();
+  let html = raw;
+  try {
+    const parsed = JSON.parse(raw) as { result?: unknown };
+    if (typeof parsed.result === "string") html = parsed.result;
+  } catch {
+    // Certaines versions du binding peuvent renvoyer directement le HTML.
+  }
+
+  return {
+    store,
+    target,
+    browserResponseStatus: response.status,
+    browserResponseOk: response.ok,
+    browserMsUsed: response.headers.get("x-browser-ms-used"),
+    bytes: html.length,
+    hasOnePiece: /one[\s-]*piece/i.test(html),
+    hasOpCode: /\b(?:OP|EB|PRB|ST|DP)[-\s]?\d{1,2}\b/i.test(html),
+    hasChallenge: /captcha|verify you are human|access denied|challenge-platform|cf-chl/i.test(html),
+    textPrefix: html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 350)
+  };
 }
 
 async function officialCalendarPreview(now = new Date()) {
@@ -134,7 +179,7 @@ export default {
         usage: {
           config: "/config",
           health: "/health",
-          protectedRoutes: ["/audit", "/evaluate"],
+          protectedRoutes: ["/audit", "/evaluate", "/opwatch/v1/browser-probe"],
           allowedStores: CONNECTORS.map((connector) => connector.key)
         }
       });
@@ -185,6 +230,33 @@ export default {
         checkedAt: new Date().toISOString(),
         audit
       });
+    }
+
+    if (url.pathname === "/opwatch/v1/browser-probe") {
+      if (live || env.ALLOW_PUBLIC_AUDIT !== "true") {
+        return jsonResponse({ error: "Browser probe désactivé." }, 403);
+      }
+      const store = url.searchParams.get("store") ?? "";
+      if (!BROWSER_PROBE_TARGETS[store]) {
+        return jsonResponse({
+          error: `Boutique non autorisée: ${store}`,
+          allowedStores: Object.keys(BROWSER_PROBE_TARGETS)
+        }, 400);
+      }
+      try {
+        return jsonResponse({
+          mode: "SAFE_BROWSER_RUN_PROBE",
+          checkedAt: new Date().toISOString(),
+          result: await browserProbe(store, env)
+        });
+      } catch (error) {
+        return jsonResponse({
+          mode: "SAFE_BROWSER_RUN_PROBE",
+          store,
+          checkedAt: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error)
+        }, 502);
+      }
     }
 
     if (url.pathname === "/config") {
