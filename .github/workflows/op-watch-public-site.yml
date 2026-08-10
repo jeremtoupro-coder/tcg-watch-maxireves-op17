@@ -48,16 +48,6 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
-      - name: Ensure neutral Pages project exists
-        shell: bash
-        run: |
-          npx wrangler pages project list --json > /tmp/pages-projects.json
-          if node -e 'const fs=require("fs");const raw=JSON.parse(fs.readFileSync("/tmp/pages-projects.json","utf8"));const list=Array.isArray(raw)?raw:(raw.result||[]);process.exit(list.some(p=>p.name===process.env.PAGES_PROJECT)?0:1)'; then
-            echo "Pages project already exists: $PAGES_PROJECT"
-          else
-            npx wrangler pages project create "$PAGES_PROJECT" --production-branch op-watch-v1-test
-          fi
-
       - name: Deploy public landing
         run: >-
           npx wrangler pages deploy public-site
@@ -66,17 +56,20 @@ jobs:
           --commit-hash="$GITHUB_SHA"
           --commit-message="OP Watch public landing"
 
-      - name: Verify public neutral URL
+      - name: Verify public neutral URL and current content
         shell: bash
         run: |
           url="https://${PAGES_PROJECT}.pages.dev/"
           for attempt in {1..12}; do
-            if body="$(curl -fsSL --max-time 20 "$url")" && grep -q "OP WATCH" <<<"$body"; then
+            if body="$(curl -fsSL --max-time 20 "$url")" && \
+               grep -q "OP WATCH" <<<"$body" && \
+               grep -q "Comment fonctionne OP Watch" <<<"$body" && \
+               grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body"; then
               echo "PUBLIC_URL=$url" >> "$GITHUB_ENV"
               echo "Public landing ready: $url"
               exit 0
             fi
             sleep 3
           done
-          echo "Public landing did not become reachable at $url" >&2
+          echo "Public landing did not become reachable with expected content at $url" >&2
           exit 1
