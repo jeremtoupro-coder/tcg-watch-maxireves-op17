@@ -3,7 +3,7 @@ name: OP Watch Public Landing
 on:
   push:
     branches:
-      - op-watch-v1-test
+      - main
     paths:
       - "cloudflare-worker/public-site/**"
       - ".github/workflows/op-watch-public-site.yml"
@@ -48,6 +48,24 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
 
+      - name: Validate cockpit JavaScript before deploy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          html=Path('public-site/cockpit/index.html').read_text()
+          # The Pages Worker repairs the historical refresh-handler typo while
+          # the source file is being cleaned up separately. Validate the served
+          # form here so a syntax error can never ship unnoticed again.
+          html=html.replace("$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));", "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));")
+          scripts=re.findall(r'<script>(.*?)</script>', html, flags=re.S)
+          if len(scripts)!=1:
+              raise SystemExit(f'expected one inline cockpit script, got {len(scripts)}')
+          Path('/tmp/op-watch-cockpit.js').write_text(scripts[0])
+          PY
+          node --check /tmp/op-watch-cockpit.js
+
       - name: Deploy public landing
         run: >-
           npx wrangler pages deploy public-site
@@ -56,23 +74,38 @@ jobs:
           --commit-hash="$GITHUB_SHA"
           --commit-message="OP Watch public landing"
 
-      - name: Verify interactive public service and official calendar
+      - name: Verify interactive public service and cockpit
         shell: bash
         run: |
           url="https://${PAGES_PROJECT}.pages.dev/"
-          for attempt in {1..12}; do
+          for attempt in {1..20}; do
             body="$(curl -fsSL --max-time 20 "$url" || true)"
             calendar="$(curl -fsSL --max-time 20 "${url}api/calendar" || true)"
+            cockpit="$(curl -fsSL --max-time 20 "${url}cockpit/" || true)"
+            anon="$(curl -sS -o /tmp/cockpit-anon.json -w '%{http_code}' --max-time 15 "${url}cockpit/api/status" || true)"
             if grep -q "OP WATCH" <<<"$body" && \
                grep -q "Utiliser OP Watch" <<<"$body" && \
                grep -q "Créer une veille" <<<"$body" && \
                grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body" && \
-               grep -q '"activeProducts"' <<<"$calendar"; then
+               grep -q '"activeProducts"' <<<"$calendar" && \
+               grep -q "OP Watch Cockpit" <<<"$cockpit" && \
+               grep -Fq "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));" <<<"$cockpit" && \
+               [ "$anon" = "401" ]; then
+              printf '%s' "$cockpit" > /tmp/deployed-cockpit.html
+              python3 - <<'PY'
+          import re
+          from pathlib import Path
+          html=Path('/tmp/deployed-cockpit.html').read_text()
+          scripts=re.findall(r'<script>(.*?)</script>', html, flags=re.S)
+          if len(scripts)!=1: raise SystemExit(1)
+          Path('/tmp/deployed-cockpit.js').write_text(scripts[0])
+          PY
+              node --check /tmp/deployed-cockpit.js
               echo "PUBLIC_URL=$url" >> "$GITHUB_ENV"
-              echo "Interactive public service ready: $url"
+              echo "Public service and cockpit ready: $url"
               exit 0
             fi
             sleep 3
           done
-          echo "Interactive public service did not become reachable with expected content at $url" >&2
+          echo "Public service/cockpit did not become reachable with expected content at $url" >&2
           exit 1
