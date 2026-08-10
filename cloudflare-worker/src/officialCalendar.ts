@@ -74,7 +74,13 @@ export function validateOfficialCatalogPage(html: string): void {
   if (!/ONE PIECE CARD GAME/i.test(text) || !/\bPRODUITS?\b|\bPRODUCTS?\b/i.test(text)) {
     throw new Error("Source calendrier invalide: marqueurs officiels absents");
   }
-  if (!/\b(OP|EB|PRB|ST|DP|TS)[-\s]?\d{1,2}\b/i.test(text)) {
+
+  // Les familles déjà connues restent acceptées dans leurs écritures usuelles.
+  // Une famille future n'est reconnue ici que si Bandai l'affiche sous la forme
+  // bracketée [ABC-01], ce qui garde la validation du catalogue fail-closed.
+  const hasKnownProductCode = /\b(OP|EB|PRB|ST|DP|TS)[-\s]?\d{1,2}\b/i.test(text);
+  const hasConstrainedFutureCode = /\[[A-Z]{2,4}-\d{1,2}\]/i.test(text);
+  if (!hasKnownProductCode && !hasConstrainedFutureCode) {
     throw new Error("Source calendrier invalide: aucune référence produit reconnue");
   }
 }
