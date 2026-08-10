@@ -1,0 +1,55 @@
+name: OP Watch Discord Smoke (one-off)
+
+on:
+  push:
+    branches:
+      - op-watch-v1-test
+    paths:
+      - .github/workflows/op-watch-discord-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  discord-smoke:
+    name: Send one isolated Discord test message
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    steps:
+      - name: Validate secret and send one test message
+        shell: bash
+        run: |
+          node <<'NODE'
+          const value = process.env.DISCORD_WEBHOOK_URL?.trim();
+          if (!value) throw new Error('DISCORD_WEBHOOK_URL absent');
+          const url = new URL(value);
+          if (
+            url.protocol !== 'https:' ||
+            !['discord.com', 'discordapp.com'].includes(url.hostname) ||
+            !/^\/api(?:\/v\d+)?\/webhooks\/\d+\/[^/]+\/?$/.test(url.pathname) ||
+            url.search || url.hash || url.username || url.password
+          ) {
+            throw new Error('DISCORD_WEBHOOK_URL invalide');
+          }
+          const payload = {
+            username: 'OP Watch',
+            embeds: [{
+              title: '✅ OP Watch — test Discord OK',
+              description: 'Le canal d’alertes est correctement connecté. Aucun monitoring LIVE n’a été activé par ce test.',
+              fields: [
+                { name: 'Mode', value: 'Test isolé', inline: true },
+                { name: 'Production', value: 'Inactive', inline: true }
+              ],
+              timestamp: new Date().toISOString()
+            }]
+          };
+          const response = await fetch(value, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!response.ok) throw new Error(`Discord HTTP ${response.status}`);
+          console.log('Discord smoke: PASS');
+          NODE
