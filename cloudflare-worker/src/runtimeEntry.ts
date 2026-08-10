@@ -7,6 +7,7 @@ import {
   type RuntimeEnv
 } from "./durableMonitoring";
 import { CONNECTORS } from "./connectors";
+import { dispatchRuntimeHeartbeat } from "./heartbeat";
 import type { Env, StoreKey } from "./types";
 
 export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
@@ -107,6 +108,39 @@ async function productionReady(request: Request, env: ProductionProbeEnv): Promi
   }
 }
 
+async function productionHeartbeatNow(request: Request, env: ProductionProbeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "POST") return json({ error: "Méthode non autorisée. POST uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+
+  try {
+    assertRuntimeReadiness(env, "live");
+    const cycle = await runDistributedMonitoringCycle(env, {
+      mode: "live",
+      scheduledTime: Date.now()
+    });
+    const delivery = await dispatchRuntimeHeartbeat(cycle, env, true);
+    if (delivery.sent !== 1) {
+      return json({ status: "failed", delivery }, 502);
+    }
+    return json({
+      status: "sent",
+      delivery,
+      cycle: {
+        discovery: cycle.discovery,
+        completedStores: cycle.stores.filter((store) => store.status === "completed").length,
+        pendingAuthorizedFeedStores: cycle.pendingAuthorizedFeedStores,
+        incidents: cycle.stores.filter((store) => store.status !== "completed").map((store) => ({
+          store: store.store,
+          status: store.status
+        }))
+      }
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname;
@@ -116,15 +150,21 @@ export default {
     if (pathname === "/runtime-ready") {
       return productionReady(request, env as ProductionProbeEnv);
     }
+    if (pathname === "/heartbeat-now") {
+      return productionHeartbeatNow(request, env as ProductionProbeEnv);
+    }
     return previewWorker.fetch(request, env);
   },
 
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     const runtimeEnv = env as RuntimeEnv;
     if (runtimeEnv.SCHEDULER_MODE !== "live") return;
-    ctx.waitUntil(runDistributedMonitoringCycle(runtimeEnv, {
-      mode: "live",
-      scheduledTime: controller.scheduledTime
-    }).then(() => undefined));
+    ctx.waitUntil((async () => {
+      const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
+        mode: "live",
+        scheduledTime: controller.scheduledTime
+      });
+      await dispatchRuntimeHeartbeat(cycle, runtimeEnv);
+    })());
   }
 };
