@@ -13,6 +13,12 @@ function compactDiagnostic(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
+function isTransientPlatformError(message: string): boolean {
+  return /Durable Object reset because its code was updated/i.test(message) ||
+    /Durable Object.*reset/i.test(message) ||
+    /internal error.*Durable Object/i.test(message);
+}
+
 async function waitForRuntime(): Promise<void> {
   let consecutive = 0;
   let lastDiagnostic = "aucune réponse";
@@ -74,7 +80,7 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
   if (discovery) url.searchParams.set("discovery", "true");
 
   let lastError: Error | undefined;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
     const response = await fetch(url, {
       headers: { authorization: `Bearer ${token}` }
     });
@@ -91,8 +97,8 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
         `Runtime test HTTP ${response.status} non-JSON ` +
         `(${response.headers.get("content-type") ?? "type inconnu"}): ${compactDiagnostic(raw)}`
       );
-      if (response.status >= 500 && attempt < 3) {
-        console.warn(`[smoke-runtime] réponse plateforme transitoire ${attempt}/3: HTTP ${response.status}`);
+      if (response.status >= 500 && attempt < 4) {
+        console.warn(`[smoke-runtime] réponse plateforme transitoire ${attempt}/4: HTTP ${response.status}`);
         await new Promise((resolve) => setTimeout(resolve, 4_000));
         continue;
       }
@@ -100,7 +106,14 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
     }
 
     if (!response.ok) {
-      throw new Error(payload.error ?? `Runtime test HTTP ${response.status}: ${compactDiagnostic(raw)}`);
+      const message = payload.error ?? `Runtime test HTTP ${response.status}: ${compactDiagnostic(raw)}`;
+      lastError = new Error(message);
+      if (response.status >= 500 && isTransientPlatformError(message) && attempt < 4) {
+        console.warn(`[smoke-runtime] reset DO de propagation ${attempt}/4; même cycle rejoué.`);
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        continue;
+      }
+      throw lastError;
     }
     return payload;
   }
