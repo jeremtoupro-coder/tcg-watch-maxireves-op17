@@ -56,20 +56,23 @@ jobs:
           --commit-hash="$GITHUB_SHA"
           --commit-message="OP Watch public landing"
 
-      - name: Verify public neutral URL and current content
+      - name: Verify interactive public beta and official calendar
         shell: bash
         run: |
           url="https://${PAGES_PROJECT}.pages.dev/"
           for attempt in {1..12}; do
-            if body="$(curl -fsSL --max-time 20 "$url")" && \
-               grep -q "OP WATCH" <<<"$body" && \
-               grep -q "Comment fonctionne OP Watch" <<<"$body" && \
-               grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body"; then
+            body="$(curl -fsSL --max-time 20 "$url" || true)"
+            calendar="$(curl -fsSL --max-time 20 "${url}api/calendar" || true)"
+            if grep -q "OP WATCH" <<<"$body" && \
+               grep -q "Utiliser OP Watch" <<<"$body" && \
+               grep -q "Créer une veille" <<<"$body" && \
+               grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body" && \
+               grep -q '"activeProducts"' <<<"$calendar"; then
               echo "PUBLIC_URL=$url" >> "$GITHUB_ENV"
-              echo "Public landing ready: $url"
+              echo "Interactive public beta ready: $url"
               exit 0
             fi
             sleep 3
           done
-          echo "Public landing did not become reachable with expected content at $url" >&2
+          echo "Interactive public beta did not become reachable with expected content at $url" >&2
           exit 1
