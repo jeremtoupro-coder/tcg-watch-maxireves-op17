@@ -19,10 +19,9 @@ export const philibert: ConnectorDefinition = {
   maxDiscoveredProductPages: 8,
   maxConcurrency: 1,
   requiresDirectProductPageForAlerts: true,
-  authoritativeStructuredFeed: true,
   notes: [
-    "Discovery officielle via le flux RSS public Philibert de la catégorie One Piece (15860).",
-    "Le RSS fournit les nouveautés, références, liens directs et prix ; seules les fiches correspondant aux références actives sont ensuite relues pour confirmer langue et disponibilité.",
+    "Discovery officielle toutes les 15 minutes via le flux RSS public Philibert de la catégorie One Piece (15860).",
+    "Le RSS sert uniquement à découvrir les fiches actives ; le Fast Watch minute relit ensuite seulement les URLs directes qualifiées mises en cache.",
     "La grosse page catégorie HTML n'est plus utilisée dans le chemin critique car elle peut répondre 403 selon la sortie Cloudflare.",
     "HTTP 403/429/5xx sur une fiche directe = source dégradée, jamais rupture ; aucun contournement anti-bot n'est utilisé."
   ]
