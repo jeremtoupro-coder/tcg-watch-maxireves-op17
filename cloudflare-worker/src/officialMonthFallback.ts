@@ -1,7 +1,6 @@
 import { stripHtml } from "./matching";
 import {
   aliasesForProduct,
-  canonicalProductCode,
   parseOfficialCatalog,
   type OfficialProduct,
   type ProductFamily
@@ -12,6 +11,7 @@ export type OfficialCalendarProduct = OfficialProduct & {
   releaseDatePrecision?: ReleaseDatePrecision;
 };
 
+const KNOWN_FAMILIES = new Set(["OP", "EB", "PRB", "ST", "DP", "TS"]);
 const MONTHS: Record<string, number> = {
   january: 1,
   february: 2,
@@ -44,15 +44,53 @@ const MONTHS: Record<string, number> = {
 
 function familyFromCode(code: string): ProductFamily {
   const prefix = code.split("-")[0];
-  return ["OP", "EB", "PRB", "ST", "DP", "TS"].includes(prefix)
-    ? prefix as ProductFamily
-    : "OTHER";
+  return KNOWN_FAMILIES.has(prefix) ? prefix as ProductFamily : "OTHER";
+}
+
+function strictIsoDate(year: number, month: number, day: number): string | undefined {
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function releaseField(value: string): string | undefined {
+  const marker = value.match(/\b(?:Date de sortie|Release Date)\b/i);
+  if (!marker || marker.index === undefined) return undefined;
+  return value.slice(marker.index, Math.min(value.length, marker.index + 120));
+}
+
+function parseExactReleaseField(value: string): string | undefined {
+  const field = releaseField(value);
+  if (!field) return undefined;
+
+  const french = field.match(
+    /\b(\d{1,2})\s+(janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[eé]cembre)\s+(20\d{2})\b/i
+  );
+  if (french) {
+    const month = MONTHS[french[2].toLowerCase()];
+    if (month) return strictIsoDate(Number(french[3]), month, Number(french[1]));
+  }
+
+  const english = field.match(
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s+(20\d{2})\b/i
+  );
+  if (english) {
+    const month = MONTHS[english[1].toLowerCase()];
+    if (month) return strictIsoDate(Number(english[3]), month, Number(english[2]));
+  }
+
+  return undefined;
 }
 
 function parseMonthOnlyReleaseField(value: string): string | undefined {
-  const marker = value.match(/\b(?:Date de sortie|Release Date)\b/i);
-  if (!marker || marker.index === undefined) return undefined;
-  const field = value.slice(marker.index, Math.min(value.length, marker.index + 120));
+  const field = releaseField(value);
+  if (!field) return undefined;
 
   // Une date exacte doit rester prioritaire. Le fallback ne s'applique que si
   // Bandai ne communique réellement qu'un mois + une année.
@@ -68,6 +106,13 @@ function parseMonthOnlyReleaseField(value: string): string | undefined {
   const month = MONTHS[monthYear[1].toLowerCase()];
   if (!month) return undefined;
   return `${monthYear[2]}-${String(month).padStart(2, "0")}-01`;
+}
+
+function canonicalCatalogCode(match: RegExpMatchArray): string | undefined {
+  const prefix = (match[1] ?? match[3])?.toUpperCase();
+  const number = match[2] ?? match[4];
+  if (!prefix || !number) return undefined;
+  return `${prefix}-${number.padStart(2, "0")}`;
 }
 
 export function mergeOfficialCalendarProduct(
@@ -92,10 +137,17 @@ export function mergeOfficialCalendarProduct(
 }
 
 /**
- * Le parseur strict garde la priorité. Si Bandai ne fournit qu'un mois de
- * sortie, OP Watch crée une date provisoire au premier de ce mois. Lorsqu'une
- * date exacte apparaît ensuite, elle remplace automatiquement cette hypothèse
- * au prochain rafraîchissement du calendrier.
+ * Le parseur strict des familles connues garde la priorité.
+ *
+ * Si Bandai ne fournit qu'un mois de sortie, OP Watch crée une date provisoire
+ * au premier de ce mois. Lorsqu'une date exacte apparaît ensuite, elle remplace
+ * automatiquement cette hypothèse au prochain rafraîchissement du calendrier.
+ *
+ * Pour rester autonome si Bandai crée une nouvelle famille, un préfixe encore
+ * inconnu est accepté uniquement sur le catalogue officiel déjà validé et
+ * uniquement sous la forme bracketée [ABC-01]. Cette contrainte n'est jamais
+ * appliquée aux pages marchandes : elle évite d'élargir le matching commercial
+ * à des références arbitraires.
  */
 export function parseOfficialCatalogWithMonthFallback(html: string): OfficialCalendarProduct[] {
   const exactProducts = parseOfficialCatalog(html).map((product) => ({
@@ -105,26 +157,27 @@ export function parseOfficialCatalogWithMonthFallback(html: string): OfficialCal
   const products = new Map<string, OfficialCalendarProduct>(exactProducts.map((product) => [product.id, product]));
 
   const text = stripHtml(html);
-  const codePattern = /\b(OP|EB|PRB|ST|DP|TS)[-\s]?(\d{1,2})\b/gi;
+  const codePattern = /\b(OP|EB|PRB|ST|DP|TS)[-\s]?(\d{1,2})\b|\[([A-Z]{2,4})-(\d{1,2})\]/gi;
   const matches = [...text.matchAll(codePattern)];
 
   for (let index = 0; index < matches.length; index += 1) {
     const match = matches[index];
-    const canonical = canonicalProductCode(match[0]);
-    if (!canonical || products.get(canonical)?.releaseDatePrecision === "exact") continue;
+    const canonical = canonicalCatalogCode(match);
+    if (!canonical) continue;
 
     const matchIndex = match.index ?? 0;
     const nextIndex = matches[index + 1]?.index ?? Math.min(text.length, matchIndex + 900);
     const segment = text.slice(matchIndex, nextIndex);
-    const releaseDate = parseMonthOnlyReleaseField(segment);
+    const exactReleaseDate = parseExactReleaseField(segment);
+    const releaseDate = exactReleaseDate ?? parseMonthOnlyReleaseField(segment);
     if (!releaseDate) continue;
 
     const incoming: OfficialCalendarProduct = {
       id: canonical,
       family: familyFromCode(canonical),
-      label: canonical,
+      label: products.get(canonical)?.label ?? canonical,
       releaseDate,
-      releaseDatePrecision: "month_assumed_first",
+      releaseDatePrecision: exactReleaseDate ? "exact" : "month_assumed_first",
       aliases: aliasesForProduct(canonical)
     };
     products.set(canonical, mergeOfficialCalendarProduct(products.get(canonical), incoming));
