@@ -1,5 +1,5 @@
-import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
-import { enrichCandidateIdentity, extractProductImage } from "./opwatchV1";
+import { decodeHtml, detectAvailability, detectLanguage, extractPrice, matchReferences, normalizeForMatching, stripHtml } from "./matching";
+import { enrichCandidateIdentity, extractProductImage, type OfficialProduct } from "./opwatchV1";
 import { canonicalProductUrl } from "./connectorUrls";
 import type {
   ConnectorDefinition,
@@ -144,6 +144,20 @@ function languageFromPrimary(primary: string, fallback: string): LanguageStatus 
   return primaryLanguage === "Langue non précisée" ? detectLanguage(fallback) : primaryLanguage;
 }
 
+function matchWatchReferences(value: string, watchProducts: OfficialProduct[]): string[] {
+  const matches = new Set(matchReferences(value));
+  const normalized = normalizeForMatching(value);
+  for (const product of watchProducts) {
+    if (product.aliases.some((alias) => {
+      const candidate = normalizeForMatching(alias);
+      return candidate.length >= 3 && normalized.includes(candidate);
+    })) {
+      matches.add(product.id);
+    }
+  }
+  return [...matches];
+}
+
 function extractStructuredProductLanguage(productText: string): LanguageStatus | undefined {
   const field = productText.match(
     /\b(?:langue|language)(?:\(s\)|s)?\s*:?[\s-]*(français|francais|french|anglais|english|japonais|japanese|allemand|german|espagnol|spanish|italien|italian|néerlandais|dutch)\b/i
@@ -162,7 +176,8 @@ function directProductCoreText(html: string, productStart: number): string {
 function extractDirectProductCandidate(
   html: string,
   sourceUrl: string,
-  connector: ConnectorDefinition
+  connector: ConnectorDefinition,
+  watchProducts: OfficialProduct[]
 ): ProductCandidate | undefined {
   const productUrl = canonicalProductUrl(sourceUrl, connector);
   if (!productUrlMatches(productUrl, connector)) return undefined;
@@ -170,7 +185,7 @@ function extractDirectProductCandidate(
   const h1Match = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
   const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
   const title = stripHtml(h1Match?.[1] ?? titleMatch?.[1] ?? "");
-  const matchedReferences = matchReferences(`${title} ${productUrl} ${sourceUrl}`);
+  const matchedReferences = matchWatchReferences(`${title} ${productUrl} ${sourceUrl}`, watchProducts);
   if (!title || matchedReferences.length === 0) return undefined;
 
   const productStart = h1Match?.index ?? titleMatch?.index ?? 0;
@@ -203,13 +218,14 @@ function extractDirectProductCandidate(
 function extractCandidates(
   html: string,
   sourceUrl: string,
-  connector: ConnectorDefinition
+  connector: ConnectorDefinition,
+  watchProducts: OfficialProduct[]
 ): { candidates: ProductCandidate[]; productLinksSeen: number } {
   const anchorPattern = /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
   const candidatesByUrl = new Map<string, ProductCandidate>();
   const productUrlsSeen = new Set<string>();
 
-  const directCandidate = extractDirectProductCandidate(html, sourceUrl, connector);
+  const directCandidate = extractDirectProductCandidate(html, sourceUrl, connector, watchProducts);
   if (directCandidate) {
     candidatesByUrl.set(directCandidate.url, directCandidate);
     productUrlsSeen.add(directCandidate.url);
@@ -253,9 +269,9 @@ function extractCandidates(
     const heading = nearestHeading(before);
     const title = metadataParts.sort((a, b) => b.length - a.length)[0] || heading;
 
-    let matchedReferences = matchReferences(`${metadata} ${absoluteUrl} ${resolvedUrl}`);
+    let matchedReferences = matchWatchReferences(`${metadata} ${absoluteUrl} ${resolvedUrl}`, watchProducts);
     if (matchedReferences.length === 0 && !metadata) {
-      matchedReferences = matchReferences(`${heading} ${absoluteUrl}`);
+      matchedReferences = matchWatchReferences(`${heading} ${absoluteUrl}`, watchProducts);
     }
     if (matchedReferences.length === 0 || !title || title.length < 3) continue;
 
@@ -319,7 +335,7 @@ function buildRequestHeaders(connector: ConnectorDefinition): Record<string, str
   };
 }
 
-async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): Promise<SourceAudit> {
+async function fetchSource(sourceUrl: string, connector: ConnectorDefinition, watchProducts: OfficialProduct[]): Promise<SourceAudit> {
   const started = performance.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -346,7 +362,7 @@ async function fetchSource(sourceUrl: string, connector: ConnectorDefinition): P
     let html = new TextDecoder("utf-8").decode(body);
     if (connector.key === "ludisphere" && /application\/json/i.test(contentType ?? "")) { html = normalizeLudisphereShopifyJson(html); }
     validateSemanticResponse(html, connector);
-    const extracted = extractCandidates(html, response.url || sourceUrl, connector);
+    const extracted = extractCandidates(html, response.url || sourceUrl, connector, watchProducts);
     return {
       sourceUrl,
       finalUrl,
@@ -406,26 +422,27 @@ function discoveredProductUrls(sources: SourceAudit[], connector: ConnectorDefin
 async function fetchSourcesInBatches(
   sourceUrls: string[],
   connector: ConnectorDefinition,
-  concurrency: number
+  concurrency: number,
+  watchProducts: OfficialProduct[]
 ): Promise<SourceAudit[]> {
   const sources: SourceAudit[] = [];
   for (let index = 0; index < sourceUrls.length; index += concurrency) {
     if (index > 0) await sleep(SOURCE_DELAY_MS);
     const batch = sourceUrls.slice(index, index + concurrency);
-    sources.push(...await Promise.all(batch.map((sourceUrl) => fetchSource(sourceUrl, connector))));
+    sources.push(...await Promise.all(batch.map((sourceUrl) => fetchSource(sourceUrl, connector, watchProducts))));
   }
   return sources;
 }
 
-export async function auditConnector(connector: ConnectorDefinition): Promise<StoreAudit> {
+export async function auditConnector(connector: ConnectorDefinition, watchProducts: OfficialProduct[] = []): Promise<StoreAudit> {
   const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, connector.maxConcurrency ?? 1));
   const initialSources = [...new Set(connector.sources.map((source) => canonicalProductUrl(source, connector)))];
-  const sources = await fetchSourcesInBatches(initialSources, connector, concurrency);
+  const sources = await fetchSourcesInBatches(initialSources, connector, concurrency, watchProducts);
 
   if (connector.followDiscoveredProductPages) {
     const productUrls = discoveredProductUrls(sources, connector);
     if (productUrls.length > 0) {
-      sources.push(...await fetchSourcesInBatches(productUrls, connector, concurrency));
+      sources.push(...await fetchSourcesInBatches(productUrls, connector, concurrency, watchProducts));
     }
   }
 

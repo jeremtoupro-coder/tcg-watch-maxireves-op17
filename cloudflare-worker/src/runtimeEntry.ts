@@ -8,6 +8,7 @@ import {
 } from "./durableMonitoring";
 import { CONNECTORS } from "./connectors";
 import { dispatchRuntimeHeartbeat } from "./heartbeat";
+import { handleCockpitApi } from "./cockpitApi";
 import type { Env, StoreKey } from "./types";
 
 export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
@@ -144,6 +145,9 @@ async function productionHeartbeatNow(request: Request, env: ProductionProbeEnv)
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname;
+    if (pathname.startsWith("/cockpit/api/")) {
+      return handleCockpitApi(request, env as RuntimeEnv);
+    }
     if (pathname === "/runtime-test") {
       return runtimeTest(request, env as RuntimeEnv);
     }

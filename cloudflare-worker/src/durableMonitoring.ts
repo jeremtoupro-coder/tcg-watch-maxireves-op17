@@ -3,8 +3,9 @@ import { configuredStoreStatus } from "./storeAudit";
 import { isDiscoveryTick, parseActiveStores, runMonitoringCycle } from "./monitor";
 import { candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
+import { CONTROL_CONFIG_STORAGE_KEY, applyRuntimeControlConfig, defaultRuntimeControlConfig, extraStoreSources, normalizeRuntimeControlConfig, type RuntimeControlConfig } from "./controlPlane";
 import type { StateStore } from "./state";
-import type { Env, ProductSnapshot, StoreKey } from "./types";
+import type { Env, LanguageStatus, ProductSnapshot, StoreKey } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
 
 export const STORE_DO_BATCH_SIZE = 6;
@@ -40,6 +41,20 @@ export interface DurableCycleStoreResult {
   backoffUntil?: string;
   result?: Awaited<ReturnType<typeof runMonitoringCycle>>;
   error?: string;
+}
+
+export interface StoreRuntimeHealth {
+  store: StoreKey;
+  status: DurableCycleStoreResult["status"];
+  checkedAt: string;
+  completedAt: string;
+  durationMs: number;
+  merchantDurationMs: number;
+  candidates: number;
+  sourceKind?: string;
+  error?: string;
+  backoffUntil?: string;
+  discovery: boolean;
 }
 
 export interface DurableCycleResult {
@@ -227,6 +242,7 @@ async function pruneFastWatchCache(
   stateStore: StateStore,
   store: StoreKey,
   officialProducts: OfficialProduct[],
+  acceptedLanguages: LanguageStatus[],
   result: Awaited<ReturnType<typeof runMonitoringCycle>>,
   discoveredAt: string
 ): Promise<void> {
@@ -236,7 +252,7 @@ async function pruneFastWatchCache(
   if (!audit) return;
 
   const entries = audit.candidates.flatMap((candidate) => {
-    const qualified = candidateForActiveProducts(candidate, officialProducts);
+    const qualified = candidateForActiveProducts(candidate, officialProducts, acceptedLanguages);
     return qualified ? [{ url: qualified.url, references: [...qualified.matchedReferences].sort() }] : [];
   });
   const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
@@ -256,7 +272,15 @@ export class StoreMonitorDurableObject {
   constructor(private readonly state: DurableObjectState, private readonly env: RuntimeEnv) {}
 
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/run") {
+    const pathname = new URL(request.url).pathname;
+    if (request.method === "GET" && pathname === "/health") {
+      return json({ health: await this.state.storage.get<StoreRuntimeHealth>("runtime:health") });
+    }
+    if (request.method === "POST" && pathname === "/invalidate") {
+      await this.state.storage.put("metadata:monitor:last-discovery", "1970-01-01T00:00:00.000Z");
+      return json({ status: "invalidated" });
+    }
+    if (request.method !== "POST" || pathname !== "/run") {
       return json({ error: "Route Durable Object boutique invalide." }, 404);
     }
     if (this.running) {
@@ -264,6 +288,9 @@ export class StoreMonitorDurableObject {
     }
 
     const started = performance.now();
+    let activeStore: StoreKey | undefined;
+    let activeScheduledTime = Date.now();
+    let activeDiscovery = false;
     this.running = true;
     try {
       const input = await request.json() as {
@@ -271,8 +298,13 @@ export class StoreMonitorDurableObject {
         scheduledTime?: number;
         forceDiscovery?: boolean;
         officialProducts?: OfficialProduct[];
+        acceptedLanguages?: LanguageStatus[];
+        extraStoreSources?: string[];
       };
       const store = input.store;
+      activeStore = store;
+      activeScheduledTime = Number(input.scheduledTime) || Date.now();
+      activeDiscovery = input.forceDiscovery === true;
       const scheduledTime = input.scheduledTime;
       if (!store || !CONNECTORS.some((connector) => connector.key === store)) {
         return json({ error: "Boutique inconnue." }, 400);
@@ -288,20 +320,31 @@ export class StoreMonitorDurableObject {
       const backoffRaw = await stateStore.getMetadata("runtime:backoff-until");
       const backoffUntil = backoffRaw ? Date.parse(backoffRaw) : Number.NaN;
       if (Number.isFinite(backoffUntil) && (scheduledTime as number) < backoffUntil && input.forceDiscovery !== true) {
-        return json({
+        const durationMs = Math.round(performance.now() - started);
+        const health: StoreRuntimeHealth = {
+          store,
           status: "backoff",
-          durationMs: Math.round(performance.now() - started),
+          checkedAt: new Date(scheduledTime as number).toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs,
           merchantDurationMs: 0,
-          backoffUntil: new Date(backoffUntil).toISOString()
-        });
+          candidates: 0,
+          backoffUntil: new Date(backoffUntil).toISOString(),
+          discovery: false
+        };
+        await this.state.storage.put("runtime:health", health);
+        return json({ status: "backoff", durationMs, merchantDurationMs: 0, backoffUntil: health.backoffUntil });
       }
 
       if (input.forceDiscovery === true) await forceDiscoveryDue(stateStore);
 
       const storeEnv: RuntimeEnv = { ...this.env, ACTIVE_STORES: store };
+      const acceptedLanguages = input.acceptedLanguages?.length ? input.acceptedLanguages : ["Français confirmé" as LanguageStatus];
       const result = await runMonitoringCycle(storeEnv, {
         scheduledTime: scheduledTime as number,
         officialProducts: input.officialProducts,
+        acceptedLanguages,
+        extraSourcesByStore: input.extraStoreSources?.length ? { [store]: input.extraStoreSources } : undefined,
         stateStore,
         now: new Date(scheduledTime as number)
       });
@@ -319,24 +362,47 @@ export class StoreMonitorDurableObject {
           stateStore,
           store,
           input.officialProducts,
+          acceptedLanguages,
           result,
           new Date(scheduledTime as number).toISOString()
         );
       }
 
-      return json({
+      const durationMs = Math.round(performance.now() - started);
+      const merchantDurationMs = sourceDurationMs(result);
+      const audit = result.audits?.find((entry) => entry.store === store);
+      const error = result.degradedStores?.find((entry) => entry.store === store)?.errors.join(" | ");
+      const health: StoreRuntimeHealth = {
+        store,
         status: degraded ? "degraded" : "completed",
-        durationMs: Math.round(performance.now() - started),
-        merchantDurationMs: sourceDurationMs(result),
-        result
-      });
+        checkedAt: new Date(scheduledTime as number).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs,
+        merchantDurationMs,
+        candidates: audit?.candidates.length ?? 0,
+        sourceKind: audit?.sourceKind,
+        ...(error ? { error } : {}),
+        discovery: input.forceDiscovery === true
+      };
+      await this.state.storage.put("runtime:health", health);
+      return json({ status: health.status, durationMs, merchantDurationMs, result });
     } catch (error) {
-      return json({
-        status: "error",
-        durationMs: Math.round(performance.now() - started),
-        merchantDurationMs: 0,
-        error: safeError(error)
-      }, 500);
+      const durationMs = Math.round(performance.now() - started);
+      const message = safeError(error);
+      if (activeStore) {
+        await this.state.storage.put("runtime:health", {
+          store: activeStore,
+          status: "error",
+          checkedAt: new Date(activeScheduledTime).toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs,
+          merchantDurationMs: 0,
+          candidates: 0,
+          error: message,
+          discovery: activeDiscovery
+        } satisfies StoreRuntimeHealth);
+      }
+      return json({ status: "error", durationMs, merchantDurationMs: 0, error: message }, 500);
     } finally {
       this.running = false;
     }
@@ -349,7 +415,18 @@ export class CalendarCoordinatorDurableObject {
   constructor(private readonly state: DurableObjectState, private readonly env: RuntimeEnv) {}
 
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/calendar") {
+    const pathname = new URL(request.url).pathname;
+    if (request.method === "GET" && pathname === "/control") {
+      const raw = await this.state.storage.get<unknown>(CONTROL_CONFIG_STORAGE_KEY);
+      return json(normalizeRuntimeControlConfig(raw));
+    }
+    if (request.method === "PUT" && pathname === "/control") {
+      const raw = await request.json();
+      const config = normalizeRuntimeControlConfig(raw);
+      await this.state.storage.put(CONTROL_CONFIG_STORAGE_KEY, config);
+      return json(config);
+    }
+    if (request.method !== "POST" || pathname !== "/calendar") {
       return json({ error: "Route Durable Object calendrier invalide." }, 404);
     }
     if (this.running) return this.running;
@@ -368,12 +445,18 @@ export class CalendarCoordinatorDurableObject {
           daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
           stateStore
         });
+        const rawControl = await this.state.storage.get<unknown>(CONTROL_CONFIG_STORAGE_KEY);
+        const control = rawControl ? normalizeRuntimeControlConfig(rawControl) : defaultRuntimeControlConfig();
+        const activeProducts = applyRuntimeControlConfig(calendar.activeProducts, control, new Date(scheduledTime));
         return json({
           durationMs: Math.round(performance.now() - started),
           fetchedAt: calendar.fetchedAt,
           sourcePages: calendar.sourcePages,
           cache: calendar.cache,
-          activeProducts: calendar.activeProducts
+          activeProducts,
+          acceptedLanguages: control.languages,
+          extraSourcesByStore: extraStoreSources(control),
+          controlUpdatedAt: control.updatedAt
         });
       } catch (error) {
         return json({
@@ -401,7 +484,12 @@ async function getCalendar(
   env: RuntimeEnv,
   prefix: string,
   scheduledTime: number
-): Promise<{ durationMs: number; activeProducts: OfficialProduct[] }> {
+): Promise<{
+  durationMs: number;
+  activeProducts: OfficialProduct[];
+  acceptedLanguages: LanguageStatus[];
+  extraSourcesByStore: Partial<Record<StoreKey, string[]>>;
+}> {
   const id = env.CALENDAR_COORDINATOR!.idFromName(`${prefix}:calendar`);
   const stub = env.CALENDAR_COORDINATOR!.get(id);
   return await readJson(await stub.fetch(new Request("https://calendar.internal/calendar", {
@@ -417,7 +505,9 @@ async function runStore(
   store: StoreKey,
   scheduledTime: number,
   forceDiscovery: boolean,
-  officialProducts: OfficialProduct[]
+  officialProducts: OfficialProduct[],
+  acceptedLanguages: LanguageStatus[],
+  extraStoreSources: string[]
 ): Promise<DurableCycleStoreResult> {
   const id = env.STORE_MONITORS!.idFromName(`${prefix}:store:${store}`);
   const stub = env.STORE_MONITORS!.get(id);
@@ -425,7 +515,7 @@ async function runStore(
     const response = await stub.fetch(new Request("https://store.internal/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ store, scheduledTime, forceDiscovery, officialProducts })
+      body: JSON.stringify({ store, scheduledTime, forceDiscovery, officialProducts, acceptedLanguages, extraStoreSources })
     }));
     const payload = await response.json() as Omit<DurableCycleStoreResult, "store">;
     return { store, ...payload };
@@ -462,7 +552,9 @@ export async function runDistributedMonitoringCycle(
       store,
       scheduledTime,
       selection.discovery,
-      calendar.activeProducts
+      calendar.activeProducts,
+      calendar.acceptedLanguages,
+      calendar.extraSourcesByStore[store] ?? []
     ))));
   }
 

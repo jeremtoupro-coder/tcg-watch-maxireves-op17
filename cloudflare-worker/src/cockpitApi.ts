@@ -359,7 +359,7 @@ async function mutateControl(request: Request, env: RuntimeEnv): Promise<Respons
         id: crypto.randomUUID(),
         createdAt: now.toISOString(),
         text,
-        status: "pending"
+        status: "pending" as const
       }].slice(-50);
       break;
     }
