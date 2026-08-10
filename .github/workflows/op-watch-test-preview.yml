@@ -104,8 +104,9 @@ jobs:
         run: >-
           node -e "const c=require('./wrangler.generated.json');
           if(c.name!=='tcg-watch-one-piece-preview'||c.vars.MONITORING_ENABLED!=='false'||
-          c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||
-          c.kv_namespaces?.length||c.triggers?.crons?.length) process.exit(1)"
+          c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||
+          c.vars.RUNTIME_TEST_MODE!=='false'||c.kv_namespaces?.length||c.durable_objects||c.migrations||
+          c.triggers?.crons?.length) process.exit(1)"
       - name: Deploy dedicated preview Worker
         run: npx wrangler deploy --config wrangler.generated.json
       - name: Install isolated audit token
@@ -145,5 +146,102 @@ jobs:
         with:
           name: op-watch-safe-preview-audit-${{ github.run_id }}
           path: cloudflare-worker/audit-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  runtime-cadence:
+    name: Measure isolated 60s/15m runtime budget
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/op-watch-v1-test') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/op-watch-v1-test')
+    needs:
+      - validate
+      - deploy-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RUNTIME_TEST_URL: https://tcg-watch-one-piece-runtime-test.jeremie-touitou-pro.workers.dev
+      RUNTIME_TEST_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify isolated runtime credentials
+        shell: bash
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID RUNTIME_TEST_RUN_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret ou identifiant manquant::$name n'est pas configuré."
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Derive isolated runtime audit token
+        shell: bash
+        run: |
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Generate isolated Durable Objects runtime config
+        run: npm run generate-runtime-test-config
+      - name: Assert runtime isolation and hard safety gates
+        run: >-
+          node -e "const c=require('./wrangler.runtime-test.generated.json');
+          const b=c.durable_objects?.bindings||[];
+          if(c.name!=='tcg-watch-one-piece-runtime-test'||c.vars.MONITORING_ENABLED!=='true'||
+          c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||
+          c.vars.RUNTIME_TEST_MODE!=='true'||c.vars.RUNTIME_TEST_RUN_ID!==process.env.RUNTIME_TEST_RUN_ID||
+          c.kv_namespaces?.length||c.triggers?.crons?.length||b.length!==2||
+          !b.some(x=>x.name==='STORE_MONITORS')||!b.some(x=>x.name==='CALENDAR_COORDINATOR')) process.exit(1)"
+      - name: Deploy isolated runtime test Worker
+        run: npx wrangler deploy --config wrangler.runtime-test.generated.json
+      - name: Install isolated runtime audit token
+        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.runtime-test.generated.json
+      - name: Install configured authorized feed secrets in isolated runtime
+        shell: bash
+        env:
+          AUTHORIZED_FEED_PLAYIN_URL: ${{ secrets.AUTHORIZED_FEED_PLAYIN_URL }}
+          AUTHORIZED_FEED_CULTURA_URL: ${{ secrets.AUTHORIZED_FEED_CULTURA_URL }}
+          AUTHORIZED_FEED_MICROMANIA_URL: ${{ secrets.AUTHORIZED_FEED_MICROMANIA_URL }}
+          AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
+          AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
+          AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
+        run: |
+          for name in \
+            AUTHORIZED_FEED_PLAYIN_URL \
+            AUTHORIZED_FEED_CULTURA_URL \
+            AUTHORIZED_FEED_MICROMANIA_URL \
+            AUTHORIZED_FEED_FNAC_URL \
+            AUTHORIZED_FEED_CARREFOUR_URL \
+            AUTHORIZED_FEED_KING_JOUET_URL; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              printf '%s' "$value" | npx wrangler secret put "$name" --config wrangler.runtime-test.generated.json
+            fi
+          done
+      - name: Wait for runtime secret propagation
+        run: sleep 5
+      - name: Run one Discovery plus fourteen Fast Watch cycles
+        run: npm run smoke-runtime
+      - name: Upload isolated cadence budget evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: op-watch-runtime-cadence-${{ github.run_id }}
+          path: cloudflare-worker/runtime-cadence-report.json
           if-no-files-found: warn
           retention-days: 14

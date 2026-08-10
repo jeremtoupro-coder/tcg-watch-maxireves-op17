@@ -1,0 +1,85 @@
+import { writeFile } from "node:fs/promises";
+import {
+  CADENCE_SAMPLE_CYCLES,
+  projectCadenceBudget,
+  type DurableCycleResult
+} from "../src/durableMonitoring";
+
+const baseUrl = process.env.RUNTIME_TEST_URL?.replace(/\/$/, "");
+const token = process.env.PREVIEW_AUDIT_TOKEN?.trim();
+if (!baseUrl || !token) throw new Error("RUNTIME_TEST_URL et PREVIEW_AUDIT_TOKEN sont obligatoires.");
+
+async function runCycle(time: number, discovery: boolean): Promise<DurableCycleResult> {
+  const url = new URL(`${baseUrl}/runtime-test`);
+  url.searchParams.set("time", String(time));
+  if (discovery) url.searchParams.set("discovery", "true");
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const payload = await response.json() as DurableCycleResult & { error?: string };
+  if (!response.ok) throw new Error(payload.error ?? `Runtime test HTTP ${response.status}`);
+  return payload;
+}
+
+const quarterHour = 15 * 60_000;
+const minute = 60_000;
+const baseTime = Math.floor(Date.now() / quarterHour) * quarterHour;
+const cycles: DurableCycleResult[] = [];
+
+for (let index = 0; index < CADENCE_SAMPLE_CYCLES; index += 1) {
+  const cycle = await runCycle(baseTime + index * minute, index === 0);
+  if (cycle.mode !== "test") throw new Error(`Cycle ${index + 1}: mode inattendu ${cycle.mode}.`);
+  if (index === 0 && !cycle.discovery) throw new Error("Le premier cycle doit être une Discovery réelle.");
+  if (index > 0 && cycle.discovery) throw new Error(`Cycle ${index + 1}: Discovery inattendue.`);
+
+  for (const store of cycle.stores) {
+    const discordMode = store.result?.evaluation?.discordDispatch.mode;
+    if (discordMode && discordMode !== "dry-run") {
+      throw new Error(`Discord non dry-run détecté pour ${store.store}.`);
+    }
+  }
+  cycles.push(cycle);
+  console.log(
+    `cycle=${index + 1}/${CADENCE_SAMPLE_CYCLES} discovery=${cycle.discovery} ` +
+    `stores=${cycle.stores.length} durableMs=${cycle.durableDurationMs} doRequests=${cycle.durableRequestCount}`
+  );
+}
+
+const budget = projectCadenceBudget(cycles);
+const report = {
+  generatedAt: new Date().toISOString(),
+  environment: "isolated-runtime-test",
+  discordMode: "dry-run",
+  schedulerMode: "disabled",
+  productionStateWrites: false,
+  cycles: cycles.map((cycle, index) => ({
+    index: index + 1,
+    scheduledTime: new Date(cycle.scheduledTime).toISOString(),
+    discovery: cycle.discovery,
+    durableDurationMs: cycle.durableDurationMs,
+    durableRequestCount: cycle.durableRequestCount,
+    pendingAuthorizedFeedStores: cycle.pendingAuthorizedFeedStores,
+    deferredDiscoveryStores: cycle.deferredDiscoveryStores,
+    stores: cycle.stores.map((store) => ({
+      store: store.store,
+      status: store.status,
+      durationMs: store.durationMs,
+      merchantDurationMs: store.merchantDurationMs,
+      backoffUntil: store.backoffUntil,
+      error: store.error,
+      degradedStores: store.result?.degradedStores ?? []
+    }))
+  })),
+  budget,
+  verdict: budget.pass ? "PASS" : "FAIL"
+};
+
+await writeFile("runtime-cadence-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
+console.log(JSON.stringify({ verdict: report.verdict, budget }, null, 2));
+
+if (!budget.pass) {
+  throw new Error(
+    `Budget Cloudflare refusé: ${budget.projectedGbSecondsPerDay.toFixed(2)} GB-s/j, ` +
+    `${budget.projectedDurableRequestsPerDay} requêtes DO/j.`
+  );
+}

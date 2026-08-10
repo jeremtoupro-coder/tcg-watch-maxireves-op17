@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tcg-watch-one-piece",
-  "main": "src/index.ts",
+  "main": "src/runtimeEntry.ts",
   "compatibility_date": "2026-06-27",
   "workers_dev": true,
   "observability": {
@@ -16,6 +16,8 @@
     "MONITORING_ENABLED": "false",
     "ACTIVE_STORES": "maxireves,oupi,pixelheart,fantasy-sphere,ludisphere,parkage,ultrajeux,playin,philibert,cultura,micromania,fnac,leclerc,carrefour,king-jouet,joueclub,amazon-fr,mystic-ambre,ludiworld,vegastore,otakuland",
     "WRITE_STATE": "false",
-    "DISCORD_MODE": "dry-run"
+    "DISCORD_MODE": "dry-run",
+    "SCHEDULER_MODE": "disabled",
+    "RUNTIME_TEST_MODE": "false"
   }
 }
