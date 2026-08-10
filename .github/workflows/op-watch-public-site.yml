@@ -56,7 +56,7 @@ jobs:
           --commit-hash="$GITHUB_SHA"
           --commit-message="OP Watch public landing"
 
-      - name: Verify interactive public beta and official calendar
+      - name: Verify interactive public service and official calendar
         shell: bash
         run: |
           url="https://${PAGES_PROJECT}.pages.dev/"
@@ -69,10 +69,10 @@ jobs:
                grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body" && \
                grep -q '"activeProducts"' <<<"$calendar"; then
               echo "PUBLIC_URL=$url" >> "$GITHUB_ENV"
-              echo "Interactive public beta ready: $url"
+              echo "Interactive public service ready: $url"
               exit 0
             fi
             sleep 3
           done
-          echo "Interactive public beta did not become reachable with expected content at $url" >&2
+          echo "Interactive public service did not become reachable with expected content at $url" >&2
           exit 1
