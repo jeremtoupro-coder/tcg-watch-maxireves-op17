@@ -1,6 +1,7 @@
 import { auditConnector } from "./audit";
 import { auditAuthorizedFeed } from "./authorizedFeed";
 import { auditParkagePublicCatalog } from "./parkagePublicCatalog";
+import { auditPhilibertPublicCatalog } from "./philibertPublicCatalog";
 import type { OfficialProduct } from "./opwatchV1";
 import type {
   ConnectorDefinition,
@@ -101,6 +102,15 @@ export async function auditStore(connector: ConnectorDefinition, env: Env, watch
   if (connector.key === "parkage") {
     return withOperationalStatus(
       await auditParkagePublicCatalog(connector),
+      connector,
+      env,
+      "public_structured_feed"
+    );
+  }
+
+  if (connector.key === "philibert") {
+    return withOperationalStatus(
+      await auditPhilibertPublicCatalog(connector, watchProducts),
       connector,
       env,
       "public_structured_feed"
