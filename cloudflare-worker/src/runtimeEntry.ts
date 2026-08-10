@@ -7,6 +7,7 @@ import {
   type RuntimeEnv
 } from "./durableMonitoring";
 import { CONNECTORS } from "./connectors";
+import { dispatchRuntimeHeartbeat } from "./heartbeat";
 import type { Env, StoreKey } from "./types";
 
 export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
@@ -122,9 +123,12 @@ export default {
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     const runtimeEnv = env as RuntimeEnv;
     if (runtimeEnv.SCHEDULER_MODE !== "live") return;
-    ctx.waitUntil(runDistributedMonitoringCycle(runtimeEnv, {
-      mode: "live",
-      scheduledTime: controller.scheduledTime
-    }).then(() => undefined));
+    ctx.waitUntil((async () => {
+      const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
+        mode: "live",
+        scheduledTime: controller.scheduledTime
+      });
+      await dispatchRuntimeHeartbeat(cycle, runtimeEnv);
+    })());
   }
 };
