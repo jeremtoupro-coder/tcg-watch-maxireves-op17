@@ -72,6 +72,7 @@ jobs:
       PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
       - name: Hard activation gate
+        working-directory: .
         shell: bash
         env:
           REQUESTED_CONFIRMATION: ${{ github.event_name == 'push' && 'ACTIVER OP WATCH LIVE' || inputs.confirmation }}
