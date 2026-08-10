@@ -11,10 +11,12 @@
     "monitor": "node --import tsx scripts/poll.ts",
     "generate-deploy-config": "node --import tsx scripts/generate-deploy-config.ts",
     "generate-runtime-test-config": "node --import tsx scripts/generate-runtime-test-config.ts",
+    "generate-production-config": "node --import tsx scripts/generate-production-config.ts",
     "derive-preview-audit-token": "node --import tsx scripts/derive-preview-audit-token.ts",
     "stabilize-preview-auth": "node --import tsx scripts/stabilize-preview-auth.ts",
     "smoke-preview": "node --import tsx scripts/smoke-preview.ts",
     "smoke-runtime": "node --import tsx scripts/smoke-runtime.ts",
+    "smoke-production": "node --import tsx scripts/smoke-production.ts",
     "audit-preview": "node --import tsx scripts/audit-preview.ts"
   },
   "devDependencies": {

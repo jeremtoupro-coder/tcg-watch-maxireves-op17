@@ -2,12 +2,16 @@ import previewWorker from "./index";
 import {
   CalendarCoordinatorDurableObject,
   StoreMonitorDurableObject,
+  assertRuntimeReadiness,
   runDistributedMonitoringCycle,
   type RuntimeEnv
 } from "./durableMonitoring";
+import { CONNECTORS } from "./connectors";
 import type { Env, StoreKey } from "./types";
 
 export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
+
+type ProductionProbeEnv = RuntimeEnv & { PRODUCTION_PROBE_MODE?: string };
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -80,10 +84,37 @@ async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response>
   }
 }
 
+async function productionReady(request: Request, env: ProductionProbeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+
+  try {
+    assertRuntimeReadiness(env, "live");
+    return json({
+      status: "ready",
+      mode: "live",
+      schedulerMode: env.SCHEDULER_MODE,
+      discordMode: env.DISCORD_MODE,
+      monitoringEnabled: env.MONITORING_ENABLED === "true",
+      stateWritesEnabled: env.WRITE_STATE === "true",
+      stores: CONNECTORS.map((connector) => connector.key),
+      automaticPolling: false,
+      note: "Sonde de readiness uniquement : aucun audit marchand n'est exécuté par cette route."
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (new URL(request.url).pathname === "/runtime-test") {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/runtime-test") {
       return runtimeTest(request, env as RuntimeEnv);
+    }
+    if (pathname === "/runtime-ready") {
+      return productionReady(request, env as ProductionProbeEnv);
     }
     return previewWorker.fetch(request, env);
   },
