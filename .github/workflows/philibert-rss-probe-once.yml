@@ -21,28 +21,25 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "test: probe Philibert One Piece RSS categories" ]
+          [ "${{ github.event.head_commit.message }}" = "test: inspect Philibert OP17 RSS item" ]
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Deploy ephemeral Cloudflare probe
+      - name: Inspect one OP17 RSS item from Cloudflare
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/philibert-probe && cd /tmp/philibert-probe
           cat > worker.js <<'JS'
-          function clean(value) { return String(value||'').replace(/<!\[CDATA\[|\]\]>/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(); }
-          function inspect(text) {
-            const items=text.match(/<item\b[\s\S]*?<\/item>/gi)||[];
-            return {itemCount:items.length,titles:items.slice(0,20).map(item=>clean((item.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]).slice(0,180)),links:items.slice(0,8).map(item=>clean((item.match(/<link[^>]*>([\s\S]*?)<\/link>/i)||[])[1]).slice(0,240))};
-          }
+          function clean(value) { return String(value||'').replace(/<!\[CDATA\[|\]\]>/g,'').replace(/\s+/g,' ').trim(); }
           export default { async fetch() {
-            const ids=[15860,17214,17215,119]; const out=[];
-            for(const id of ids){
-              const url=`https://www.philibertnet.com/modules/feeder/rss.php?id_category=${id}`; const started=Date.now();
-              try{const res=await fetch(url,{headers:{'User-Agent':'OPWatch/1.0 (+personal read-only stock monitor)','Accept':'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.4','Accept-Language':'fr-FR,fr;q=0.9'}}); const text=await res.text(); const info=inspect(text); out.push({id,url,status:res.status,durationMs:Date.now()-started,contentType:res.headers.get('content-type'),length:text.length,hasOnePiece:/one[\s-]*piece/i.test(text),hasOP17:/OP[-\s]?17/i.test(text),...info});}catch(e){out.push({id,url,status:'fetch-error',error:String(e)});}
-            }
-            return Response.json(out,{headers:{'cache-control':'no-store'}});
+            const url='https://www.philibertnet.com/modules/feeder/rss.php?id_category=15860';
+            const res=await fetch(url,{headers:{'User-Agent':'OPWatch/1.0 (+personal read-only stock monitor)','Accept':'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.4','Accept-Language':'fr-FR,fr;q=0.9'}});
+            const text=await res.text();
+            const items=text.match(/<item\b[\s\S]*?<\/item>/gi)||[];
+            const item=items.find(x=>/OP[-\s]?17/i.test(x))||items[0]||'';
+            const tags=[...item.matchAll(/<([A-Za-z0-9:_-]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)].map(m=>({tag:m[1],value:clean(m[2]).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,800)}));
+            return Response.json({status:res.status,contentType:res.headers.get('content-type'),itemCount:items.length,tags,rawSanitized:clean(item).slice(0,3500)},{headers:{'cache-control':'no-store'}});
           }};
           JS
           cat > wrangler.jsonc <<'JSON'
@@ -52,5 +49,5 @@ jobs:
           sleep 10
           url="$(grep -Eo 'https://[^ ]+workers\.dev' /tmp/deploy.log | tail -1)"
           curl -fsS --retry 4 --retry-delay 2 --max-time 180 "$url" | tee /tmp/result.json
-          node -e "const x=require('/tmp/result.json'); console.log(JSON.stringify(x,null,2)); if(!Array.isArray(x)||x.length!==4)process.exit(1)"
+          node -e "const x=require('/tmp/result.json'); console.log(JSON.stringify(x,null,2)); if(x.status!==200||!x.itemCount)process.exit(1)"
           npx wrangler@4.120.0 delete --config wrangler.jsonc --force || true
