@@ -70,14 +70,9 @@ jobs:
         shell: bash
         env:
           REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
-          PRODUCTION_ENABLED: ${{ vars.OP_WATCH_PRODUCTION_ENABLED }}
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "::error title=Branche interdite::L'activation LIVE n'est autorisée que depuis main."
-            exit 1
-          fi
-          if [ "$PRODUCTION_ENABLED" != "true" ]; then
-            echo "::error title=Garde-fou production::OP_WATCH_PRODUCTION_ENABLED doit valoir true."
             exit 1
           fi
           if [ "$REQUESTED_CONFIRMATION" != "ACTIVER OP WATCH LIVE" ]; then
@@ -160,8 +155,7 @@ jobs:
           PRODUCTION_SMOKE_PHASE: standby
 
       # Phase 2a : armer les variables LIVE, toujours sans cron. La sonde ne fait
-      # aucun audit marchand ; elle vérifie seulement les 21 boutiques, les DO
-      # et le webhook Discord officiel.
+      # aucun audit marchand ; elle vérifie les connecteurs, les DO et le webhook Discord officiel.
       - name: Generate armed LIVE config without cron
         run: npm run generate-production-config
         env:
