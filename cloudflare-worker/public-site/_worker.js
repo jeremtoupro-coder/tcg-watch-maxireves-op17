@@ -1,3 +1,5 @@
+const PRODUCTION_API = "https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -40,6 +42,26 @@ export default {
       } catch {
         return Response.json({ error: "Calendrier officiel temporairement indisponible." }, { status: 502 });
       }
+    }
+
+    if (url.pathname.startsWith("/cockpit/api/")) {
+      const upstreamUrl = new URL(url.pathname + url.search, PRODUCTION_API);
+      const headers = new Headers(request.headers);
+      headers.set("origin", "https://op-watch-tcg-fr.pages.dev");
+      headers.set("host", new URL(PRODUCTION_API).host);
+      const upstream = await fetch(upstreamUrl.toString(), {
+        method: request.method,
+        headers,
+        body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+        redirect: "manual"
+      });
+      const responseHeaders = new Headers(upstream.headers);
+      responseHeaders.set("cache-control", "no-store");
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: responseHeaders
+      });
     }
 
     const asset = await env.ASSETS.fetch(request);
