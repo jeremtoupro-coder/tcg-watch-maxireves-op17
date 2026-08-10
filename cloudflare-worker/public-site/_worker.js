@@ -42,6 +42,16 @@ export default {
       }
     }
 
-    return env.ASSETS.fetch(request);
+    const asset = await env.ASSETS.fetch(request);
+    const contentType = asset.headers.get("content-type") || "";
+    if (!contentType.includes("text/html")) return asset;
+
+    const html = await asset.text();
+    const headers = new Headers(asset.headers);
+    headers.delete("content-length");
+    return new Response(
+      html.replace("</body>", '<script src="/catalog.js" defer></script></body>'),
+      { status: asset.status, statusText: asset.statusText, headers }
+    );
   }
 };
