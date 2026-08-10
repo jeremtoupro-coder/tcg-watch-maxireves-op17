@@ -50,6 +50,14 @@ function previousPrice(match: AlertMatch): string | undefined {
   return match.change.previous?.priceText;
 }
 
+function sellerLabel(match: AlertMatch): string | undefined {
+  const candidate = match.change.candidate;
+  if (candidate.store === "leclerc") {
+    return candidate.seller?.trim() || "Vendeur non confirmé (Marketplace E.Leclerc)";
+  }
+  return candidate.seller?.trim() || undefined;
+}
+
 export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
   const candidate = match.change.candidate;
   const eventLabel = EVENT_LABELS[match.change.type];
@@ -57,6 +65,7 @@ export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
   const oldPrice = previousPrice(match);
   const priceValue = oldPrice && oldPrice !== price ? `${oldPrice} → ${price}` : price;
   const format = candidate.format ?? detectProductFormat(`${candidate.title} ${candidate.url}`);
+  const seller = sellerLabel(match);
   const detectedAt = new Intl.DateTimeFormat("fr-FR", {
     dateStyle: "short",
     timeStyle: "medium",
@@ -72,7 +81,7 @@ export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
       { name: "🧩 Format", value: FORMAT_LABELS[format], inline: true },
       { name: "💰 Prix", value: priceValue, inline: true },
       { name: "🏪 Boutique", value: candidate.storeName, inline: true },
-      ...(candidate.seller ? [{ name: "✅ Vendeur", value: candidate.seller, inline: true }] : []),
+      ...(seller ? [{ name: "✅ Vendeur", value: seller, inline: true }] : []),
       { name: "📦 Disponibilité", value: AVAILABILITY_LABELS[candidate.availability], inline: true },
       { name: "🇫🇷 Langue", value: candidate.language, inline: true },
       { name: "🕒 Détecté", value: detectedAt, inline: true },
