@@ -26,7 +26,7 @@ const PAGE_2 = `
 `;
 
 describe("calendrier officiel français", () => {
-  it("parse les dates françaises exactes et ignore un mois sans jour", () => {
+  it("garde le parseur strict sur les dates exactes", () => {
     expect(parseOfficialCatalog(PAGE_1).map((product) => [product.id, product.label, product.releaseDate]))
       .toEqual([[
         "OP-17",
@@ -56,7 +56,7 @@ describe("calendrier officiel français", () => {
       .toThrow(/pagination officielle invalide/i);
   });
 
-  it("charge toutes les pages officielles et calcule J-120/J+30", async () => {
+  it("charge toutes les pages et active un mois seul au premier du mois", async () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       return new Response(url.searchParams.get("page") === "2" ? PAGE_2 : PAGE_1, { status: 200 });
@@ -72,12 +72,17 @@ describe("calendrier officiel français", () => {
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(calendar.sourcePages).toBe(2);
-    expect(calendar.catalogProducts.map((product) => product.id)).toEqual(["ST-31", "OP-17"]);
+    expect(calendar.catalogProducts.map((product) => product.id)).toEqual(["ST-31", "OP-17", "EB-05"]);
     expect(calendar.catalogProducts.map((product) => product.label)).toEqual([
       "DECK POUR DÉBUTANT [ST-31]",
-      "BOOSTER -LES GUERRIERS LES PLUS PUISSANTS- [OP-17]"
+      "BOOSTER -LES GUERRIERS LES PLUS PUISSANTS- [OP-17]",
+      "EB-05"
     ]);
-    expect(calendar.activeProducts.map((product) => product.id)).toEqual(["ST-31", "OP-17"]);
+    expect(calendar.catalogProducts.find((product) => product.id === "EB-05")).toMatchObject({
+      releaseDate: "2026-10-01",
+      releaseDatePrecision: "month_assumed_first"
+    });
+    expect(calendar.activeProducts.map((product) => product.id)).toEqual(["ST-31", "OP-17", "EB-05"]);
     expect(calendar.activeProducts.every((product) => product.watchWindow.active)).toBe(true);
   });
 
@@ -96,7 +101,7 @@ describe("calendrier officiel français", () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(calendar.catalogProducts.map((product) => product.id)).toEqual(["OP-17"]);
+    expect(calendar.catalogProducts.map((product) => product.id)).toEqual(["OP-17", "EB-05"]);
   });
 
   it("ne réessaie pas une page de challenge : aucune tentative de contournement", async () => {
