@@ -13,53 +13,22 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 5
     steps:
-      - name: Locate Parkage public catalog endpoint in frontend bundles
+      - name: Decode Parkage public search URL builder
         shell: bash
         run: |
           set -euo pipefail
-          page="$(mktemp)"
+          js="$(mktemp)"
           curl -fsSL --max-time 20 \
             -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' \
-            'https://www.parkage.com/fr/one-piece-card-game?language%5B%5D=fr' -o "$page"
-          python3 - "$page" > /tmp/scripts.txt <<'PY'
-          import re,sys,html
-          raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-          srcs=[]
-          for m in re.finditer(r'<script\b[^>]*\bsrc=["\']([^"\']+)["\']',raw,re.I):
-              src=html.unescape(m.group(1))
-              if '/_next/' in src and src not in srcs: srcs.append(src)
-          for src in srcs: print(src)
-          PY
-          echo "next_scripts=$(wc -l < /tmp/scripts.txt)"
-          n=0
-          while IFS= read -r src; do
-            n=$((n+1)); [ "$n" -le 80 ] || break
-            case "$src" in
-              http*) url="$src" ;;
-              /*) url="https://www.parkage.com${src}" ;;
-              *) url="https://www.parkage.com/${src}" ;;
-            esac
-            js="$(mktemp)"
-            if ! curl -fsSL --max-time 15 -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' "$url" -o "$js"; then rm -f "$js"; continue; fi
-            if grep -Eqi 'strapiUrl|category_id|back\.parkage\.com|queryString|language.*category|products.*category' "$js"; then
-              echo "===== BUNDLE $url ====="
-              python3 - "$js" <<'PY'
+            'https://www.parkage.com/_next/static/chunks/428-e973a7c8ca77e981.js' -o "$js"
+          python3 - "$js" <<'PY'
           import re,sys
           raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-          pats=[r'back\.parkage\.com',r'strapiUrl',r'category_id',r'queryString',r'/api/',r'products?',r'recherche']
-          out=[]
-          for pat in pats:
-              for m in re.finditer(pat,raw,re.I):
-                  s=raw[max(0,m.start()-700):min(len(raw),m.end()+1200)]
-                  s=re.sub(r'\s+',' ',s)
-                  if s not in out: out.append(s)
-                  if len(out)>=15: break
-              if len(out)>=15: break
-          for i,s in enumerate(out): print(f'snippet[{i}]={s[:2200]}')
+          for needle in ['30625:function','function Un','Un:function','yX:function','/api/parkage/search']:
+              print('====',needle,'====')
+              for m in list(re.finditer(re.escape(needle),raw))[:10]:
+                  print(raw[max(0,m.start()-500):min(len(raw),m.end()+6500)])
           PY
-            fi
-            rm -f "$js"
-          done < /tmp/scripts.txt
-          rm -f "$page" /tmp/scripts.txt
+          rm -f "$js"
