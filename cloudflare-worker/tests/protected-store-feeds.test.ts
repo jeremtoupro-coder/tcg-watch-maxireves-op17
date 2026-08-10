@@ -34,10 +34,13 @@ describe("remédiation des boutiques protégées", () => {
     expect(ludisphere?.authorizedFeedEnv).toBeUndefined();
   });
 
-  it("maintient Otakuland en découverte uniquement", () => {
+  it("active Otakuland sur sa vraie boutique TCG", () => {
     const otakuland = CONNECTORS.find((connector) => connector.key === "otakuland");
-    expect(otakuland?.commercialAlertsEnabled).toBe(false);
-    expect(configuredStoreStatus(otakuland!, {})).toBe("discovery_only");
+    expect(otakuland).toBeDefined();
+    expect(otakuland?.commercialAlertsEnabled).not.toBe(false);
+    expect(configuredStoreStatus(otakuland!, {})).toBe("active_fast_watch");
+    expect(otakuland?.sources).toContain("https://otakuland-mangapassion.com/catalogue/310073-TCG-One-Piece");
+    expect(otakuland?.sources.some((source) => source.includes("otakuland.fr"))).toBe(false);
   });
 
   it("classe un marchand protégé sans secret en attente de flux sans requête réseau", async () => {
