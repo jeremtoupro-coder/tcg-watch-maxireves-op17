@@ -11,6 +11,13 @@ import { buildActiveWatchConfig, candidateForActiveProducts } from "./opwatchV1"
 import { loadOfficialCalendar } from "./officialCalendar";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
+type HealthRuntimeEnv = Env & {
+  STORE_MONITORS?: DurableObjectNamespace;
+  CALENDAR_COORDINATOR?: DurableObjectNamespace;
+  SCHEDULER_MODE?: "disabled" | "live";
+  RUNTIME_TEST_MODE?: string;
+};
+
 const CALENDAR_PREVIEW_CACHE_MS = 15 * 60 * 1000;
 let calendarPreviewCache: {
   expiresAt: number;
@@ -35,11 +42,24 @@ function selectRequestedConnectors(requestedStore: StoreKey | null): ConnectorDe
     : CONNECTORS;
 }
 
+function runtimeEnv(env: Env): HealthRuntimeEnv {
+  return env as HealthRuntimeEnv;
+}
+
+function durableStatePresent(env: Env): boolean {
+  const runtime = runtimeEnv(env);
+  return Boolean(env.TCG_STATE) || Boolean(runtime.STORE_MONITORS && runtime.CALENDAR_COORDINATOR);
+}
+
 function isLive(env: Env): boolean {
+  const runtime = runtimeEnv(env);
   return env.MONITORING_ENABLED === "true" &&
     env.WRITE_STATE === "true" &&
     env.DISCORD_MODE === "live" &&
-    Boolean(env.TCG_STATE);
+    runtime.SCHEDULER_MODE === "live" &&
+    runtime.RUNTIME_TEST_MODE !== "true" &&
+    Boolean(runtime.STORE_MONITORS) &&
+    Boolean(runtime.CALENDAR_COORDINATOR);
 }
 
 async function runAudits(connectors: ConnectorDefinition[], env: Env) {
@@ -140,23 +160,31 @@ export default {
     }
 
     const url = new URL(request.url);
+    const runtime = runtimeEnv(env);
     const live = isLive(env);
     const mode = live ? "LIVE" : "SAFE_PREVIEW";
+    const statePresent = durableStatePresent(env);
+    const automaticPolling = live && runtime.SCHEDULER_MODE === "live";
 
     if (url.pathname === "/") {
       return jsonResponse({
         project: "OP Watch — moteur d'alertes One Piece TCG",
         deployment: mode,
         runtime: {
-          cron: false,
+          cron: automaticPolling,
           monitoringEnabled: env.MONITORING_ENABLED === "true",
           discordMode: env.DISCORD_MODE ?? "dry-run",
-          stateBindingPresent: Boolean(env.TCG_STATE),
+          schedulerMode: runtime.SCHEDULER_MODE ?? "disabled",
+          runtimeTestMode: runtime.RUNTIME_TEST_MODE === "true",
+          stateBindingPresent: statePresent,
+          stateBackend: runtime.STORE_MONITORS && runtime.CALENDAR_COORDINATOR
+            ? "durable_objects"
+            : env.TCG_STATE ? "kv" : "none",
           stateWritesEnabled: env.WRITE_STATE === "true",
           authenticatedAuditEnabled: env.ALLOW_PUBLIC_AUDIT === "true" && Boolean(env.PREVIEW_AUDIT_TOKEN),
-          automaticPolling: false,
+          automaticPolling,
           activeStores: parseActiveStores(env.ACTIVE_STORES),
-          schedule: live ? "external scheduler only" : "disabled",
+          schedule: automaticPolling ? "Cloudflare cron every minute" : "disabled",
           authorizedFeeds: authorizedFeedReadiness(env)
         },
         v1: {
@@ -191,7 +219,14 @@ export default {
         status: "ok",
         mode,
         monitoringEnabled: env.MONITORING_ENABLED === "true",
-        stateBindingPresent: Boolean(env.TCG_STATE),
+        discordMode: env.DISCORD_MODE ?? "dry-run",
+        schedulerMode: runtime.SCHEDULER_MODE ?? "disabled",
+        runtimeTestMode: runtime.RUNTIME_TEST_MODE === "true",
+        stateBindingPresent: statePresent,
+        stateBackend: runtime.STORE_MONITORS && runtime.CALENDAR_COORDINATOR
+          ? "durable_objects"
+          : env.TCG_STATE ? "kv" : "none",
+        automaticPolling,
         authorizedFeeds: authorizedFeedReadiness(env),
         stores: storeReadiness(env),
         checkedAt: new Date().toISOString()
