@@ -44,6 +44,24 @@ async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response>
   if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
 
   const url = new URL(request.url);
+  if (url.searchParams.get("probe") === "auth") {
+    const safe = env.SCHEDULER_MODE === "disabled" &&
+      env.DISCORD_MODE === "dry-run" &&
+      env.MONITORING_ENABLED === "true" &&
+      env.WRITE_STATE === "true" &&
+      Boolean(env.RUNTIME_TEST_RUN_ID?.trim());
+    if (!safe) {
+      return json({ error: "Runtime test non conforme aux garde-fous d'isolation." }, 503);
+    }
+    return json({
+      status: "ready",
+      mode: "test",
+      schedulerMode: "disabled",
+      discordMode: "dry-run",
+      productionStateWrites: false
+    });
+  }
+
   const rawTime = url.searchParams.get("time");
   const scheduledTime = rawTime ? Number(rawTime) : Date.now();
   if (!Number.isFinite(scheduledTime)) return json({ error: "Paramètre time invalide." }, 400);

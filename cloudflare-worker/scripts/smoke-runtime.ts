@@ -9,17 +9,106 @@ const baseUrl = process.env.RUNTIME_TEST_URL?.replace(/\/$/, "");
 const token = process.env.PREVIEW_AUDIT_TOKEN?.trim();
 if (!baseUrl || !token) throw new Error("RUNTIME_TEST_URL et PREVIEW_AUDIT_TOKEN sont obligatoires.");
 
+function compactDiagnostic(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
+async function waitForRuntime(): Promise<void> {
+  let consecutive = 0;
+  let lastDiagnostic = "aucune réponse";
+
+  for (let attempt = 1; attempt <= 30; attempt += 1) {
+    const url = new URL(`${baseUrl}/runtime-test`);
+    url.searchParams.set("probe", "auth");
+    url.searchParams.set("nonce", `${Date.now()}-${attempt}`);
+    try {
+      const response = await fetch(url, {
+        headers: { authorization: `Bearer ${token}` }
+      });
+      const raw = await response.text();
+      let body: {
+        status?: string;
+        mode?: string;
+        schedulerMode?: string;
+        discordMode?: string;
+        productionStateWrites?: boolean;
+      } | undefined;
+      try {
+        body = JSON.parse(raw) as typeof body;
+      } catch {
+        body = undefined;
+      }
+
+      const ready = response.status === 200 &&
+        body?.status === "ready" &&
+        body.mode === "test" &&
+        body.schedulerMode === "disabled" &&
+        body.discordMode === "dry-run" &&
+        body.productionStateWrites === false;
+
+      if (ready) {
+        consecutive += 1;
+        lastDiagnostic = `runtime sûr ${consecutive}/4`;
+      } else {
+        consecutive = 0;
+        lastDiagnostic = `HTTP ${response.status} ${body ? "JSON incohérent" : `non-JSON: ${compactDiagnostic(raw)}`}`;
+      }
+    } catch (error) {
+      consecutive = 0;
+      lastDiagnostic = error instanceof Error ? error.message : String(error);
+    }
+
+    if (consecutive >= 4) {
+      console.log(`runtime-stable attempts=${attempt}`);
+      return;
+    }
+    if (attempt < 30) await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+
+  throw new Error(`Runtime test non stabilisé: ${lastDiagnostic}`);
+}
+
 async function runCycle(time: number, discovery: boolean): Promise<DurableCycleResult> {
   const url = new URL(`${baseUrl}/runtime-test`);
   url.searchParams.set("time", String(time));
   if (discovery) url.searchParams.set("discovery", "true");
-  const response = await fetch(url, {
-    headers: { authorization: `Bearer ${token}` }
-  });
-  const payload = await response.json() as DurableCycleResult & { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? `Runtime test HTTP ${response.status}`);
-  return payload;
+
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const raw = await response.text();
+    let payload: (DurableCycleResult & { error?: string }) | undefined;
+    try {
+      payload = JSON.parse(raw) as DurableCycleResult & { error?: string };
+    } catch {
+      payload = undefined;
+    }
+
+    if (!payload) {
+      lastError = new Error(
+        `Runtime test HTTP ${response.status} non-JSON ` +
+        `(${response.headers.get("content-type") ?? "type inconnu"}): ${compactDiagnostic(raw)}`
+      );
+      if (response.status >= 500 && attempt < 3) {
+        console.warn(`[smoke-runtime] réponse plateforme transitoire ${attempt}/3: HTTP ${response.status}`);
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        continue;
+      }
+      throw lastError;
+    }
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? `Runtime test HTTP ${response.status}: ${compactDiagnostic(raw)}`);
+    }
+    return payload;
+  }
+
+  throw lastError ?? new Error("Runtime test sans réponse exploitable.");
 }
+
+await waitForRuntime();
 
 const quarterHour = 15 * 60_000;
 const minute = 60_000;
