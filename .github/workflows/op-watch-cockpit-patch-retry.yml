@@ -1,0 +1,52 @@
+name: OP Watch Cockpit Runtime Wiring Retry
+
+on:
+  push:
+    branches: [op-watch-cockpit-v1]
+    paths:
+      - .github/workflows/op-watch-cockpit-patch-retry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: op-watch-cockpit-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Apply deterministic patches and type fix
+        run: |
+          python3 cloudflare-worker/scripts/apply-cockpit-patches.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('cloudflare-worker/src/cockpitApi.ts')
+          t=p.read_text()
+          old='''        status: "pending"\n      }].slice(-50);'''
+          new='''        status: "pending" as const\n      }].slice(-50);'''
+          if old not in t: raise SystemExit('pending type target not found')
+          p.write_text(t.replace(old,new,1))
+          PY
+      - name: Validate
+        working-directory: cloudflare-worker
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npx wrangler deploy --dry-run
+      - name: Commit patched runtime
+        run: |
+          git config user.name "op-watch-cockpit-bot"
+          git config user.email "op-watch-cockpit-bot@users.noreply.github.com"
+          git add cloudflare-worker/src
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: wire cockpit controls into runtime"
+          git push origin HEAD:op-watch-cockpit-v1
