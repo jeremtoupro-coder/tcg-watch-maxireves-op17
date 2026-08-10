@@ -81,6 +81,42 @@ describe("calendrier officiel français", () => {
     expect(calendar.activeProducts.every((product) => product.watchWindow.active)).toBe(true);
   });
 
+  it("réessaie une seule fois une panne HTTP transitoire de la source officielle", async () => {
+    const validSinglePage = PAGE_1.replace("1 / 2", "1 / 1");
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("service unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response(validSinglePage, { status: 200 })) as typeof fetch;
+
+    const calendar = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-08-09T12:00:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(calendar.catalogProducts.map((product) => product.id)).toEqual(["OP-17"]);
+  });
+
+  it("ne réessaie pas une page de challenge : aucune tentative de contournement", async () => {
+    const challenge = `
+      <html><head><title>Just a moment...</title></head><body>
+        ONE PIECE CARD GAME PRODUITS OP-17
+      </body></html>
+    `;
+    const fetcher = vi.fn(async () => new Response(challenge, { status: 200 })) as typeof fetch;
+
+    await expect(loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      daysBefore: 120,
+      daysAfter: 30,
+      fetcher
+    })).rejects.toThrow(/challenge/i);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("réutilise le cache 15 minutes sans requête ni nouvelle écriture", async () => {
     const store = new MemoryStateStore({ writable: true });
     const fetcher = vi.fn(async () => new Response(PAGE_1.replace("1 / 2", "1 / 1"), { status: 200 })) as typeof fetch;

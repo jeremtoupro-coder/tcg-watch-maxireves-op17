@@ -10,7 +10,9 @@ import type { StateStore } from "./state";
 const CACHE_KEY = "official-calendar:fr:v1";
 const CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const MAX_PAGES = 20;
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 25_000;
+const MAX_FETCH_ATTEMPTS = 2;
+const TRANSIENT_RETRY_DELAY_MS = 750;
 
 export interface OfficialCalendarSnapshot {
   source: string;
@@ -112,7 +114,14 @@ function parseCachedCalendar(raw?: string): CachedCalendar | undefined {
   }
 }
 
-async function fetchPage(fetcher: typeof fetch, url: string): Promise<string> {
+function isTransientCalendarError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError" || error.name === "TimeoutError" || error.name === "TypeError") return true;
+  return /Calendrier officiel HTTP (?:408|425|429|5\d\d)\b/.test(error.message) ||
+    /operation was aborted|network|fetch failed|connection reset|timed out/i.test(error.message);
+}
+
+async function fetchPageOnce(fetcher: typeof fetch, url: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -137,6 +146,20 @@ async function fetchPage(fetcher: typeof fetch, url: string): Promise<string> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchPage(fetcher: typeof fetch, url: string): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetchPageOnce(fetcher, url);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientCalendarError(error) || attempt === MAX_FETCH_ATTEMPTS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAY_MS));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function loadOfficialCalendar(options: CalendarOptions): Promise<OfficialCalendarSnapshot> {
