@@ -15,53 +15,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Inspect public Parkage language metadata
+      - name: Extract French One Piece products from Parkage category payload
         shell: bash
         run: |
           set -euo pipefail
-          urls=(
-            'https://www.parkage.com/fr/one-piece-card-game?language%5B%5D=fr'
-            'https://www.parkage.com/fr/1116905-one-piece-card-game-starter-deck-st-33'
-            'https://www.parkage.com/fr/1116906-one-piece-card-game-starter-deck-st-34'
-            'https://www.parkage.com/fr/1116907-one-piece-card-game-starter-deck-st-35'
-            'https://www.parkage.com/fr/1116908-one-piece-card-game-starter-deck-st-36'
-          )
-          for url in "${urls[@]}"; do
-            echo "===== ${url} ====="
-            file="$(mktemp)"
-            curl -fsSL --max-time 20 \
-              -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' \
-              -H 'Accept-Language: fr-FR,fr;q=0.9,en;q=0.6' \
-              "$url" -o "$file"
-            echo "bytes=$(wc -c < "$file")"
-            python3 - "$file" <<'PY'
+          url='https://www.parkage.com/fr/one-piece-card-game?language%5B%5D=fr'
+          file="$(mktemp)"
+          curl -fsSL --max-time 20 \
+            -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' \
+            -H 'Accept-Language: fr-FR,fr;q=0.9,en;q=0.6' \
+            "$url" -o "$file"
+          echo "bytes=$(wc -c < "$file")"
+          python3 - "$file" <<'PY'
           import re, sys, html
           raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-          def clean(s):
-              return re.sub(r'\s+',' ',html.unescape(re.sub(r'<[^>]+>',' ',s))).strip()
-          title=re.search(r'<title\b[^>]*>(.*?)</title>',raw,re.I|re.S)
-          h1=re.search(r'<h1\b[^>]*>(.*?)</h1>',raw,re.I|re.S)
-          print('title=',clean(title.group(1))[:500] if title else '')
-          print('h1=',clean(h1.group(1))[:500] if h1 else '')
-          # Only print non-secret snippets around language/flag markers.
-          patterns=[r'fran[cç]ais',r'anglais',r'japonais',r'language',r'langue',r'flag',r'france',r'japan',r'english']
-          hits=[]
-          lower=raw.lower()
-          for pat in patterns:
-              for m in re.finditer(pat,lower,re.I):
-                  snippet=clean(raw[max(0,m.start()-180):min(len(raw),m.end()+260)])
-                  if snippet and snippet not in hits:
-                      hits.append(snippet)
-                  if len(hits)>=30: break
-              if len(hits)>=30: break
-          for i,s in enumerate(hits): print(f'hit[{i}]={s[:700]}')
-          # List likely public XHR/API URLs embedded in page source.
-          found=[]
-          for m in re.finditer(r'https?://[^"\'<> ]+|/[A-Za-z0-9_?&=%./-]*(?:ajax|api|search|product|catalog)[A-Za-z0-9_?&=%./-]*', raw, re.I):
-              v=html.unescape(m.group(0))[:500]
-              if v not in found: found.append(v)
-              if len(found)>=40: break
-          for i,v in enumerate(found): print(f'endpoint[{i}]={v}')
+          # Next.js streams escaped JSON chunks. Decode common escapes enough to inspect product payloads.
+          decoded=html.unescape(raw)
+          decoded=decoded.replace('\\u0026','&').replace('\\u0027',"'").replace('\\u003c','<').replace('\\u003e','>')
+          decoded=decoded.replace('\\"','"').replace('\\/','/')
+          for ref in ['ST-31','ST-32','ST-33','ST-34','ST-35','ST-36','OP-17']:
+              print(f'===== {ref} =====')
+              matches=list(re.finditer(re.escape(ref), decoded, re.I))
+              print('occurrences=',len(matches))
+              seen=[]
+              for m in matches[:30]:
+                  s=decoded[max(0,m.start()-900):min(len(decoded),m.end()+1500)]
+                  s=re.sub(r'\s+',' ',s)
+                  # Keep snippets containing identifiers/title/language rather than whole page chrome.
+                  if s not in seen:
+                      seen.append(s)
+              for i,s in enumerate(seen[:12]): print(f'snippet[{i}]={s[:2400]}')
+          # Extract all Parkage product-looking URLs that carry tracked references.
+          urls=[]
+          for m in re.finditer(r'(?:https://www\.parkage\.com)?/fr/\d{6,}-[^"\\<> ]+', decoded, re.I):
+              u=m.group(0).rstrip('),.;')
+              if re.search(r'\b(?:OP|EB|PRB|ST|DP|TS)[-_ ]?\d{1,2}\b',u,re.I) and u not in urls:
+                  urls.append(u)
+          print('===== PRODUCT URLS =====')
+          for u in urls[:100]: print(u)
           PY
-            rm -f "$file"
-          done
+          rm -f "$file"
