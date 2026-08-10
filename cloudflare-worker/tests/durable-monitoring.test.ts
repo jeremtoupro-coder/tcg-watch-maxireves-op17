@@ -75,6 +75,17 @@ describe("Fast Watch Durable Objects à budget borné", () => {
     expect(budget.pass).toBe(true);
   });
 
+  it("refuse un PASS si l'échantillon n'a pas exactement une Discovery et quatorze Fast Watch", () => {
+    const incomplete = Array.from({ length: CADENCE_SAMPLE_CYCLES - 1 }, () => ({
+      durableDurationMs: 1_000,
+      durableRequestCount: 1
+    }));
+
+    const budget = projectCadenceBudget(incomplete);
+    expect(budget.sampleCycles).toBe(14);
+    expect(budget.pass).toBe(false);
+  });
+
   it("refuse le verdict PASS au-dessus du plafond opérationnel même sous le quota officiel", () => {
     const cycles = Array.from({ length: CADENCE_SAMPLE_CYCLES }, () => ({
       durableDurationMs: 50_000,

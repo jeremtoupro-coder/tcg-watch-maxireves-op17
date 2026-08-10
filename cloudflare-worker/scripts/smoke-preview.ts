@@ -2,23 +2,38 @@ export {};
 
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
 const auditToken = process.env.PREVIEW_AUDIT_TOKEN ?? "";
-const MAX_ATTEMPTS = 12;
-const REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_ATTEMPTS = 12;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_RETRY_DELAY_MS = 5_000;
 if (!baseUrl) throw new Error("PREVIEW_URL est obligatoire.");
 if (!auditToken) throw new Error("PREVIEW_AUDIT_TOKEN est obligatoire.");
+
+interface GetJsonOptions {
+  maxAttempts?: number;
+  requestTimeoutMs?: number;
+  retryDelayMs?: number;
+}
 
 async function getJson(
   path: string,
   expectedStatus = 200,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  options: GetJsonOptions = {}
 ): Promise<Record<string, any>> {
   const url = `${baseUrl}${path}`;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   let lastError: unknown;
 
   // Cloudflare peut mettre quelques secondes à propager une nouvelle version.
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+  // Le calendrier officiel est volontairement autorisé à prendre davantage de
+  // temps : loadOfficialCalendar peut charger plusieurs pages validées, chacune
+  // avec son propre timeout amont. On préfère attendre un résultat réel plutôt
+  // que multiplier des requêtes interrompues contre la source officielle.
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const response = await fetch(url, {
         signal: controller.signal,
@@ -40,7 +55,9 @@ async function getJson(
       return body;
     } catch (error) {
       lastError = error;
-      if (attempt < MAX_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 5_000));
+      const summary = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.warn(`[smoke-preview] ${path} tentative ${attempt}/${maxAttempts} échouée: ${summary}`);
+      if (attempt < maxAttempts) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     } finally {
       clearTimeout(timeout);
     }
@@ -82,7 +99,16 @@ if (!Array.isArray(config.stores) || config.stores.length !== 21) {
   throw new Error("La configuration déployée ne contient pas exactement 21 boutiques.");
 }
 
-const calendar = await getJson("/opwatch/v1/calendar");
+const calendar = await getJson(
+  "/opwatch/v1/calendar",
+  200,
+  {},
+  {
+    requestTimeoutMs: 120_000,
+    maxAttempts: 2,
+    retryDelayMs: 5_000
+  }
+);
 if (calendar.mode !== "SAFE_CALENDAR_PREVIEW") {
   throw new Error(`Mode calendrier inattendu: ${calendar.mode}`);
 }
