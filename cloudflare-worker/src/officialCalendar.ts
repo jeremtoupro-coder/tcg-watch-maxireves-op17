@@ -1,8 +1,9 @@
 import { stripHtml } from "./matching";
 import {
-  parseOfficialCatalog,
-  type OfficialProduct
-} from "./opwatchV1";
+  mergeOfficialCalendarProduct,
+  parseOfficialCatalogWithMonthFallback,
+  type OfficialCalendarProduct
+} from "./officialMonthFallback";
 import { computeOfficialWatchWindow, type OfficialWatchWindow } from "./officialWatchPolicy";
 import type { StateStore } from "./state";
 
@@ -17,8 +18,8 @@ export interface OfficialCalendarSnapshot {
   source: string;
   fetchedAt: string;
   sourcePages: number;
-  catalogProducts: OfficialProduct[];
-  activeProducts: Array<OfficialProduct & {
+  catalogProducts: OfficialCalendarProduct[];
+  activeProducts: Array<OfficialCalendarProduct & {
     watchWindow: OfficialWatchWindow;
   }>;
   cache: "hit" | "miss";
@@ -39,7 +40,7 @@ interface CachedCalendar {
   source: string;
   fetchedAt: string;
   sourcePages: number;
-  catalogProducts: OfficialProduct[];
+  catalogProducts: OfficialCalendarProduct[];
 }
 
 function challengeReason(html: string): string | undefined {
@@ -191,19 +192,13 @@ export async function loadOfficialCalendar(options: CalendarOptions): Promise<Of
     htmlPages.push(...await Promise.all(batch));
   }
 
-  const productsById = new Map<string, OfficialProduct>();
+  const productsById = new Map<string, OfficialCalendarProduct>();
   for (const html of htmlPages) {
-    for (const product of parseOfficialCatalog(html)) {
-      const existing = productsById.get(product.id);
-      if (existing && existing.releaseDate !== product.releaseDate) {
-        throw new Error(
-          `Dates officielles contradictoires pour ${product.id}: ` +
-          `${existing.releaseDate} / ${product.releaseDate}`
-        );
-      }
-      if (!existing) {
-        productsById.set(product.id, product);
-      }
+    for (const product of parseOfficialCatalogWithMonthFallback(html)) {
+      productsById.set(
+        product.id,
+        mergeOfficialCalendarProduct(productsById.get(product.id), product)
+      );
     }
   }
   const catalogProducts = [...productsById.values()]
