@@ -68,9 +68,18 @@ export default {
     const contentType = asset.headers.get("content-type") || "";
     if (!contentType.includes("text/html")) return asset;
 
-    const html = await asset.text();
+    let html = await asset.text();
     const headers = new Headers(asset.headers);
     headers.delete("content-length");
+
+    if (url.pathname === "/cockpit/" || url.pathname === "/cockpit/index.html") {
+      html = html.replace(
+        "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));",
+        "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));"
+      );
+      headers.set("cache-control", "no-store");
+    }
+
     return new Response(
       html.replace("</body>", '<script src="/catalog.js" defer></script></body>'),
       { status: asset.status, statusText: asset.statusText, headers }
