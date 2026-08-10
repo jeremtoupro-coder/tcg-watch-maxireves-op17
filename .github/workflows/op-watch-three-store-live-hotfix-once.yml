@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: verify three-store hotfix live final" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: prove three-store hotfix live" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -51,7 +51,7 @@ jobs:
           node - <<'NODE'
           const x=require('/tmp/ready.json');
           console.log(JSON.stringify(x,null,2));
-          if(x.readiness!=='PASS' && x.ready!==true) process.exit(1);
+          if(x.status!=='ready'||x.mode!=='live'||x.monitoringEnabled!==true||x.stateWritesEnabled!==true||x.discordMode!=='live'||x.schedulerMode!=='live') process.exit(1);
           NODE
       - name: Force real Discovery for Oupi Philibert Otakuland
         shell: bash
