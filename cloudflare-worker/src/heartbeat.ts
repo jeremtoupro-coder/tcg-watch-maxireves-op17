@@ -54,9 +54,10 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
 
 export async function dispatchRuntimeHeartbeat(
   cycle: DurableCycleResult,
-  env: RuntimeEnv
+  env: RuntimeEnv,
+  force = false
 ): Promise<{ attempted: number; sent: number; errors: string[] }> {
-  if (!isHeartbeatTick(cycle.scheduledTime)) return { attempted: 0, sent: 0, errors: [] };
+  if (!force && !isHeartbeatTick(cycle.scheduledTime)) return { attempted: 0, sent: 0, errors: [] };
   const result = await dispatchDiscordPayloads([buildRuntimeHeartbeatPayload(cycle)], env);
   return { attempted: result.attempted, sent: result.sent, errors: result.errors };
 }
