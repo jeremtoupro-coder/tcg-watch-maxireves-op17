@@ -1,0 +1,174 @@
+name: OP Watch Cockpit LIVE One-Shot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/op-watch-cockpit-live-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op-watch-production-activation
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy and prove cockpit end-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+      PAGES_URL: https://op-watch-tcg-fr.pages.dev
+      PAGES_PROJECT: op-watch-tcg-fr
+    steps:
+      - name: Hard one-shot gate
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/heads/main" ]
+          [ "$GITHUB_EVENT_NAME" = "push" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: deploy cockpit LIVE once" ]
+
+      - name: Checkout exact production revision
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+
+      - name: Validate exact cockpit code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npx wrangler deploy --dry-run
+          grep -q 'OP Watch Cockpit' public-site/cockpit/index.html
+          grep -q 'controllableProducts' src/cockpitApi.ts
+          grep -q 'HEARTBEAT_PARIS_HOURS = new Set(\[10, 22\])' src/heartbeat.ts
+          test ! -f ../.github/workflows/op-watch-cockpit-patch-once.yml
+          test ! -f ../.github/workflows/op-watch-cockpit-patch-retry.yml
+          test ! -f ../.github/workflows/op-watch-cockpit-finish-once.yml
+
+      - name: Verify credentials and derive private runtime token
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DISCORD_WEBHOOK_URL; do [ -n "${!name}" ] || exit 1; done
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Generate and deploy final LIVE Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRODUCTION_PHASE=live npm run generate-production-config
+          node - <<'NODE'
+          const c=require('./wrangler.production-live.generated.json');
+          const b=c.durable_objects?.bindings||[];
+          const ok=c.name==='tcg-watch-one-piece'&&c.vars.MONITORING_ENABLED==='true'&&c.vars.WRITE_STATE==='true'&&c.vars.DISCORD_MODE==='live'&&c.vars.SCHEDULER_MODE==='live'&&c.vars.RUNTIME_TEST_MODE==='false'&&b.length===2&&JSON.stringify(c.triggers?.crons)===JSON.stringify(['* * * * *']);
+          process.exit(ok?0:1);
+          NODE
+          npx wrangler deploy --config wrangler.production-live.generated.json
+
+      - name: Wait for cockpit backend LIVE
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 40); do
+            ready="$(curl -sS --max-time 15 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready?probe=cockpit-$attempt" || true)"
+            status="$(curl -sS --max-time 25 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" || true)"
+            if READY_JSON="$ready" STATUS_JSON="$status" node - <<'NODE'
+          try {
+            const r=JSON.parse(process.env.READY_JSON||'{}'); const s=JSON.parse(process.env.STATUS_JSON||'{}');
+            const ok=r.status==='ready'&&r.mode==='live'&&s.runtime?.live===true&&s.runtime?.runtimeTest===false&&Array.isArray(s.stores)&&s.stores.length===21&&JSON.stringify(s.runtime?.heartbeatParis)===JSON.stringify(['10:00','22:00'])&&Array.isArray(s.control?.languages)&&s.control.languages.includes('Français confirmé');
+            process.exit(ok?0:1);
+          } catch { process.exit(1); }
+          NODE
+            then echo "Cockpit backend LIVE PASS"; break; fi
+            if [ "$attempt" -eq 40 ]; then echo "$status"; exit 1; fi
+            sleep 2
+          done
+
+      - name: Verify cockpit refuses anonymous access
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /tmp/anon.json -w '%{http_code}' --max-time 15 "$PRODUCTION_URL/cockpit/api/status")"
+          [ "$code" = "401" ]
+
+      - name: Deploy neutral Pages cockpit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler pages deploy public-site \
+            --project-name="$PAGES_PROJECT" \
+            --branch=op-watch-v1-test \
+            --commit-hash="$GITHUB_SHA" \
+            --commit-message="OP Watch cockpit LIVE"
+
+      - name: Prove neutral cockpit page and proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 40); do
+            html="$(curl -fsSL --max-time 20 "$PAGES_URL/cockpit/" || true)"
+            anonymous="$(curl -sS -o /tmp/pages-anon.json -w '%{http_code}' --max-time 15 "$PAGES_URL/cockpit/api/status" || true)"
+            status="$(curl -sS --max-time 25 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PAGES_URL/cockpit/api/status" || true)"
+            if HTML="$html" ANON="$anonymous" STATUS_JSON="$status" node - <<'NODE'
+          try {
+            const s=JSON.parse(process.env.STATUS_JSON||'{}');
+            const ok=(process.env.HTML||'').includes('OP Watch Cockpit')&&process.env.ANON==='401'&&s.runtime?.live===true&&Array.isArray(s.stores)&&s.stores.length===21;
+            process.exit(ok?0:1);
+          } catch { process.exit(1); }
+          NODE
+            then echo "Neutral cockpit end-to-end PASS"; break; fi
+            if [ "$attempt" -eq 40 ]; then echo "Pages cockpit did not converge"; exit 1; fi
+            sleep 3
+          done
+
+      - name: Wait for real per-store telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 90); do
+            status="$(curl -fsS --max-time 25 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PAGES_URL/cockpit/api/status")"
+            if STATUS_JSON="$status" node - <<'NODE'
+          const s=JSON.parse(process.env.STATUS_JSON||'{}');
+          const t=s.totals||{};
+          const pending=(s.stores||[]).filter(x=>x.configuredStatus==='pending_authorized_feed').length;
+          const amazon=(s.stores||[]).find(x=>x.key==='amazon');
+          const ok=s.runtime?.live===true&&s.stores?.length===21&&pending===6&&Number(t.green)>=8&&amazon&&['red','green'].includes(amazon.level);
+          if(ok) console.log(JSON.stringify({totals:t,pending,amazon:{level:amazon.level,label:amazon.label,lastCheck:amazon.lastCheck}},null,2));
+          process.exit(ok?0:1);
+          NODE
+            then echo "Real store telemetry PASS"; exit 0; fi
+            sleep 2
+          done
+          echo "Per-store telemetry did not populate enough green stores" >&2
+          exit 1
+
+      - name: Independently prove Cloudflare still LIVE
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/tcg-watch-one-piece"
+          settings="$(curl -fsS --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api/settings")"
+          schedules="$(curl -fsS --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api/schedules")"
+          SETTINGS_JSON="$settings" SCHEDULES_JSON="$schedules" node - <<'NODE'
+          const s=JSON.parse(process.env.SETTINGS_JSON), c=JSON.parse(process.env.SCHEDULES_JSON); const b=s.result?.bindings||[]; const vars={}; for(const x of b) if(x.type==='plain_text') vars[x.name]=x.text??x.value; const rows=Array.isArray(c.result)?c.result:(c.result?.schedules||[]); const crons=rows.map(x=>x.cron).filter(Boolean); const names=new Set(b.map(x=>x.name)); const ok=vars.MONITORING_ENABLED==='true'&&vars.WRITE_STATE==='true'&&vars.DISCORD_MODE==='live'&&vars.SCHEDULER_MODE==='live'&&vars.RUNTIME_TEST_MODE==='false'&&crons.includes('* * * * *')&&names.has('DISCORD_WEBHOOK_URL')&&names.has('STORE_MONITORS')&&names.has('CALENDAR_COORDINATOR'); console.log(JSON.stringify({vars:{MONITORING_ENABLED:vars.MONITORING_ENABLED,WRITE_STATE:vars.WRITE_STATE,DISCORD_MODE:vars.DISCORD_MODE,SCHEDULER_MODE:vars.SCHEDULER_MODE,RUNTIME_TEST_MODE:vars.RUNTIME_TEST_MODE},crons,discordSecretPresent:names.has('DISCORD_WEBHOOK_URL')},null,2)); process.exit(ok?0:1);
+          NODE
