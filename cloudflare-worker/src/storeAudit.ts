@@ -69,6 +69,12 @@ function withOperationalStatus(
   };
 }
 
+function isPhilibertRssDiscovery(connector: ConnectorDefinition): boolean {
+  return connector.key === "philibert" && connector.sources.some((source) =>
+    /philibertnet\.com\/modules\/feeder\/rss\.php\?id_category=15860/i.test(source)
+  );
+}
+
 /**
  * Une boutique protégée peut basculer vers un flux produit obtenu auprès de
  * son programme d'affiliation / partenaire. L'URL reste un secret Cloudflare
@@ -108,7 +114,10 @@ export async function auditStore(connector: ConnectorDefinition, env: Env, watch
     );
   }
 
-  if (connector.key === "philibert") {
+  // En Discovery, le connecteur original contient le RSS officiel. En Fast
+  // Watch, monitor.ts remplace ses sources par les fiches directes qualifiées
+  // mises en cache : on ne relit alors surtout pas le RSS à chaque minute.
+  if (isPhilibertRssDiscovery(connector)) {
     return withOperationalStatus(
       await auditPhilibertPublicCatalog(connector, watchProducts),
       connector,
