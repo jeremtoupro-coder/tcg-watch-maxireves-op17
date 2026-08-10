@@ -174,10 +174,6 @@ export interface ConnectorDefinition {
   canonicalizeProductUrl?: (url: string) => string;
   maxConcurrency?: number;
   requestHeaders?: Record<string, string>;
-  /** Nombre de nouvelles tentatives sur 429/5xx/erreur réseau transitoire. */
-  transientRetries?: number;
-  /** Attente entre deux tentatives transitoires. */
-  transientRetryDelayMs?: number;
   followDiscoveredProductPages?: boolean;
   maxDiscoveredProductPages?: number;
   /**
