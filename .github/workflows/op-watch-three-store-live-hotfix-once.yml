@@ -1,4 +1,4 @@
-name: OP Watch Three-Store FINAL LIVE One-Shot
+name: OP Watch Oupi Diagnostic One-Shot
 
 on:
   push:
@@ -10,123 +10,53 @@ permissions:
   contents: read
 
 jobs:
-  deploy-and-prove:
+  diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: cloudflare-worker
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
-      PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
-      - name: Hard final gate
+      - name: Gate
         working-directory: .
-        shell: bash
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: deploy final three-store fix live" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: diagnose Oupi transient failure live" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: cloudflare-worker/package-lock.json
-      - name: Install locked dependencies
-        run: npm ci --no-audit --no-fund
-      - name: Validate exact main revision
-        run: npm run typecheck && npm test && npx wrangler deploy --dry-run
-      - name: Verify credentials
+      - run: npm ci --no-audit --no-fund
+      - name: Derive token and force Oupi
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$DISCORD_WEBHOOK_URL"
-      - name: Derive private readiness token
-        shell: bash
-        run: |
           token="$(npm run --silent derive-preview-audit-token)"
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Generate exact LIVE config
-        run: npm run generate-production-config
-        env:
-          PRODUCTION_PHASE: live
-      - name: Assert LIVE config before deploy
-        run: >-
-          node -e "const c=require('./wrangler.production-live.generated.json'); const b=c.durable_objects?.bindings||[]; if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE==='true'||JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==2) process.exit(1)"
-      - name: Deploy final LIVE code
-        run: npx wrangler deploy --config wrangler.production-live.generated.json
-      - name: Restore private readiness secret
-        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-live.generated.json
-      - name: Restore Discord webhook secret
-        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-live.generated.json
-      - name: Smoke production after propagation
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in {1..12}; do
-            if npm run smoke-production; then exit 0; fi
-            sleep 5
-          done
-          exit 1
-        env:
-          PRODUCTION_SMOKE_PHASE: live
-      - name: Force real cycles for Oupi Philibert Otakuland
-        shell: bash
-        run: |
-          set -euo pipefail
-          for store in oupi philibert otakuland; do
-            echo "=== FORCE $store ==="
-            curl -fsS --max-time 150 \
-              -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
-              -H "Content-Type: application/json" \
-              -X POST --data "{\"action\":\"runStoreNow\",\"store\":\"$store\"}" \
-              "$PRODUCTION_URL/cockpit/api/control" > "/tmp/$store.json"
-            STORE="$store" node - <<'NODE'
-          const store=process.env.STORE;
-          const x=require(`/tmp/${store}.json`);
-          if(!x.ok) throw new Error(`${store}: control not ok`);
-          const row=(x.cycle?.stores||[]).find(s=>s.store===store);
-          console.log(JSON.stringify({store,status:row?.status,durationMs:row?.durationMs,merchantDurationMs:row?.merchantDurationMs,error:row?.error},null,2));
-          if(row?.status!=='completed') throw new Error(`${store}: ${row?.status||'missing'} ${row?.error||''}`);
-          NODE
-          done
-      - name: Require all three GREEN in production cockpit
+          curl -sS --max-time 150 \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -X POST --data '{"action":"runStoreNow","store":"oupi"}' \
+            "$PRODUCTION_URL/cockpit/api/control" > /tmp/oupi-control.json || true
+      - name: Print sanitized Oupi health and source errors
         shell: bash
         run: |
           set -euo pipefail
           curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/status.json
           node - <<'NODE'
-          const s=require('/tmp/status.json');
-          if(s.runtime?.live!==true) throw new Error('runtime not live');
-          const wanted=['oupi','philibert','otakuland'];
-          const rows=(s.stores||[]).filter(x=>wanted.includes(x.key)).map(x=>({key:x.key,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,candidates:x.candidates,lastCheck:x.lastCheck,sourceKind:x.sourceKind,detail:x.detail}));
-          console.log(JSON.stringify({totals:s.totals,stores:rows},null,2));
-          if(rows.length!==3 || rows.some(x=>x.level!=='green'||x.runtimeStatus!=='completed')) process.exit(2);
-          NODE
-      - name: Verify Cloudflare LIVE state independently
-        shell: bash
-        run: |
-          set -euo pipefail
-          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PRODUCTION_WORKER_NAME"
-          curl -fsS -H "$auth" "$base/settings" > /tmp/settings.json
-          curl -fsS -H "$auth" "$base/schedules" > /tmp/schedules.json
-          node - <<'NODE'
-          const settings=require('/tmp/settings.json');
-          const schedules=require('/tmp/schedules.json');
-          const bindings=settings.result?.bindings||[];
-          const plain=Object.fromEntries(bindings.filter(b=>b.type==='plain_text').map(b=>[b.name,b.text]));
-          const names=new Set(bindings.map(b=>b.name));
-          const rows=Array.isArray(schedules.result)?schedules.result:(schedules.result?.schedules||[]);
-          const crons=rows.map(x=>x.cron||x.schedule).filter(Boolean);
-          const proof={monitoring:plain.MONITORING_ENABLED,writeState:plain.WRITE_STATE,discordMode:plain.DISCORD_MODE,schedulerMode:plain.SCHEDULER_MODE,runtimeTest:plain.RUNTIME_TEST_MODE,hasDiscordSecret:names.has('DISCORD_WEBHOOK_URL'),hasStoreDO:names.has('STORE_MONITORS'),hasCalendarDO:names.has('CALENDAR_COORDINATOR'),crons};
-          console.log(JSON.stringify(proof,null,2));
-          if(proof.monitoring!=='true'||proof.writeState!=='true'||proof.discordMode!=='live'||proof.schedulerMode!=='live'||proof.runtimeTest==='true'||!proof.hasDiscordSecret||!proof.hasStoreDO||!proof.hasCalendarDO||!crons.includes('* * * * *')) process.exit(3);
+          const fs=require('fs');
+          let control={}; try{control=JSON.parse(fs.readFileSync('/tmp/oupi-control.json','utf8')||'{}')}catch{}
+          const status=require('/tmp/status.json');
+          const row=(status.stores||[]).find(x=>x.key==='oupi');
+          const cycleRow=(control.cycle?.stores||[]).find(x=>x.store==='oupi');
+          console.log(JSON.stringify({cockpit:row,cycle:cycleRow?{store:cycleRow.store,status:cycleRow.status,durationMs:cycleRow.durationMs,merchantDurationMs:cycleRow.merchantDurationMs,error:cycleRow.error}:null},null,2));
+          if(!row) process.exit(1);
           NODE
