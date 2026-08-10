@@ -99,4 +99,33 @@ describe("affiliate product-feed compatibility", () => {
       commercialEligible: true
     });
   });
+
+  it("ingests an Affilae-style comparator product feed for Playin", async () => {
+    const csv = [
+      "Product Name;Product URL;Price;Stock;Image URL;EAN;Brand;Description",
+      "One Piece OP17 Display FR;https://playin.example/op17?aff=publisher;109.90;12;https://img.example/playin-op17.jpg;3700000OP17;Bandai;Display One Piece Card Game OP-17 français"
+    ].join("\n");
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(csv, {
+      status: 200,
+      headers: { "content-type": "text/csv" }
+    })));
+
+    const audit = await auditAuthorizedFeed(
+      connector("playin", "Playin"),
+      "https://catalog.example/affilae-playin.csv"
+    );
+
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0]).toMatchObject({
+      store: "playin",
+      title: "One Piece OP17 Display FR",
+      availability: "available",
+      language: "Français confirmé",
+      externalId: "3700000OP17",
+      priceText: "109.90 €",
+      imageUrl: "https://img.example/playin-op17.jpg",
+      commercialEligible: true
+    });
+  });
 });
