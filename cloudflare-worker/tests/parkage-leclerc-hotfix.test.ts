@@ -65,7 +65,7 @@ describe("Parkage public structured catalog", () => {
     expect(audit.candidates).toHaveLength(1);
     expect(audit.candidates[0]).toMatchObject({
       externalId: "1116911",
-      matchedReferences: ["ST33"],
+      matchedReferences: ["ST-33"],
       language: "Français confirmé",
       availability: "available",
       priceText: "19,00 €",
