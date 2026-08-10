@@ -45,6 +45,13 @@ function alertMatch(candidate: ProductCandidate): AlertMatch {
 }
 
 describe("Parkage public structured catalog", () => {
+  it("reste authoritative en Discovery et en Fast Watch minute", () => {
+    const connector = CONNECTORS.find((item) => item.key === "parkage");
+    expect(connector).toBeDefined();
+    expect(connector?.authoritativeStructuredFeed).toBe(true);
+    expect(connector?.followDiscoveredProductPages).toBe(false);
+  });
+
   it("qualifie uniquement les produits FR et conserve stock/prix", async () => {
     const connector = CONNECTORS.find((item) => item.key === "parkage");
     expect(connector).toBeDefined();
