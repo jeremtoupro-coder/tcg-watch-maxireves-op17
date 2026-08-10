@@ -12,8 +12,10 @@ export const parkage: ConnectorDefinition = {
   },
   responseMustContainAny: [/one[\s-]*piece/i],
   followDiscoveredProductPages: false,
+  authoritativeStructuredFeed: true,
   notes: [
     "Catalogue FR lu via l'API publique utilisée par le frontend Parkage ; aucune URL produit anglaise n'est seedée.",
-    "Le Fast Watch conserve le fail-closed : seules les lignes API lang=fr avec référence One Piece reconnue deviennent candidates."
+    "Source authoritative : Discovery et Fast Watch restent sur l'API structurée FR afin de conserver langue, prix et stock à chaque cycle.",
+    "Fail-closed : seules les lignes API lang=fr avec référence One Piece reconnue deviennent candidates."
   ]
 };
