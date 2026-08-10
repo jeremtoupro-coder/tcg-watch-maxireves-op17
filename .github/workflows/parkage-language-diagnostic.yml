@@ -1,0 +1,67 @@
+name: Parkage Language Diagnostic
+
+on:
+  push:
+    branches:
+      - op-watch-v1-test
+    paths:
+      - .github/workflows/parkage-language-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect public Parkage language metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          urls=(
+            'https://www.parkage.com/fr/one-piece-card-game?language%5B%5D=fr'
+            'https://www.parkage.com/fr/1116905-one-piece-card-game-starter-deck-st-33'
+            'https://www.parkage.com/fr/1116906-one-piece-card-game-starter-deck-st-34'
+            'https://www.parkage.com/fr/1116907-one-piece-card-game-starter-deck-st-35'
+            'https://www.parkage.com/fr/1116908-one-piece-card-game-starter-deck-st-36'
+          )
+          for url in "${urls[@]}"; do
+            echo "===== ${url} ====="
+            file="$(mktemp)"
+            curl -fsSL --max-time 20 \
+              -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' \
+              -H 'Accept-Language: fr-FR,fr;q=0.9,en;q=0.6' \
+              "$url" -o "$file"
+            echo "bytes=$(wc -c < "$file")"
+            python3 - "$file" <<'PY'
+          import re, sys, html
+          raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+          def clean(s):
+              return re.sub(r'\s+',' ',html.unescape(re.sub(r'<[^>]+>',' ',s))).strip()
+          title=re.search(r'<title\b[^>]*>(.*?)</title>',raw,re.I|re.S)
+          h1=re.search(r'<h1\b[^>]*>(.*?)</h1>',raw,re.I|re.S)
+          print('title=',clean(title.group(1))[:500] if title else '')
+          print('h1=',clean(h1.group(1))[:500] if h1 else '')
+          # Only print non-secret snippets around language/flag markers.
+          patterns=[r'fran[cç]ais',r'anglais',r'japonais',r'language',r'langue',r'flag',r'france',r'japan',r'english']
+          hits=[]
+          lower=raw.lower()
+          for pat in patterns:
+              for m in re.finditer(pat,lower,re.I):
+                  snippet=clean(raw[max(0,m.start()-180):min(len(raw),m.end()+260)])
+                  if snippet and snippet not in hits:
+                      hits.append(snippet)
+                  if len(hits)>=30: break
+              if len(hits)>=30: break
+          for i,s in enumerate(hits): print(f'hit[{i}]={s[:700]}')
+          # List likely public XHR/API URLs embedded in page source.
+          found=[]
+          for m in re.finditer(r'https?://[^"\'<> ]+|/[A-Za-z0-9_?&=%./-]*(?:ajax|api|search|product|catalog)[A-Za-z0-9_?&=%./-]*', raw, re.I):
+              v=html.unescape(m.group(0))[:500]
+              if v not in found: found.append(v)
+              if len(found)>=40: break
+          for i,v in enumerate(found): print(f'endpoint[{i}]={v}')
+          PY
+            rm -f "$file"
+          done
