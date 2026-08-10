@@ -17,8 +17,6 @@ const ENGLISH_PATTERNS = [
   /\banglais\b/i,
   /\bversion\s+anglaise\b/i,
   /(?:^|[\s–—|()[\]-])eng(?:$|[\s–—|()[\]-])/i,
-  // L'abréviation anglaise EN n'est fiable qu'en majuscules. En ignorant la
-  // casse, « boosters en français » devenait à tort un produit anglais.
   /(?:^|[\s–—|()[\]-])EN(?:$|[\s–—|()[\]-])/
 ];
 
@@ -65,7 +63,7 @@ const PREORDER_PATTERNS = [
   /pre[-\s]?order/i,
   /réservation/i,
   /reservation/i,
-  /\b[àa]\s+venir\b/i,
+  /[àa]\s+venir\b/i,
   /\bcoming\s+soon\b/i,
   new RegExp(`\\bdispo\\s*:\\s*${RELEASE_MONTH}\\b`, "i"),
   new RegExp(`\\bavailable\\s*:\\s*${RELEASE_MONTH}\\b`, "i")
@@ -139,8 +137,6 @@ export function matchReferences(value: string): string[] {
 }
 
 export function detectLanguage(value: string): LanguageStatus {
-  // La langue explicite du produit est prioritaire sur la langue du storefront.
-  // Ex.: une fiche "/fr/...version-anglaise" doit rester EN et ne jamais alerter en FR.
   if (JAPANESE_PATTERNS.some((pattern) => pattern.test(value))) return "Japonais détecté";
   if (ENGLISH_PATTERNS.some((pattern) => pattern.test(value))) return "Anglais détecté";
   if (OTHER_LANGUAGE_PATTERNS.some((pattern) => pattern.test(value))) return "Autre langue détectée";
