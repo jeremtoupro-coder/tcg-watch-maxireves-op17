@@ -327,7 +327,7 @@ export async function runMonitoringCycle(
     pendingAuthorizedFeedStores,
     healthyStores,
     degradedStores,
-    audits,
+    audits: audits.map((audit) => degradedKeys.has(audit.store) ? { ...audit, candidates: [] } : audit),
     evaluation
   };
 }
