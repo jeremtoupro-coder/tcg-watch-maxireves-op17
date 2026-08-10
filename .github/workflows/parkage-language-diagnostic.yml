@@ -15,52 +15,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify anonymous Parkage French catalog API
+      - name: Compare anonymous Parkage catalog orderings
         shell: bash
         run: |
           set -euo pipefail
-          url='https://back.parkage.com/api/parkage/search/get?category_id=9883&complete=true&count=true&limit=50&offset=0&text=&preorder=&isnew=&lang=fr&with_quantity=false&isDiscount=false&order=relevance&direction=DESC'
-          out="$(mktemp)"
-          code="$(curl -sS -L --max-time 25 -o "$out" -w '%{http_code}' \
-            -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' \
-            -H 'Accept: application/json' \
-            -H 'Accept-Language: fr-FR,fr;q=0.9' \
-            "$url")"
-          echo "http=${code} bytes=$(wc -c < "$out")"
-          [ "$code" = "200" ]
-          python3 - "$out" <<'PY'
-          import json,sys,re
-          raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-          obj=json.loads(raw)
-          print('root_type=',type(obj).__name__)
-          if isinstance(obj,dict):
-              print('root_keys=',sorted(obj.keys()))
-          # Find product-like lists and print only safe commercial fields.
-          candidates=[]
-          def walk(x,path='root'):
-              if isinstance(x,list):
-                  if x and all(isinstance(i,dict) for i in x[:min(len(x),5)]):
-                      score=sum(any(k in i for k in ('id','product_id','name','name_fr','title','price','lang','quantity')) for i in x[:min(len(x),5)])
-                      if score: candidates.append((path,x))
-                  for idx,i in enumerate(x[:5]): walk(i,f'{path}[{idx}]')
-              elif isinstance(x,dict):
-                  for k,v in x.items():
-                      if k not in ('description','desc','html'): walk(v,f'{path}.{k}')
-          walk(obj)
-          seen=set()
-          for path,lst in candidates:
-              marker=(path,len(lst))
-              if marker in seen: continue
-              seen.add(marker)
-              print(f'LIST {path} len={len(lst)}')
-              for item in lst[:12]:
-                  safe={}
-                  for k in ('id','product_id','name','name_fr','name_en','title','lang','language','price','price_discount','quantity','url','slug','available','stock','is_preorder'):
-                      if k in item: safe[k]=item[k]
-                  print(json.dumps(safe,ensure_ascii=False)[:1200])
-          print('TRACKED_MATCHES')
-          text=json.dumps(obj,ensure_ascii=False)
-          for ref in ('ST-31','ST-32','ST-33','ST-34','ST-35','ST-36','OP-17'):
-              print(ref, len(re.findall(re.escape(ref),text,re.I)))
+          for order in relevance id; do
+            out="$(mktemp)"
+            url="https://back.parkage.com/api/parkage/search/get?category_id=9883&complete=true&count=true&limit=20&offset=0&text=&preorder=&isnew=&lang=fr&with_quantity=false&isDiscount=false&order=${order}&direction=DESC"
+            code="$(curl -sS -L --max-time 25 -o "$out" -w '%{http_code}' -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' -H 'Accept: application/json' "$url")"
+            echo "ORDER=${order} HTTP=${code}"
+            [ "$code" = "200" ]
+            python3 - "$out" <<'PY'
+          import json,sys
+          obj=json.load(open(sys.argv[1],encoding='utf-8'))
+          items=obj.get('data',{}).get('list',[])
+          for x in items[:12]: print(x.get('id'), x.get('lang'), x.get('name'))
           PY
-          rm -f "$out"
+            rm -f "$out"
+          done
