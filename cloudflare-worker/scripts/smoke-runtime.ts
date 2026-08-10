@@ -115,6 +115,26 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
       }
       throw lastError;
     }
+
+    const hardStoreFailures = payload.stores.filter((store) =>
+      store.status === "error" || store.status === "overlap"
+    );
+    if (hardStoreFailures.length > 0) {
+      const transientResets = hardStoreFailures.every((store) =>
+        store.status === "error" && isTransientPlatformError(store.error ?? "")
+      );
+      const diagnostic = hardStoreFailures
+        .map((store) => `${store.store}:${store.status}:${store.error ?? "sans détail"}`)
+        .join(" | ");
+      lastError = new Error(`Cycle avec échec Durable Object: ${diagnostic}`);
+      if (transientResets && attempt < 4) {
+        console.warn(`[smoke-runtime] reset DO interne ${attempt}/4; cycle entier rejoué.`);
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        continue;
+      }
+      throw lastError;
+    }
+
     return payload;
   }
 

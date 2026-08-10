@@ -8,7 +8,6 @@ import { loadOfficialCalendar } from "./officialCalendar";
 import { buildActiveWatchConfig, candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
 import { createStateStore, type StateStore } from "./state";
 import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
-import { matchReferences } from "./matching";
 import { canonicalProductUrl } from "./connectorUrls";
 import type { Env, StoreAudit, StoreKey } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
@@ -100,24 +99,17 @@ async function discoveryDue(
   return !Number.isFinite(lastMs) || now - lastMs >= DISCOVERY_INTERVAL_MS;
 }
 
-function configuredDirectUrls(
-  connector: ReturnType<typeof selectConnectors>[number],
-  activeIds: Set<string>
-): string[] {
-  return connector.sources.flatMap((source) => {
-    const normalized = normalizedFastWatchUrl(source, connector);
-    return normalized && matchReferences(source).some((reference) => activeIds.has(reference))
-      ? [normalized]
-      : [];
-  });
-}
-
 async function fastWatchConnector(
   connector: ReturnType<typeof selectConnectors>[number],
   stateStore: StateStore,
   activeIds: Set<string>
 ): Promise<ReturnType<typeof selectConnectors>[number] | undefined> {
   if (connector.authoritativeStructuredFeed) return connector;
+
+  // Une fiche HTML ordinaire n'entre en Fast Watch qu'après une Discovery saine
+  // qui a confirmé produit actif, format, FR, disponibilité et, pour une
+  // marketplace, le vendeur officiel requis. Une URL configurée seule ne suffit
+  // jamais à promouvoir une marketplace en polling minute.
   const cached = parseDiscoveryCache(await stateStore.getMetadata(discoveryCacheKey(connector.key)));
   const cachedUrls = (cached?.entries ?? [])
     .filter((entry) => entry.references.some((reference) => activeIds.has(reference)))
@@ -125,7 +117,7 @@ async function fastWatchConnector(
       const normalized = normalizedFastWatchUrl(entry.url, connector);
       return normalized ? [normalized] : [];
     });
-  const sources = [...new Set([...configuredDirectUrls(connector, activeIds), ...cachedUrls])];
+  const sources = [...new Set(cachedUrls)];
   if (sources.length === 0) return undefined;
   return {
     ...connector,
@@ -138,19 +130,20 @@ async function persistDiscoveryCache(
   audit: StoreAudit,
   connector: ReturnType<typeof selectConnectors>[number],
   stateStore: StateStore,
-  activeIds: Set<string>,
+  officialProducts: OfficialProduct[],
   discoveredAt: string
 ): Promise<void> {
   if (!stateStore.writable || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
-  const entries = audit.candidates
-    .filter((candidate) => candidate.matchedReferences.some((reference) => activeIds.has(reference)))
-    .flatMap((candidate) => {
-      const normalized = normalizedFastWatchUrl(candidate.url, connector);
-      return normalized ? [{
-        url: normalized,
-        references: [...new Set(candidate.matchedReferences)].sort()
-      }] : [];
-    });
+
+  const entries = audit.candidates.flatMap((candidate) => {
+    const qualified = candidateForActiveProducts(candidate, officialProducts);
+    if (!qualified) return [];
+    const normalized = normalizedFastWatchUrl(qualified.url, connector);
+    return normalized ? [{
+      url: normalized,
+      references: [...new Set(qualified.matchedReferences)].sort()
+    }] : [];
+  });
   const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
   await stateStore.putMetadata(discoveryCacheKey(connector.key), JSON.stringify({
     discoveredAt,
@@ -160,16 +153,18 @@ async function persistDiscoveryCache(
 
 /**
  * Le gestionnaire externe appelle ce cycle à la cadence Fast Watch. Les
- * fiches déjà découvertes sont relues à chaque passage ; les catégories et
- * boutiques discovery-only ne sont explorées que toutes les 15 minutes.
- * Aucun cron Cloudflare n'est requis. Une origine anti-bot connue n'est
- * jamais interrogée sans son flux partenaire autorisé.
+ * fiches déjà découvertes et qualifiées sont relues à chaque passage ; les
+ * catégories et boutiques discovery-only ne sont explorées que toutes les
+ * 15 minutes. Aucun cron Cloudflare n'est requis par la SAFE Preview. Une
+ * origine anti-bot connue n'est jamais interrogée sans son flux partenaire
+ * autorisé.
  */
 export async function runMonitoringCycle(
   env: Env,
   options: {
     scheduledTime?: number;
     forceStore?: StoreKey;
+    forceDiscovery?: boolean;
     officialProducts?: OfficialProduct[];
     stateStore?: StateStore;
     now?: Date;
@@ -232,7 +227,7 @@ export async function runMonitoringCycle(
   const includeDiscoveryOnly = await discoveryDue(
     stateStore,
     options.scheduledTime,
-    Boolean(options.forceStore)
+    options.forceDiscovery === true
   );
   const afterDiscoveryCadence = requestedConnectors.filter((connector) =>
     connector.commercialAlertsEnabled !== false || includeDiscoveryOnly
@@ -298,7 +293,7 @@ export async function runMonitoringCycle(
     for (const audit of healthyAudits) {
       const connector = connectorByKey.get(audit.store);
       if (connector) {
-        await persistDiscoveryCache(audit, connector, stateStore, activeIds, discoveredAt);
+        await persistDiscoveryCache(audit, connector, stateStore, officialProducts, discoveredAt);
       }
     }
     if (stateStore.writable) {
