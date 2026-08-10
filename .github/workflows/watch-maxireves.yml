@@ -1,93 +1,198 @@
-name: TCG Watch - Production Monitor
+name: OP Watch - Production Activation (manual only)
 
 on:
-  schedule:
-    # GitHub Actions utilise UTC. Exécution demandée toutes les 5 minutes.
-    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
-      mode:
-        description: "Mode d'exécution"
-        required: false
-        default: "live"
+      action:
+        description: "Action"
+        required: true
+        default: "validate-only"
         type: choice
         options:
-          - live
-          - baseline
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/watch-maxireves.yml"
-      - "cloudflare-worker/config/**"
-      - "cloudflare-worker/src/**"
-      - "cloudflare-worker/scripts/poll.ts"
-      - "cloudflare-worker/package.json"
+          - validate-only
+          - activate-live
+      confirmation:
+        description: "Pour activer LIVE, saisir exactement : ACTIVER OP WATCH LIVE"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: tcg-watch-production-monitor
-  # Évite les files d'attente et les doublons si un contrôle dépasse 5 minutes.
-  cancel-in-progress: true
+  group: op-watch-production-activation
+  cancel-in-progress: false
 
 jobs:
-  monitor:
+  validate:
+    name: Validate production candidate without deployment
     runs-on: ubuntu-latest
-    timeout-minutes: 4
-
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: cloudflare-worker
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
+      - name: Checkout selected revision
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Automated tests
+        run: npm test
+      - name: Worker build dry run
+        run: npx wrangler deploy --dry-run
 
-      - name: Verify required production secrets
+  activate:
+    name: Two-phase manual LIVE activation
+    if: inputs.action == 'activate-live'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+      PRODUCTION_WORKER_NAME: tcg-watch-one-piece
+    steps:
+      - name: Hard activation gate
+        shell: bash
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+          PRODUCTION_ENABLED: ${{ vars.OP_WATCH_PRODUCTION_ENABLED }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error title=Branche interdite::L'activation LIVE n'est autorisée que depuis main."
+            exit 1
+          fi
+          if [ "$PRODUCTION_ENABLED" != "true" ]; then
+            echo "::error title=Garde-fou production::OP_WATCH_PRODUCTION_ENABLED doit valoir true."
+            exit 1
+          fi
+          if [ "$REQUESTED_CONFIRMATION" != "ACTIVER OP WATCH LIVE" ]; then
+            echo "::error title=Confirmation invalide::La phrase de confirmation exacte est requise."
+            exit 1
+          fi
+      - name: Checkout exact production revision
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify production credentials
+        shell: bash
         run: |
           missing=0
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DISCORD_WEBHOOK_URL; do
             if [ -z "${!name}" ]; then
-              echo "::error title=Secret manquant::$name n'est pas configuré dans GitHub Actions."
+              echo "::error title=Secret manquant::$name n'est pas configuré."
               missing=1
             fi
           done
           exit "$missing"
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Validate code on configuration changes
-        if: github.event_name == 'push'
+      - name: Derive private production readiness token
+        shell: bash
         run: |
-          npm run typecheck
-          npm test
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Monitor every configured store
+      # Phase 1 : déployer le code et les Durable Objects totalement inertes.
+      - name: Generate standby config
+        run: npm run generate-production-config
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_KV_NAMESPACE: tcg-watch-state
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          MONITOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'live' }}
-        run: npm run monitor
+          PRODUCTION_PHASE: standby
+      - name: Assert standby is inert
+        run: >-
+          node -e "const c=require('./wrangler.production-standby.generated.json');
+          const b=c.durable_objects?.bindings||[];
+          if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='false'||
+          c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||
+          c.vars.PRODUCTION_PROBE_MODE!=='false'||c.kv_namespaces?.length||c.triggers?.crons?.length||
+          b.length!==2) process.exit(1)"
+      - name: Deploy inert standby
+        run: npx wrangler deploy --config wrangler.production-standby.generated.json
+      - name: Install private readiness token
+        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-standby.generated.json
+      - name: Install Discord webhook secret without enabling Discord
+        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-standby.generated.json
+      - name: Install configured authorized feed secrets
+        shell: bash
+        env:
+          AUTHORIZED_FEED_PLAYIN_URL: ${{ secrets.AUTHORIZED_FEED_PLAYIN_URL }}
+          AUTHORIZED_FEED_CULTURA_URL: ${{ secrets.AUTHORIZED_FEED_CULTURA_URL }}
+          AUTHORIZED_FEED_MICROMANIA_URL: ${{ secrets.AUTHORIZED_FEED_MICROMANIA_URL }}
+          AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
+          AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
+          AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
+        run: |
+          for name in \
+            AUTHORIZED_FEED_PLAYIN_URL \
+            AUTHORIZED_FEED_CULTURA_URL \
+            AUTHORIZED_FEED_MICROMANIA_URL \
+            AUTHORIZED_FEED_FNAC_URL \
+            AUTHORIZED_FEED_CARREFOUR_URL \
+            AUTHORIZED_FEED_KING_JOUET_URL; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              printf '%s' "$value" | npx wrangler secret put "$name" --config wrangler.production-standby.generated.json
+            fi
+          done
+      - name: Smoke standby
+        run: npm run smoke-production
+        env:
+          PRODUCTION_SMOKE_PHASE: standby
 
-      - name: Publish monitoring report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: monitor-report-${{ github.run_id }}
-          path: cloudflare-worker/monitor-report.json
-          if-no-files-found: warn
-          retention-days: 14
+      # Phase 2a : armer les variables LIVE, toujours sans cron. La sonde ne fait
+      # aucun audit marchand ; elle vérifie seulement les 21 boutiques, les DO
+      # et le webhook Discord officiel.
+      - name: Generate armed LIVE config without cron
+        run: npm run generate-production-config
+        env:
+          PRODUCTION_PHASE: armed
+      - name: Assert armed phase has no cron
+        run: >-
+          node -e "const c=require('./wrangler.production-armed.generated.json');
+          if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
+          c.vars.SCHEDULER_MODE!=='live'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
+          c.triggers?.crons?.length) process.exit(1)"
+      - name: Deploy armed LIVE config without automatic polling
+        run: npx wrangler deploy --config wrangler.production-armed.generated.json
+      - name: Smoke LIVE readiness without merchant polling
+        run: npm run smoke-production
+        env:
+          PRODUCTION_SMOKE_PHASE: armed
+
+      # Phase 2b : le cron commercial n'est ajouté qu'après toutes les validations.
+      - name: Generate final one-minute LIVE config
+        run: npm run generate-production-config
+        env:
+          PRODUCTION_PHASE: live
+      - name: Assert final cron and LIVE gates
+        run: >-
+          node -e "const c=require('./wrangler.production-live.generated.json');
+          if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
+          c.vars.SCHEDULER_MODE!=='live'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
+          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])) process.exit(1)"
+      - name: Activate final LIVE cron
+        run: npx wrangler deploy --config wrangler.production-live.generated.json
+      - name: Final LIVE readiness smoke
+        run: npm run smoke-production
+        env:
+          PRODUCTION_SMOKE_PHASE: live

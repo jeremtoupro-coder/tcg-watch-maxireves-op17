@@ -1,19 +1,29 @@
-import { auditConnector } from "./audit";
 import {
   DEFAULT_CLOUDFLARE_STORES,
   isStoreKey,
   selectConnectors
 } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import type { ConnectorDefinition, Env, StoreKey } from "./types";
+import { loadOfficialCalendar } from "./officialCalendar";
+import { buildActiveWatchConfig, candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
+import { createStateStore, type StateStore } from "./state";
+import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
+import { canonicalProductUrl } from "./connectorUrls";
+import type { Env, StoreAudit, StoreKey } from "./types";
+import opWatchV1Config from "../config/opwatch-v1.json";
 
-const FANTASY_BATCH_SIZE = 2;
+const DISCOVERY_INTERVAL_MINUTES = 15;
+const DISCOVERY_INTERVAL_MS = DISCOVERY_INTERVAL_MINUTES * 60_000;
+const DISCOVERY_CACHE_VERSION = 1;
 
-export interface MonitoringTask {
-  store: StoreKey;
-  connector: ConnectorDefinition;
-  batchIndex: number;
-  batchCount: number;
+interface DiscoveryCacheEntry {
+  url: string;
+  references: string[];
+}
+
+interface DiscoveryCache {
+  discoveredAt: string;
+  entries: DiscoveryCacheEntry[];
 }
 
 export function parseActiveStores(rawValue?: string): StoreKey[] {
@@ -27,64 +37,148 @@ export function parseActiveStores(rawValue?: string): StoreKey[] {
   return [...new Set(stores)];
 }
 
-export function selectScheduledStore(
-  stores: StoreKey[],
-  scheduledTime: number
-): StoreKey | undefined {
-  if (stores.length === 0) return undefined;
-  const minute = Math.floor(scheduledTime / 60_000);
-  return stores[minute % stores.length];
+export function isDiscoveryTick(scheduledTime?: number): boolean {
+  if (scheduledTime === undefined) return false;
+  const minuteBucket = Math.floor(scheduledTime / 60_000);
+  return minuteBucket % DISCOVERY_INTERVAL_MINUTES === 0;
 }
 
-export function buildMonitoringTasks(stores: StoreKey[]): MonitoringTask[] {
-  const tasks: MonitoringTask[] = [];
+function discoveryCacheKey(store: StoreKey): string {
+  return `discovery:v${DISCOVERY_CACHE_VERSION}:${store}`;
+}
 
-  for (const connector of selectConnectors(stores)) {
-    const batchSize = connector.key === "fantasy-sphere"
-      ? FANTASY_BATCH_SIZE
-      : Math.max(1, connector.sources.length);
-    const batchCount = Math.ceil(connector.sources.length / batchSize);
+function connectorHosts(connector: ReturnType<typeof selectConnectors>[number]): Set<string> {
+  return new Set(connector.sources.flatMap((source) => {
+    try { return [new URL(source).hostname]; } catch { return []; }
+  }));
+}
 
-    for (let batchIndex = 0; batchIndex < batchCount; batchIndex += 1) {
-      const sources = connector.sources.slice(
-        batchIndex * batchSize,
-        (batchIndex + 1) * batchSize
-      );
-
-      tasks.push({
-        store: connector.key,
-        connector: { ...connector, sources },
-        batchIndex,
-        batchCount
-      });
-    }
+function normalizedFastWatchUrl(
+  url: string,
+  connector: ReturnType<typeof selectConnectors>[number]
+): string | undefined {
+  try {
+    const normalized = canonicalProductUrl(url, connector);
+    const parsed = new URL(normalized);
+    return parsed.protocol === "https:" &&
+      connectorHosts(connector).has(parsed.hostname) &&
+      connector.productUrlPatterns.some((pattern) => pattern.test(parsed.toString()))
+      ? normalized
+      : undefined;
+  } catch {
+    return undefined;
   }
-
-  return tasks;
 }
 
-export function selectScheduledTask(
-  tasks: MonitoringTask[],
-  scheduledTime: number
-): MonitoringTask | undefined {
-  if (tasks.length === 0) return undefined;
-  const minute = Math.floor(scheduledTime / 60_000);
-  return tasks[minute % tasks.length];
+function parseDiscoveryCache(raw?: string): DiscoveryCache | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Partial<DiscoveryCache>;
+    if (typeof parsed.discoveredAt !== "string" || !Array.isArray(parsed.entries)) return undefined;
+    const entries = parsed.entries.filter((entry): entry is DiscoveryCacheEntry =>
+      Boolean(entry) &&
+      typeof entry.url === "string" &&
+      Array.isArray(entry.references) &&
+      entry.references.every((reference) => typeof reference === "string")
+    );
+    return { discoveredAt: parsed.discoveredAt, entries };
+  } catch {
+    return undefined;
+  }
 }
 
+async function discoveryDue(
+  stateStore: StateStore,
+  scheduledTime: number | undefined,
+  forced: boolean
+): Promise<boolean> {
+  if (forced) return true;
+  const now = scheduledTime ?? Date.now();
+  const last = await stateStore.getMetadata("monitor:last-discovery");
+  const lastMs = last ? Date.parse(last) : Number.NaN;
+  return !Number.isFinite(lastMs) || now - lastMs >= DISCOVERY_INTERVAL_MS;
+}
+
+async function fastWatchConnector(
+  connector: ReturnType<typeof selectConnectors>[number],
+  stateStore: StateStore,
+  activeIds: Set<string>
+): Promise<ReturnType<typeof selectConnectors>[number] | undefined> {
+  if (connector.authoritativeStructuredFeed) return connector;
+
+  // Une fiche HTML ordinaire n'entre en Fast Watch qu'après une Discovery saine
+  // qui a confirmé produit actif, format, FR, disponibilité et, pour une
+  // marketplace, le vendeur officiel requis. Une URL configurée seule ne suffit
+  // jamais à promouvoir une marketplace en polling minute.
+  const cached = parseDiscoveryCache(await stateStore.getMetadata(discoveryCacheKey(connector.key)));
+  const cachedUrls = (cached?.entries ?? [])
+    .filter((entry) => entry.references.some((reference) => activeIds.has(reference)))
+    .flatMap((entry) => {
+      const normalized = normalizedFastWatchUrl(entry.url, connector);
+      return normalized ? [normalized] : [];
+    });
+  const sources = [...new Set(cachedUrls)];
+  if (sources.length === 0) return undefined;
+  return {
+    ...connector,
+    sources,
+    followDiscoveredProductPages: false
+  };
+}
+
+async function persistDiscoveryCache(
+  audit: StoreAudit,
+  connector: ReturnType<typeof selectConnectors>[number],
+  stateStore: StateStore,
+  officialProducts: OfficialProduct[],
+  discoveredAt: string
+): Promise<void> {
+  if (!stateStore.writable || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
+
+  const entries = audit.candidates.flatMap((candidate) => {
+    const qualified = candidateForActiveProducts(candidate, officialProducts);
+    if (!qualified) return [];
+    const normalized = normalizedFastWatchUrl(qualified.url, connector);
+    return normalized ? [{
+      url: normalized,
+      references: [...new Set(qualified.matchedReferences)].sort()
+    }] : [];
+  });
+  const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
+  await stateStore.putMetadata(discoveryCacheKey(connector.key), JSON.stringify({
+    discoveredAt,
+    entries: unique
+  } satisfies DiscoveryCache));
+}
+
+/**
+ * Le gestionnaire externe appelle ce cycle à la cadence Fast Watch. Les
+ * fiches déjà découvertes et qualifiées sont relues à chaque passage ; les
+ * catégories et boutiques discovery-only ne sont explorées que toutes les
+ * 15 minutes. Aucun cron Cloudflare n'est requis par la SAFE Preview. Une
+ * origine anti-bot connue n'est jamais interrogée sans son flux partenaire
+ * autorisé.
+ */
 export async function runMonitoringCycle(
   env: Env,
   options: {
     scheduledTime?: number;
     forceStore?: StoreKey;
+    forceDiscovery?: boolean;
+    officialProducts?: OfficialProduct[];
+    stateStore?: StateStore;
+    now?: Date;
   } = {}
 ): Promise<{
   status: "disabled" | "completed";
-  store?: StoreKey;
-  batchIndex?: number;
-  batchCount?: number;
+  stores?: StoreKey[];
+  deferredDiscoveryStores?: StoreKey[];
+  deferredFastWatchStores?: StoreKey[];
+  pendingAuthorizedFeedStores?: StoreKey[];
+  healthyStores?: StoreKey[];
+  degradedStores?: Array<{ store: StoreKey; errors: string[] }>;
   reason?: string;
-  audit?: Awaited<ReturnType<typeof auditConnector>>;
+  audits?: StoreAudit[];
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
 }> {
   if (env.MONITORING_ENABLED !== "true") {
@@ -94,7 +188,7 @@ export async function runMonitoringCycle(
     };
   }
 
-  if (!env.TCG_STATE) {
+  if (!env.TCG_STATE && !options.stateStore) {
     throw new Error("Le binding TCG_STATE est obligatoire pour la surveillance.");
   }
 
@@ -105,34 +199,135 @@ export async function runMonitoringCycle(
   const activeStores = options.forceStore
     ? [options.forceStore]
     : parseActiveStores(env.ACTIVE_STORES);
-  const tasks = buildMonitoringTasks(activeStores);
-  const task = selectScheduledTask(tasks, options.scheduledTime ?? Date.now());
+  const requestedConnectors = selectConnectors(activeStores);
 
-  if (!task) {
+  if (requestedConnectors.length === 0) {
     return {
       status: "disabled",
       reason: "Aucune boutique active."
     };
   }
 
-  const audit = await auditConnector(task.connector);
-  const failedSources = audit.sources.filter((source) => source.error);
-  if (failedSources.length > 0) {
-    throw new Error(
-      `${task.connector.name}: ${failedSources.map((source) => source.error).join(", ")}`
-    );
+  const stateStore = options.stateStore ?? createStateStore(env);
+  const officialProducts = options.officialProducts ?? (await loadOfficialCalendar({
+    sourceUrl: opWatchV1Config.officialCatalogUrl,
+    now: options.now,
+    daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
+    daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
+    stateStore
+  })).activeProducts;
+  if (officialProducts.length === 0) {
+    return {
+      status: "disabled",
+      reason: "Aucun produit officiel n'est actuellement dans la fenêtre J-120/J+30."
+    };
+  }
+  const dynamicConfig = buildActiveWatchConfig(officialProducts);
+
+  const includeDiscoveryOnly = await discoveryDue(
+    stateStore,
+    options.scheduledTime,
+    options.forceDiscovery === true
+  );
+  const afterDiscoveryCadence = requestedConnectors.filter((connector) =>
+    connector.commercialAlertsEnabled !== false || includeDiscoveryOnly
+  );
+  const deferredDiscoveryStores = requestedConnectors
+    .filter((connector) => connector.commercialAlertsEnabled === false && !includeDiscoveryOnly)
+    .map((connector) => connector.key);
+
+  const pendingAuthorizedFeedStores = afterDiscoveryCadence
+    .filter((connector) =>
+      connector.directPollingDisabledWithoutFeed === true &&
+      !hasConfiguredAuthorizedFeed(connector, env)
+    )
+    .map((connector) => connector.key);
+  const pendingFeedKeys = new Set(pendingAuthorizedFeedStores);
+  const eligibleConnectors = afterDiscoveryCadence.filter((connector) => !pendingFeedKeys.has(connector.key));
+  const activeIds = new Set(officialProducts.map((product) => product.id));
+  const selectedForCadence = includeDiscoveryOnly
+    ? eligibleConnectors.map((connector) => ({ original: connector, fast: connector }))
+    : await Promise.all(eligibleConnectors.map(async (connector) => ({
+        original: connector,
+        fast: connector.authorizedFeedEnv && hasConfiguredAuthorizedFeed(connector, env)
+          ? connector
+          : await fastWatchConnector(connector, stateStore, activeIds)
+      })));
+  const deferredFastWatchStores = includeDiscoveryOnly
+    ? []
+    : selectedForCadence.filter((entry) => !entry.fast).map((entry) => entry.original.key);
+  const connectors = selectedForCadence.flatMap((entry) => entry.fast ? [entry.fast] : []);
+
+  if (connectors.length === 0) {
+    return {
+      status: "completed",
+      stores: [],
+      deferredDiscoveryStores,
+      deferredFastWatchStores,
+      pendingAuthorizedFeedStores,
+      healthyStores: [],
+      degradedStores: [],
+      audits: [],
+      evaluation: await evaluateCandidates([], env, {
+        baselineStores: [],
+        config: dynamicConfig,
+        stateStore
+      })
+    };
   }
 
-  const evaluation = await evaluateCandidates(audit.candidates, env, {
-    baselineStores: [task.store]
+  const audits = await Promise.all(connectors.map((connector) => auditStore(connector, env)));
+  const connectorByKey = new Map(connectors.map((connector) => [connector.key, connector]));
+  const degradedStores = audits
+    .map((audit) => ({
+      store: audit.store,
+      errors: audit.sources.filter((source) => source.error).map((source) => source.error as string)
+    }))
+    .filter((entry) => entry.errors.length > 0);
+  const degradedKeys = new Set(degradedStores.map((entry) => entry.store));
+  const healthyAudits = audits.filter((audit) => !degradedKeys.has(audit.store));
+  const healthyStores = healthyAudits.map((audit) => audit.store);
+
+  if (includeDiscoveryOnly) {
+    const discoveredAt = new Date(options.scheduledTime ?? Date.now()).toISOString();
+    for (const audit of healthyAudits) {
+      const connector = connectorByKey.get(audit.store);
+      if (connector) {
+        await persistDiscoveryCache(audit, connector, stateStore, officialProducts, discoveredAt);
+      }
+    }
+    if (stateStore.writable) {
+      await stateStore.putMetadata("monitor:last-discovery", discoveredAt);
+    }
+  }
+
+  const candidates = healthyAudits.flatMap((audit) => {
+    const connector = connectorByKey.get(audit.store);
+    if (connector?.commercialAlertsEnabled === false) return [];
+    return audit.candidates
+      .map((candidate) => candidateForActiveProducts(candidate, officialProducts))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+  });
+
+  const baselineStores = healthyStores.filter((store) =>
+    connectorByKey.get(store)?.commercialAlertsEnabled !== false
+  );
+
+  const evaluation = await evaluateCandidates(candidates, env, {
+    baselineStores,
+    config: dynamicConfig,
+    stateStore
   });
 
   return {
     status: "completed",
-    store: task.store,
-    batchIndex: task.batchIndex,
-    batchCount: task.batchCount,
-    audit,
+    stores: connectors.map((connector) => connector.key),
+    deferredDiscoveryStores,
+    deferredFastWatchStores,
+    pendingAuthorizedFeedStores,
+    healthyStores,
+    degradedStores,
+    audits: audits.map((audit) => degradedKeys.has(audit.store) ? { ...audit, candidates: [] } : audit),
     evaluation
   };
 }

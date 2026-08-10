@@ -9,11 +9,10 @@ import {
 
 describe("matchReferences", () => {
   it.each([
-    ["Display OP-17 FR", ["OP17"]],
-    ["Booster OP 18", ["OP18"]],
-    ["Illustration Box Vol.7", ["IB-07"]],
-    ["Illustration Box Volume 8", ["IB-08"]],
-    ["IB07 et IB-08", ["IB-07", "IB-08"]]
+    ["Display OP-17 FR", ["OP-17"]],
+    ["Booster OP 18", ["OP-18"]],
+    ["Starter Deck ST31", ["ST-31"]],
+    ["Extra Booster PRB 03", ["PRB-03"]]
   ])("reconnaît %s", (input, expected) => {
     expect(matchReferences(input)).toEqual(expected);
   });
@@ -22,6 +21,10 @@ describe("matchReferences", () => {
 describe("decodeHtml", () => {
   it("décode les entités numériques hexadécimales", () => {
     expect(decodeHtml("&#x41;&#65;")).toBe("AA");
+  });
+
+  it("décode l'entité euro nommée", () => {
+    expect(decodeHtml("249,90 &euro;")).toBe("249,90 €");
   });
 });
 
@@ -36,10 +39,29 @@ describe("detectLanguage", () => {
 
   it("détecte l'anglais", () => {
     expect(detectLanguage("Booster OP17 English version")).toBe("Anglais détecté");
+    expect(detectLanguage("Booster OP17 EN")).toBe("Anglais détecté");
+    expect(detectLanguage("Booster OP17 eng")).toBe("Anglais détecté");
+  });
+
+  it("ne confond pas la préposition française en avec l'abréviation EN", () => {
+    expect(detectLanguage("Boite de 24 boosters en français")).toBe("Français confirmé");
+    expect(detectLanguage("Double Pack OP16 (En Français)")).toBe("Français confirmé");
+  });
+
+  it("donne priorité à une version anglaise explicite même sur le storefront français", () => {
+    expect(detectLanguage(
+      "https://www.pixelheart.eu/fr/produit/one-piece-op-18-version-anglaise/ One Piece OP-18 Version Anglaise"
+    )).toBe("Anglais détecté");
+  });
+
+  it("conserve une version française explicite", () => {
+    expect(detectLanguage(
+      "https://www.pixelheart.eu/fr/produit/one-piece-op-18-version-francaise/ One Piece OP-18 Version Française"
+    )).toBe("Français confirmé");
   });
 
   it("ne rejette pas une langue absente", () => {
-    expect(detectLanguage("Illustration Box Vol.7")).toBe("Langue non précisée");
+    expect(detectLanguage("Booster sans langue indiquée")).toBe("Langue non précisée");
   });
 });
 
@@ -60,6 +82,10 @@ describe("detectAvailability", () => {
 describe("extractPrice", () => {
   it("extrait un prix français", () => {
     expect(extractPrice("Prix : 149,90 € TTC")).toBe("149,90 €");
+  });
+
+  it("extrait un prix HTML encodé", () => {
+    expect(extractPrice("Display OP17 249,90 &euro;")).toBe("249,90 €");
   });
 
   it("extrait un prix avec euro devant", () => {

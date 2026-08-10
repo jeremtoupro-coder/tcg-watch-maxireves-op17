@@ -1,9 +1,22 @@
-import { auditConnector } from "./audit";
-import { WATCH_CONFIG } from "./config";
 import { CONNECTORS } from "./connectors";
 import { evaluateCandidates } from "./engine";
-import { parseActiveStores, runMonitoringCycle } from "./monitor";
+import { parseActiveStores } from "./monitor";
+import {
+  auditStore,
+  configuredStoreStatus,
+  hasConfiguredAuthorizedFeed
+} from "./storeAudit";
+import opWatchV1Config from "../config/opwatch-v1.json";
+import { buildActiveWatchConfig, candidateForActiveProducts } from "./opwatchV1";
+import { loadOfficialCalendar } from "./officialCalendar";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
+
+const CALENDAR_PREVIEW_CACHE_MS = 15 * 60 * 1000;
+let calendarPreviewCache: {
+  expiresAt: number;
+  value: Awaited<ReturnType<typeof loadOfficialCalendar>>;
+} | undefined;
+let calendarPreviewLoad: Promise<Awaited<ReturnType<typeof loadOfficialCalendar>>> | undefined;
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -29,12 +42,91 @@ function isLive(env: Env): boolean {
     Boolean(env.TCG_STATE);
 }
 
-async function runAudits(connectors: ConnectorDefinition[]) {
+async function runAudits(connectors: ConnectorDefinition[], env: Env) {
   const results = [];
   for (const connector of connectors) {
-    results.push(await auditConnector(connector));
+    results.push(await auditStore(connector, env));
   }
   return results;
+}
+
+function authorizedFeedReadiness(env: Env) {
+  return CONNECTORS
+    .filter((connector) => Boolean(connector.authorizedFeedEnv))
+    .map((connector) => ({
+      store: connector.key,
+      configured: hasConfiguredAuthorizedFeed(connector, env),
+      directPollingDisabledWithoutFeed: connector.directPollingDisabledWithoutFeed === true,
+      status: configuredStoreStatus(connector, env)
+    }));
+}
+
+function storeReadiness(env: Env) {
+  return CONNECTORS.map((connector) => ({
+    store: connector.key,
+    name: connector.name,
+    status: configuredStoreStatus(connector, env),
+    sourceKind: connector.authorizedFeedEnv
+      ? hasConfiguredAuthorizedFeed(connector, env) ? "authorized_feed" : "none"
+      : connector.authoritativeStructuredFeed ? "public_structured_feed" : "public_html",
+    commercialAlertsEnabled: connector.commercialAlertsEnabled !== false,
+    authorizedFeedConfigured: hasConfiguredAuthorizedFeed(connector, env),
+    notes: connector.notes
+  }));
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const length = Math.max(left.length, right.length);
+  let mismatch = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+  return mismatch === 0;
+}
+
+function validPreviewAuditToken(request: Request, env: Env): boolean {
+  const expected = env.PREVIEW_AUDIT_TOKEN?.trim();
+  if (!expected) return false;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  const explicit = request.headers.get("x-op-watch-audit-token")?.trim() ?? "";
+  const received = bearer || explicit;
+  return Boolean(received) && constantTimeEqual(received, expected);
+}
+
+async function officialCalendarPreview(now = new Date()) {
+  if (calendarPreviewCache && calendarPreviewCache.expiresAt > now.getTime()) {
+    return {
+      source: calendarPreviewCache.value.source,
+      fetchedAt: calendarPreviewCache.value.fetchedAt,
+      sourcePages: calendarPreviewCache.value.sourcePages,
+      catalogProductsParsed: calendarPreviewCache.value.catalogProducts.length,
+      activeProducts: calendarPreviewCache.value.activeProducts
+    };
+  }
+
+  calendarPreviewLoad ??= loadOfficialCalendar({
+    sourceUrl: opWatchV1Config.officialCatalogUrl,
+    now,
+    daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
+    daysAfter: opWatchV1Config.watchWindow.daysAfterRelease
+  });
+  let calendar: Awaited<ReturnType<typeof loadOfficialCalendar>>;
+  try {
+    calendar = await calendarPreviewLoad;
+    calendarPreviewCache = {
+      expiresAt: now.getTime() + CALENDAR_PREVIEW_CACHE_MS,
+      value: calendar
+    };
+  } finally {
+    calendarPreviewLoad = undefined;
+  }
+  return {
+    source: calendar.source,
+    fetchedAt: calendar.fetchedAt,
+    sourcePages: calendar.sourcePages,
+    catalogProductsParsed: calendar.catalogProducts.length,
+    activeProducts: calendar.activeProducts
+  };
 }
 
 export default {
@@ -53,24 +145,37 @@ export default {
 
     if (url.pathname === "/") {
       return jsonResponse({
-        project: "TCG Watch — moteur d'alertes configurable",
+        project: "OP Watch — moteur d'alertes One Piece TCG",
         deployment: mode,
         runtime: {
-          cron: live,
+          cron: false,
           monitoringEnabled: env.MONITORING_ENABLED === "true",
           discordMode: env.DISCORD_MODE ?? "dry-run",
           stateBindingPresent: Boolean(env.TCG_STATE),
           stateWritesEnabled: env.WRITE_STATE === "true",
-          publicStorePollingEnabled: env.ALLOW_PUBLIC_AUDIT === "true",
-          automaticPolling: live,
+          authenticatedAuditEnabled: env.ALLOW_PUBLIC_AUDIT === "true" && Boolean(env.PREVIEW_AUDIT_TOKEN),
+          automaticPolling: false,
           activeStores: parseActiveStores(env.ACTIVE_STORES),
-          schedule: live ? "one task per minute" : "disabled"
+          schedule: live ? "external scheduler only" : "disabled",
+          authorizedFeeds: authorizedFeedReadiness(env)
+        },
+        v1: {
+          mode,
+          targetLanguage: opWatchV1Config.language.target,
+          strictLanguage: opWatchV1Config.language.strict,
+          fastWatchSeconds: opWatchV1Config.polling.fastWatchSeconds,
+          discoverySeconds: opWatchV1Config.polling.discoverySeconds,
+          watchWindow: opWatchV1Config.watchWindow,
+          formats: opWatchV1Config.formats,
+          stores: CONNECTORS.map((connector) => connector.key),
+          discordProductImages: opWatchV1Config.discord.includeProductImage,
+          calendarPreview: "/opwatch/v1/calendar"
         },
         configuration: {
-          version: WATCH_CONFIG.version,
-          enabledProducts: WATCH_CONFIG.products.filter((product) => product.enabled).length,
-          enabledAlerts: WATCH_CONFIG.alerts.filter((alert) => alert.enabled).length,
-          file: "config/alerts.json"
+          version: opWatchV1Config.version,
+          productSource: "official-calendar-dynamic",
+          notifyOnInitialDiscovery: false,
+          commercialLanguage: "Français confirmé uniquement"
         },
         usage: {
           config: "/config",
@@ -87,16 +192,44 @@ export default {
         mode,
         monitoringEnabled: env.MONITORING_ENABLED === "true",
         stateBindingPresent: Boolean(env.TCG_STATE),
+        authorizedFeeds: authorizedFeedReadiness(env),
+        stores: storeReadiness(env),
         checkedAt: new Date().toISOString()
       });
     }
 
+    if (url.pathname === "/opwatch/v1/calendar") {
+      try {
+        return jsonResponse({ mode: "SAFE_CALENDAR_PREVIEW", ...(await officialCalendarPreview()) });
+      } catch (error) {
+        return jsonResponse({
+          mode: "SAFE_CALENDAR_PREVIEW",
+          error: error instanceof Error ? error.message : String(error),
+          checkedAt: new Date().toISOString()
+        }, 502);
+      }
+    }
+
     if (url.pathname === "/config") {
       return jsonResponse({
-        version: WATCH_CONFIG.version,
-        settings: WATCH_CONFIG.settings,
-        products: WATCH_CONFIG.products,
-        alerts: WATCH_CONFIG.alerts
+        version: opWatchV1Config.version,
+        opWatchV1: opWatchV1Config,
+        alertPolicy: {
+          productSource: "official-calendar-dynamic",
+          notifyOnInitialDiscovery: false,
+          language: "Français confirmé",
+          rejectUnknownAvailability: true,
+          events: [
+            "new_listing",
+            "back_in_stock",
+            "preorder_opened",
+            "became_unavailable",
+            "price_drop",
+            "price_increase"
+          ]
+        },
+        authorizedFeeds: authorizedFeedReadiness(env),
+        stores: storeReadiness(env)
       });
     }
 
@@ -112,6 +245,13 @@ export default {
       }, 403);
     }
 
+    if (!validPreviewAuditToken(request, env)) {
+      return jsonResponse({
+        error: "Jeton d'audit absent ou invalide.",
+        mode
+      }, 401);
+    }
+
     const requestedStore = url.searchParams.get("store") as StoreKey | null;
     const selected = selectRequestedConnectors(requestedStore);
 
@@ -122,7 +262,7 @@ export default {
       }, 400);
     }
 
-    const stores = await runAudits(selected);
+    const stores = await runAudits(selected, env);
 
     if (url.pathname === "/audit") {
       return jsonResponse({
@@ -132,9 +272,16 @@ export default {
       });
     }
 
-    const candidates = stores.flatMap((store) => store.candidates);
+    const calendar = await officialCalendarPreview();
+    const candidates = stores
+      .flatMap((store) => store.candidates)
+      .map((candidate) => candidateForActiveProducts(candidate, calendar.activeProducts))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
     const evaluation = await evaluateCandidates(candidates, env, {
-      baselineStores: selected.map((connector) => connector.key)
+      config: buildActiveWatchConfig(calendar.activeProducts),
+      baselineStores: selected
+        .filter((connector) => connector.commercialAlertsEnabled !== false)
+        .map((connector) => connector.key)
     });
 
     return jsonResponse({
@@ -143,22 +290,5 @@ export default {
       stores,
       evaluation
     });
-  },
-
-  async scheduled(
-    controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<void> {
-    ctx.waitUntil(
-      runMonitoringCycle(env, { scheduledTime: controller.scheduledTime })
-        .then((result) => {
-          console.log(JSON.stringify({ event: "tcg-monitor", ...result }));
-        })
-        .catch((error) => {
-          console.error("TCG monitoring failed", error);
-          throw error;
-        })
-    );
   }
 };

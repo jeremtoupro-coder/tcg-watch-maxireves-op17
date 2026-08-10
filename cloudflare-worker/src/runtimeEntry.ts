@@ -1,0 +1,130 @@
+import previewWorker from "./index";
+import {
+  CalendarCoordinatorDurableObject,
+  StoreMonitorDurableObject,
+  assertRuntimeReadiness,
+  runDistributedMonitoringCycle,
+  type RuntimeEnv
+} from "./durableMonitoring";
+import { CONNECTORS } from "./connectors";
+import type { Env, StoreKey } from "./types";
+
+export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
+
+type ProductionProbeEnv = RuntimeEnv & { PRODUCTION_PROBE_MODE?: string };
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff"
+    }
+  });
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const length = Math.max(left.length, right.length);
+  let mismatch = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+  return mismatch === 0;
+}
+
+function validRuntimeToken(request: Request, env: RuntimeEnv): boolean {
+  const expected = env.PREVIEW_AUDIT_TOKEN?.trim();
+  if (!expected) return false;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  const explicit = request.headers.get("x-op-watch-audit-token")?.trim() ?? "";
+  const received = bearer || explicit;
+  return Boolean(received) && constantTimeEqual(received, expected);
+}
+
+async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (env.RUNTIME_TEST_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+
+  const url = new URL(request.url);
+  if (url.searchParams.get("probe") === "auth") {
+    const safe = env.SCHEDULER_MODE === "disabled" &&
+      env.DISCORD_MODE === "dry-run" &&
+      env.MONITORING_ENABLED === "true" &&
+      env.WRITE_STATE === "true" &&
+      Boolean(env.RUNTIME_TEST_RUN_ID?.trim());
+    if (!safe) {
+      return json({ error: "Runtime test non conforme aux garde-fous d'isolation." }, 503);
+    }
+    return json({
+      status: "ready",
+      mode: "test",
+      schedulerMode: "disabled",
+      discordMode: "dry-run",
+      productionStateWrites: false
+    });
+  }
+
+  const rawTime = url.searchParams.get("time");
+  const scheduledTime = rawTime ? Number(rawTime) : Date.now();
+  if (!Number.isFinite(scheduledTime)) return json({ error: "Paramètre time invalide." }, 400);
+  const forceDiscovery = url.searchParams.get("discovery") === "true";
+  const forceStore = url.searchParams.get("store") as StoreKey | null;
+
+  try {
+    return json(await runDistributedMonitoringCycle(env, {
+      mode: "test",
+      scheduledTime,
+      forceDiscovery,
+      forceStore: forceStore ?? undefined
+    }));
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
+async function productionReady(request: Request, env: ProductionProbeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+
+  try {
+    assertRuntimeReadiness(env, "live");
+    return json({
+      status: "ready",
+      mode: "live",
+      schedulerMode: env.SCHEDULER_MODE,
+      discordMode: env.DISCORD_MODE,
+      monitoringEnabled: env.MONITORING_ENABLED === "true",
+      stateWritesEnabled: env.WRITE_STATE === "true",
+      stores: CONNECTORS.map((connector) => connector.key),
+      automaticPolling: false,
+      note: "Sonde de readiness uniquement : aucun audit marchand n'est exécuté par cette route."
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/runtime-test") {
+      return runtimeTest(request, env as RuntimeEnv);
+    }
+    if (pathname === "/runtime-ready") {
+      return productionReady(request, env as ProductionProbeEnv);
+    }
+    return previewWorker.fetch(request, env);
+  },
+
+  scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    const runtimeEnv = env as RuntimeEnv;
+    if (runtimeEnv.SCHEDULER_MODE !== "live") return;
+    ctx.waitUntil(runDistributedMonitoringCycle(runtimeEnv, {
+      mode: "live",
+      scheduledTime: controller.scheduledTime
+    }).then(() => undefined));
+  }
+};

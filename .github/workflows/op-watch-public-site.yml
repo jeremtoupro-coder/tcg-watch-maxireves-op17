@@ -1,0 +1,78 @@
+name: OP Watch Public Landing
+
+on:
+  push:
+    branches:
+      - op-watch-v1-test
+    paths:
+      - "cloudflare-worker/public-site/**"
+      - ".github/workflows/op-watch-public-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op-watch-public-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy neutral public landing
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAGES_PROJECT: op-watch-tcg-fr
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Cloudflare credentials
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Deploy public landing
+        run: >-
+          npx wrangler pages deploy public-site
+          --project-name="$PAGES_PROJECT"
+          --branch=op-watch-v1-test
+          --commit-hash="$GITHUB_SHA"
+          --commit-message="OP Watch public landing"
+
+      - name: Verify interactive public service and official calendar
+        shell: bash
+        run: |
+          url="https://${PAGES_PROJECT}.pages.dev/"
+          for attempt in {1..12}; do
+            body="$(curl -fsSL --max-time 20 "$url" || true)"
+            calendar="$(curl -fsSL --max-time 20 "${url}api/calendar" || true)"
+            if grep -q "OP WATCH" <<<"$body" && \
+               grep -q "Utiliser OP Watch" <<<"$body" && \
+               grep -q "Créer une veille" <<<"$body" && \
+               grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body" && \
+               grep -q '"activeProducts"' <<<"$calendar"; then
+              echo "PUBLIC_URL=$url" >> "$GITHUB_ENV"
+              echo "Interactive public service ready: $url"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Interactive public service did not become reachable with expected content at $url" >&2
+          exit 1

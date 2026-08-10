@@ -1,22 +1,19 @@
 import { fantasySphere } from "./fantasySphere";
-import { ludotrotter } from "./ludotrotter";
 import { maxireves } from "./maxireves";
 import { oupi } from "./oupi";
+import { pixelheart } from "./pixelheart";
+import { ROLLOUT_CONNECTORS } from "./rollout";
 import type { ConnectorDefinition, StoreKey } from "../types";
 
 export const CONNECTORS: ConnectorDefinition[] = [
   maxireves,
-  ludotrotter,
   oupi,
-  fantasySphere
+  pixelheart,
+  fantasySphere,
+  ...ROLLOUT_CONNECTORS
 ];
 
-export const DEFAULT_CLOUDFLARE_STORES: StoreKey[] = [
-  "maxireves",
-  "ludotrotter",
-  "oupi",
-  "fantasy-sphere"
-];
+export const DEFAULT_CLOUDFLARE_STORES: StoreKey[] = CONNECTORS.map((connector) => connector.key);
 
 export function selectConnectors(storeKeys: StoreKey[]): ConnectorDefinition[] {
   const requested = new Set(storeKeys);

@@ -1,4 +1,5 @@
 import type { AlertMatch, DiscordPayload, Env } from "./types";
+import { detectProductFormat } from "./opwatchV1";
 
 const EVENT_LABELS: Record<AlertMatch["change"]["type"], string> = {
   new_listing: "Nouvelle fiche détectée",
@@ -17,6 +18,34 @@ const AVAILABILITY_LABELS: Record<AlertMatch["change"]["candidate"]["availabilit
   unknown: "Statut inconnu"
 };
 
+const FORMAT_LABELS = {
+  booster: "Booster à l'unité",
+  display: "Display / booster box",
+  case: "Case / carton",
+  double_pack: "Double pack",
+  starter: "Starter deck",
+  other: "Format non déterminé"
+} as const;
+
+const DISCORD_TIMEOUT_MS = 15_000;
+const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com"]);
+
+function validDiscordWebhookUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" &&
+      parsed.port === "" &&
+      !parsed.username &&
+      !parsed.password &&
+      DISCORD_WEBHOOK_HOSTS.has(parsed.hostname) &&
+      /^\/api(?:\/v\d+)?\/webhooks\/\d+\/[^/]+\/?$/.test(parsed.pathname) &&
+      parsed.search === "" &&
+      parsed.hash === "";
+  } catch {
+    return false;
+  }
+}
+
 function previousPrice(match: AlertMatch): string | undefined {
   return match.change.previous?.priceText;
 }
@@ -27,25 +56,37 @@ export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
   const price = candidate.priceText ?? "Prix non détecté";
   const oldPrice = previousPrice(match);
   const priceValue = oldPrice && oldPrice !== price ? `${oldPrice} → ${price}` : price;
+  const format = candidate.format ?? detectProductFormat(`${candidate.title} ${candidate.url}`);
+  const detectedAt = new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: "Europe/Paris"
+  }).format(new Date(match.change.detectedAt));
+
+  const embed: DiscordPayload["embeds"][number] = {
+    title: `${eventLabel} — ${match.matchedProductIds.join(", ")}`,
+    url: candidate.url,
+    description: candidate.title,
+    fields: [
+      { name: "🏷️ Référence", value: match.matchedProductIds.join(", "), inline: true },
+      { name: "🧩 Format", value: FORMAT_LABELS[format], inline: true },
+      { name: "💰 Prix", value: priceValue, inline: true },
+      { name: "🏪 Boutique", value: candidate.storeName, inline: true },
+      ...(candidate.seller ? [{ name: "✅ Vendeur", value: candidate.seller, inline: true }] : []),
+      { name: "📦 Disponibilité", value: AVAILABILITY_LABELS[candidate.availability], inline: true },
+      { name: "🇫🇷 Langue", value: candidate.language, inline: true },
+      { name: "🕒 Détecté", value: detectedAt, inline: true },
+      { name: "🔗 Offre", value: `[Voir le produit](${candidate.url})`, inline: false }
+    ],
+    footer: { text: `OP Watch • ${match.rule.id}` },
+    timestamp: match.change.detectedAt
+  };
+
+  if (candidate.imageUrl) embed.thumbnail = { url: candidate.imageUrl };
 
   return {
-    username: "TCG Watch",
-    embeds: [
-      {
-        title: `${eventLabel} — ${match.matchedProductIds.join(", ")}`,
-        url: candidate.url,
-        description: candidate.title,
-        fields: [
-          { name: "Boutique", value: candidate.storeName, inline: true },
-          { name: "Disponibilité", value: AVAILABILITY_LABELS[candidate.availability], inline: true },
-          { name: "Langue", value: candidate.language, inline: true },
-          { name: "Prix", value: priceValue, inline: true },
-          { name: "Règle", value: match.rule.label, inline: false }
-        ],
-        footer: { text: `Alerte ${match.rule.id}` },
-        timestamp: match.change.detectedAt
-      }
-    ]
+    username: "OP Watch",
+    embeds: [embed]
   };
 }
 
@@ -82,15 +123,27 @@ export async function dispatchDiscordPayloads(
     };
   }
 
+  if (!validDiscordWebhookUrl(env.DISCORD_WEBHOOK_URL)) {
+    return {
+      mode,
+      attempted: payloads.length,
+      sent: 0,
+      errors: ["DISCORD_WEBHOOK_URL n'est pas un endpoint webhook Discord officiel valide."]
+    };
+  }
+
   let sent = 0;
   const errors: string[] = [];
 
   for (const payload of payloads) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DISCORD_TIMEOUT_MS);
     try {
       const response = await fetch(env.DISCORD_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
 
       if (!response.ok) {
@@ -100,7 +153,13 @@ export async function dispatchDiscordPayloads(
 
       sent += 1;
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
+      errors.push(
+        error instanceof Error && error.name === "AbortError"
+          ? "Discord: délai réseau dépassé"
+          : error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

@@ -99,7 +99,13 @@ function fnv1a(value: string): string {
 }
 
 export function productStateKey(candidate: ProductCandidate): string {
-  return `product:${candidate.store}:${fnv1a(candidate.url)}`;
+  const fallbackIdentity = [
+    candidate.store,
+    [...candidate.matchedReferences].sort().join(","),
+    candidate.format ?? "other",
+    candidate.externalId ?? candidate.title.toLowerCase().replace(/[^a-z0-9]+/g, "")
+  ].join("|");
+  return `product:v3:${candidate.store}:${fnv1a(candidate.identityKey ?? fallbackIdentity)}`;
 }
 
 export function parseEuroPriceToCents(priceText?: string): number | undefined {
@@ -150,6 +156,8 @@ export function toSnapshot(
     title: candidate.title,
     url: candidate.url,
     matchedReferences: [...candidate.matchedReferences].sort(),
+    format: candidate.format,
+    identityKey: candidate.identityKey,
     availability: candidate.availability,
     language: candidate.language,
     priceText: candidate.priceText,
@@ -161,6 +169,20 @@ export function toSnapshot(
 
 function sameStringArray(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+export function samePersistedProductState(left: ProductSnapshot, right: ProductSnapshot): boolean {
+  return left.key === right.key &&
+    left.store === right.store &&
+    left.storeName === right.storeName &&
+    left.title === right.title &&
+    left.url === right.url &&
+    sameStringArray(left.matchedReferences, right.matchedReferences) &&
+    left.format === right.format &&
+    left.identityKey === right.identityKey &&
+    left.availability === right.availability &&
+    left.language === right.language &&
+    left.priceCents === right.priceCents;
 }
 
 export function detectProductChanges(
@@ -220,6 +242,8 @@ export function detectProductChanges(
 
   const detailsChanged =
     current.title !== previous.title ||
+    current.url !== previous.url ||
+    current.format !== previous.format ||
     current.language !== previous.language ||
     !sameStringArray(current.matchedReferences, previous.matchedReferences);
 
@@ -239,6 +263,7 @@ export async function processCandidates(
 ): Promise<{
   changes: ProductChange[];
   snapshots: ProductSnapshot[];
+  previousByKey: Map<string, ProductSnapshot | undefined>;
   uniqueCandidates: number;
   stateWrites: number;
 }> {
@@ -249,17 +274,23 @@ export async function processCandidates(
 
   const changes: ProductChange[] = [];
   const snapshots: ProductSnapshot[] = [];
+  const previousByKey = new Map<string, ProductSnapshot | undefined>();
   let stateWrites = 0;
   const now = options.now ?? new Date().toISOString();
 
   for (const [key, candidate] of unique.entries()) {
     const previous = await store.get(key);
+    previousByKey.set(key, previous);
     const initialDiscovery = options.initialBaselineByStore?.[candidate.store] ?? true;
     const result = detectProductChanges(candidate, previous, now, initialDiscovery);
     changes.push(...result.changes);
     snapshots.push(result.current);
 
-    if (options.writeState && store.writable) {
+    if (
+      options.writeState &&
+      store.writable &&
+      (!previous || !samePersistedProductState(previous, result.current))
+    ) {
       await store.put(key, result.current);
       stateWrites += 1;
     }
@@ -268,6 +299,7 @@ export async function processCandidates(
   return {
     changes,
     snapshots,
+    previousByKey,
     uniqueCandidates: unique.size,
     stateWrites
   };

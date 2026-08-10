@@ -18,6 +18,8 @@ export const fantasySphere: ConnectorDefinition = {
     "https://en.fantasysphere.net/product/carton-de-24-boosters-blister-op18-one-piece-cg-op-18-fr-10045254"
   ],
   productUrlPatterns: [/\/product\//i],
+  responseMustContainAny: [/one[\s-]*piece/i],
+  requiresDirectProductPageForAlerts: true,
   notes: [
     "Les fiches cibles sont contrôlées directement, même avant leur apparition dans la catégorie publique."
   ]

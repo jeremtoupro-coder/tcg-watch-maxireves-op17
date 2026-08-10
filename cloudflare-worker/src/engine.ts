@@ -1,19 +1,23 @@
 import { evaluateAlertRules } from "./alerts";
-import { WATCH_CONFIG } from "./config";
 import { deliverAlertMatches } from "./delivery";
-import { createStateStore, processCandidates, type StateStore } from "./state";
+import {
+  createStateStore,
+  processCandidates,
+  samePersistedProductState,
+  type StateStore
+} from "./state";
 import type { Env, ProductCandidate, StoreKey, WatchConfig } from "./types";
 
 export async function evaluateCandidates(
   candidates: ProductCandidate[],
   env: Env,
   options: {
-    config?: WatchConfig;
+    config: WatchConfig;
     stateStore?: StateStore;
     now?: string;
     baselineStores?: StoreKey[];
     claimSettleMs?: number;
-  } = {}
+  }
 ): Promise<{
   configVersion: number;
   state: {
@@ -34,7 +38,7 @@ export async function evaluateCandidates(
   discordDispatch: Awaited<ReturnType<typeof deliverAlertMatches>>["dispatch"];
   deliveryDedupe: Awaited<ReturnType<typeof deliverAlertMatches>>["dedupe"];
 }> {
-  const config = options.config ?? WATCH_CONFIG;
+  const config = options.config;
   const stateStore = options.stateStore ?? createStateStore(env);
   const requestedWrite = env.WRITE_STATE === "true";
   const baselineStores = options.baselineStores ?? [...new Set(candidates.map((candidate) => candidate.store))];
@@ -49,25 +53,42 @@ export async function evaluateCandidates(
   }
 
   const processed = await processCandidates(candidates, stateStore, {
-    writeState: requestedWrite,
+    // La transition n'est validée qu'après la livraison Discord. Sinon une
+    // panne webhook ferait perdre définitivement l'alerte au cycle suivant.
+    writeState: false,
     now: options.now,
     initialBaselineByStore
   });
-
-  if (requestedWrite && stateStore.writable) {
-    for (const store of baselineStores) {
-      if (baselines[store].completeBefore) continue;
-      const baselineKey = `baseline:config-v${config.version}:${store}`;
-      await stateStore.putMetadata(baselineKey, "complete");
-      baselines[store].markedComplete = true;
-    }
-  }
 
   const alertMatches = evaluateAlertRules(processed.changes, config);
   const delivery = await deliverAlertMatches(alertMatches, env, stateStore, {
     claimSettleMs: options.claimSettleMs,
     now: options.now
   });
+  const blockedProductKeys = new Set(delivery.blockedProductKeys);
+  let stateWrites = 0;
+
+  if (requestedWrite && stateStore.writable) {
+    for (const snapshot of processed.snapshots) {
+      if (blockedProductKeys.has(snapshot.key)) continue;
+      const previous = processed.previousByKey.get(snapshot.key);
+      if (previous && samePersistedProductState(previous, snapshot)) continue;
+      await stateStore.put(snapshot.key, snapshot);
+      stateWrites += 1;
+    }
+
+    const blockedStores = new Set(
+      processed.snapshots
+        .filter((snapshot) => blockedProductKeys.has(snapshot.key))
+        .map((snapshot) => snapshot.store)
+    );
+    for (const store of baselineStores) {
+      if (baselines[store].completeBefore || blockedStores.has(store)) continue;
+      const baselineKey = `baseline:config-v${config.version}:${store}`;
+      await stateStore.putMetadata(baselineKey, "complete");
+      baselines[store].markedComplete = true;
+    }
+  }
 
   return {
     configVersion: config.version,
@@ -75,7 +96,7 @@ export async function evaluateCandidates(
       mode: stateStore.mode,
       writable: stateStore.writable,
       requestedWrite,
-      writes: processed.stateWrites,
+      writes: stateWrites,
       baselines
     },
     uniqueCandidates: processed.uniqueCandidates,

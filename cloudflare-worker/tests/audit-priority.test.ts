@@ -44,4 +44,190 @@ describe("priorité de la fiche produit", () => {
     expect(candidate?.availability).toBe("unavailable");
     expect(candidate?.sourceUrl).toBe(productUrl);
   });
+
+  it("suit une fiche Oupi découverte et lui donne priorité sans devoir connaître son URL à l'avance", async () => {
+    const categoryUrl = "https://oupi.test/fr/413-precommande-one-piece";
+    const productUrl = "https://oupi.test/fr/display-one-piece/7367-display-op-17-francais.html";
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: [categoryUrl],
+      productUrlPatterns: [/\/\d+-[^/?#]+\.html$/i],
+      followDiscoveredProductPages: true,
+      maxDiscoveredProductPages: 8,
+      notes: []
+    };
+
+    const categoryHtml = `
+      <article>
+        <a href="${productUrl}" title="Display OP-17 Boite de Booster (Français)">
+          Display OP-17 Boite de Booster (Français)
+        </a>
+        <p>Précommande ouverte</p><span>119,80 €</span>
+      </article>
+    `;
+    const productHtml = `
+      <h1>Display OP-17 Boite de Booster (Français)</h1>
+      <span>119,80 €</span>
+      <div>Rupture de stock</div>
+      <p>Précommande : disponibilité août 2026.</p>
+      <dl><dt>Langue</dt><dd>Français</dd></dl>
+    `;
+
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      return new Response(url === productUrl ? productHtml : categoryHtml, {
+        status: 200,
+        headers: { "Content-Type": "text/html" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditConnector(connector);
+    const candidate = audit.candidates.find((item) => item.url === productUrl);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(audit.sources.map((source) => source.sourceUrl)).toContain(productUrl);
+    expect(candidate?.sourceUrl).toBe(productUrl);
+    expect(candidate?.availability).toBe("unavailable");
+    expect(candidate?.language).toBe("Français confirmé");
+  });
+
+  it("privilégie la langue structurée du produit malgré une phrase erronée et des produits liés en anglais", async () => {
+    const productUrl = "https://oupi.test/fr/case-scelle-de-display/7368-case-op-17-francais.html";
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: [productUrl],
+      productUrlPatterns: [/\/\d+-[^/?#]+\.html$/i],
+      notes: []
+    };
+
+    const html = `
+      <h1>Case Scellée de 12 Display OP-17 (Français) - One Piece Card Game</h1>
+      <div>Rupture de stock</div>
+      <p>Découvrez ce carton de boosters en Anglais du jeu One Piece.</p>
+      <section class="product-features">
+        <span>Fiche technique</span>
+        <dl><dt>Langue</dt><dd>Français</dd></dl>
+      </section>
+      <h2>16 autres produits dans la même catégorie :</h2>
+      <a href="/9999-other.html">Display OP-12 (Anglais)</a>
+    `;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].language).toBe("Français confirmé");
+    expect(audit.candidates[0].availability).toBe("unavailable");
+  });
+
+  it("reconnaît le champ Philibert Langue(s) sans contamination du texte anglais", async () => {
+    const productUrl = "https://philibert.test/fr/one-piece/op17-boite-24-boosters.html";
+    const connector: ConnectorDefinition = {
+      key: "philibert",
+      name: "Philibert",
+      sources: [productUrl],
+      productUrlPatterns: [/\/op17-[^/?#]+\.html$/i],
+      notes: []
+    };
+    const html = `
+      <h1>One Piece - OP17 - Boite de 24 Boosters</h1>
+      <p>Boite de boosters en français.</p>
+      <dl><dt>Langue(s)</dt><dd>Français</dd></dl>
+      <p>Jeux de rôle en anglais</p>
+      <p>En stock</p>
+    `;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].language).toBe("Français confirmé");
+  });
+
+  it("applique le profil HTTP explicite du connecteur au lieu d'imiter un navigateur", async () => {
+    const categoryUrl = "https://oupi.test/fr/413-precommande-one-piece";
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: [categoryUrl],
+      productUrlPatterns: [/\.html$/i],
+      requestHeaders: {
+        "User-Agent": "OPWatch/1.0 (+personal read-only stock monitor)"
+      },
+      notes: []
+    };
+
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("user-agent")).toBe("OPWatch/1.0 (+personal read-only stock monitor)");
+      expect(headers.get("user-agent")).not.toMatch(/Mozilla\/5\.0/i);
+      return new Response("<html><body>One Piece</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditConnector(connector);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(audit.sources[0].status).toBe(200);
+  });
+
+  it("conserve un HTTP 403 comme erreur de source et ne fabrique aucun état de stock", async () => {
+    const connector: ConnectorDefinition = {
+      key: "oupi",
+      name: "Oupi",
+      sources: ["https://oupi.test/fr/413-precommande-one-piece"],
+      productUrlPatterns: [/\.html$/i],
+      notes: []
+    };
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Forbidden", { status: 403 })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.sources[0].error).toBe("HTTP 403");
+    expect(audit.sources[0].candidates).toEqual([]);
+    expect(audit.candidates).toEqual([]);
+  });
+
+  it("ignore un bouton add-to-cart WooCommerce qui hérite de l'URL OP17 mais cible un autre produit", async () => {
+    const productUrl = "https://example.test/produit/display-op17-fr/";
+    const connector: ConnectorDefinition = {
+      key: "pixelheart",
+      name: "PixelHeart",
+      sources: [productUrl],
+      productUrlPatterns: [/\/produit\//i],
+      notes: []
+    };
+
+    const html = `
+      <html><head><meta property="og:image" content="/op17.jpg"></head><body>
+        <h1>Display OP17 Version Française</h1>
+        <p>Précommande 249,90 &euro;</p>
+        <a href="${productUrl}?add-to-cart=999" aria-label="Ajouter au panier : Pokemon unrelated">
+          Ajouter au panier : Pokemon unrelated
+        </a>
+      </body></html>
+    `;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+
+    const audit = await auditConnector(connector);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].url).toBe(productUrl);
+    expect(audit.candidates[0].title).toBe("Display OP17 Version Française");
+    expect(audit.candidates[0].priceText).toBe("249,90 €");
+  });
 });

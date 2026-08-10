@@ -2,6 +2,16 @@ export type StoreKey = string;
 
 export type Availability = "available" | "preorder" | "unavailable" | "unknown";
 
+export type ProductFormat = "booster" | "display" | "case" | "double_pack" | "starter" | "other";
+
+export type StoreConfiguredStatus =
+  | "active_fast_watch"
+  | "discovery_only"
+  | "pending_authorized_feed"
+  | "disabled";
+
+export type StoreRuntimeStatus = "healthy" | "degraded" | "pending" | "disabled";
+
 export type LanguageStatus =
   | "Français confirmé"
   | "Langue non précisée"
@@ -57,9 +67,17 @@ export interface ProductCandidate {
   url: string;
   sourceUrl: string;
   matchedReferences: string[];
+  format?: ProductFormat;
+  /** Identité commerciale stable, indépendante d'une éventuelle réécriture d'URL. */
+  identityKey?: string;
+  externalId?: string;
+  seller?: string;
   availability: Availability;
   language: LanguageStatus;
   priceText?: string;
+  imageUrl?: string;
+  commercialEligible?: boolean;
+  commercialEligibilityReason?: string;
   excerpt: string;
 }
 
@@ -70,6 +88,8 @@ export interface ProductSnapshot {
   title: string;
   url: string;
   matchedReferences: string[];
+  format?: ProductFormat;
+  identityKey?: string;
   availability: Availability;
   language: LanguageStatus;
   priceText?: string;
@@ -107,6 +127,7 @@ export interface DiscordPayload {
     url: string;
     description: string;
     fields: DiscordEmbedField[];
+    thumbnail?: { url: string };
     footer: { text: string };
     timestamp: string;
   }>;
@@ -133,6 +154,12 @@ export interface StoreAudit {
   sources: SourceAudit[];
   candidates: ProductCandidate[];
   notes: string[];
+  configuredStatus?: StoreConfiguredStatus;
+  runtimeStatus?: StoreRuntimeStatus;
+  sourceKind?: "public_html" | "public_structured_feed" | "authorized_feed" | "none";
+  fastWatchCapable?: boolean;
+  discoveryCapable?: boolean;
+  commercialEligible?: boolean;
 }
 
 export interface ConnectorDefinition {
@@ -140,7 +167,35 @@ export interface ConnectorDefinition {
   name: string;
   sources: string[];
   productUrlPatterns: RegExp[];
+  /**
+   * Ramène les variantes de tracking d'une même fiche vers une URL stable.
+   * Exemple : les multiples formes Amazon d'un même ASIN.
+   */
+  canonicalizeProductUrl?: (url: string) => string;
   maxConcurrency?: number;
+  requestHeaders?: Record<string, string>;
+  followDiscoveredProductPages?: boolean;
+  maxDiscoveredProductPages?: number;
+  /**
+   * Certaines marketplaces ne doivent alerter que lorsque la fiche directe
+   * confirme le vendeur attendu (Fnac, E.Leclerc, Carrefour, Amazon...).
+   */
+  requiresDirectProductPageForAlerts?: boolean;
+  requiredSellerPatterns?: RegExp[];
+  requiredSellerLabel?: string;
+  /** Intègre/audite une source sans autoriser ses alertes commerciales. */
+  commercialAlertsEnabled?: boolean;
+  /** Un HTTP 200 seul ne suffit pas : un marqueur métier doit être présent. */
+  responseMustContainAny?: RegExp[];
+  /** Nom du secret Cloudflare contenant l'URL d'un flux produit autorisé. */
+  authorizedFeedEnv?: string;
+  /**
+   * Pour les origines anti-bot connues, évite de les marteler chaque minute
+   * lorsque le flux autorisé n'est pas encore configuré.
+   */
+  directPollingDisabledWithoutFeed?: boolean;
+  /** Une source structurée publique peut faire foi sans relire chaque fiche HTML. */
+  authoritativeStructuredFeed?: boolean;
   notes: string[];
 }
 
@@ -152,5 +207,12 @@ export interface Env {
   WRITE_STATE?: string;
   DISCORD_MODE?: "dry-run" | "live";
   DISCORD_WEBHOOK_URL?: string;
+  PREVIEW_AUDIT_TOKEN?: string;
+  AUTHORIZED_FEED_PLAYIN_URL?: string;
+  AUTHORIZED_FEED_CULTURA_URL?: string;
+  AUTHORIZED_FEED_MICROMANIA_URL?: string;
+  AUTHORIZED_FEED_FNAC_URL?: string;
+  AUTHORIZED_FEED_CARREFOUR_URL?: string;
+  AUTHORIZED_FEED_KING_JOUET_URL?: string;
   TCG_STATE?: KVNamespace;
 }

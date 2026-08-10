@@ -9,7 +9,9 @@ function candidate(overrides: Partial<ProductCandidate> = {}): ProductCandidate 
     title: "Display OP-17 FR",
     url: "https://oupi.eu/produit/op-17-fr.html",
     sourceUrl: "https://oupi.eu/en/413-pre-order-one-piece",
-    matchedReferences: ["OP17"],
+    matchedReferences: ["OP-17"],
+    format: "display",
+    identityKey: "oupi|OP-17|display|fr|displayop17",
     availability: "unavailable",
     language: "Français confirmé",
     priceText: "119,76 €",
@@ -35,6 +37,7 @@ describe("état produit et anti-doublon", () => {
     });
 
     expect(second.changes).toEqual([]);
+    expect(second.stateWrites).toBe(0);
   });
 
   it("détecte un retour en stock", async () => {
@@ -81,5 +84,24 @@ describe("état produit et anti-doublon", () => {
 
     expect(result.uniqueCandidates).toBe(1);
     expect(result.stateWrites).toBe(1);
+  });
+
+  it("conserve la même identité lorsque l'URL marchande change", async () => {
+    const store = new MemoryStateStore();
+    const first = await processCandidates([candidate()], store, {
+      writeState: true,
+      now: "2026-06-27T10:00:00.000Z"
+    });
+    const moved = await processCandidates([
+      candidate({ url: "https://oupi.eu/produit/nouvelle-url-op17.html" })
+    ], store, {
+      writeState: true,
+      now: "2026-06-27T10:01:00.000Z",
+      initialBaselineByStore: { oupi: false }
+    });
+
+    expect(moved.snapshots[0].key).toBe(first.snapshots[0].key);
+    expect(moved.changes.map((change) => change.type)).toEqual(["details_changed"]);
+    expect(moved.changes.every((change) => change.type !== "new_listing")).toBe(true);
   });
 });

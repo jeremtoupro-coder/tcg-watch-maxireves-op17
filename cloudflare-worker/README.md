@@ -1,123 +1,90 @@
-# TCG Watch — moteur d'alertes configurable
+# OP Watch V1 — moteur TypeScript
 
-Ce dossier est isolé du watcher Python actuellement actif sur `main`.
+Ce dossier contient le moteur de la V1 TEST. Le calendrier officiel français détermine dynamiquement les références actives ; il n'existe plus de liste commerciale statique concurrente.
 
-## État de sécurité
+## Flux de traitement
 
-Le projet reste volontairement limité :
+1. Charger toutes les pages du catalogue officiel `fr.onepiece-cardgame.com`.
+2. Rejeter toute page d'erreur ou de challenge, même en HTTP 200.
+3. Extraire les références OP, EB, PRB, ST, DP et TS ayant une date exacte.
+4. Garder les produits dans la fenêtre J-120/J+30.
+5. Exécuter Discovery toutes les 15 minutes et mémoriser les fiches directes reconnues.
+6. Relire uniquement ces fiches en Fast Watch entre deux découvertes.
+7. Exiger format ciblé, stock déterminé et français confirmé.
+8. Comparer avec l'état persistant, construire au plus une alerte par produit et par cycle, puis valider l'état seulement après livraison Discord.
 
-- aucun cron Cloudflare ;
-- aucun binding KV ou D1 actif ;
-- aucun secret Discord ;
-- `DISCORD_MODE` fixé à `dry-run` ;
-- `WRITE_STATE` fixé à `false` ;
-- aucun déploiement automatique ;
-- aucun achat, panier ou connexion client.
+Une erreur réseau, un challenge, une fiche ambiguë ou un vendeur marketplace non confirmé ne peut jamais devenir une rupture, une disparition ou une alerte commerciale.
 
-Il effectue uniquement des requêtes HTTP GET publiques lorsqu'un audit est lancé manuellement.
+## Sécurité de la Preview
 
-## Configuration évolutive
+Le workflow de test génère une configuration dédiée :
 
-Les produits et règles d'alerte sont centralisés ici :
+- Worker : `tcg-watch-one-piece-preview` ;
+- `MONITORING_ENABLED=false` ;
+- `WRITE_STATE=false` ;
+- `DISCORD_MODE=dry-run` ;
+- aucun binding KV ;
+- aucun cron ;
+- `/audit` et `/evaluate` protégées par un secret isolé et stable, dérivé par HMAC du credential de déploiement sans exposer ce credential au Worker ;
+- aucune URL de flux autorisé dans les réponses ou les logs.
 
-```text
-config/alerts.json
-```
-
-Il est possible de :
-
-- désactiver une alerte avec `enabled: false` ;
-- réactiver une ancienne alerte ;
-- ajouter OP19 ou toute autre référence avec ses alias ;
-- limiter une règle à certaines boutiques ou langues ;
-- choisir les événements surveillés ;
-- fixer un prix maximal en centimes.
-
-Guide détaillé : `docs/gestion-alertes.md`.
-
-## Fonctions déjà développées
-
-- détection des fiches ciblées ;
-- état produit compatible avec Cloudflare KV ;
-- anti-doublon par boutique et URL ;
-- première base silencieuse ;
-- retour en stock ;
-- ouverture des précommandes ;
-- baisse et hausse de prix ;
-- passage en indisponible ;
-- modification de titre, langue ou référence ;
-- filtrage par règle ;
-- génération de messages Discord ;
-- simulation Discord sans envoi réseau.
-
-## Boutiques configurées
-
-- Maxi Rêves ;
-- Ludotrotter ;
-- Oupi ;
-- Fantasy Sphere.
-
-L'audit mesuré est disponible dans `docs/audit-2026-06-27.md`.
-
-## Routes du prototype
+Routes publiques :
 
 ```text
 GET /
+GET /health
 GET /config
-GET /audit
-GET /audit?store=maxireves
-GET /evaluate
-GET /evaluate?store=oupi
+GET /opwatch/v1/calendar
 ```
 
-- `/audit` renvoie les résultats bruts des boutiques.
-- `/evaluate` applique l'état, les changements, les règles et génère les aperçus Discord.
-- `/config` affiche la configuration chargée.
-
-## Validation réelle effectuée
-
-L'évaluation ponctuelle du 27 juin 2026 a trouvé quatre fiches OP17 chez Oupi :
-
-- case anglaise ;
-- display anglais ;
-- case française ;
-- display français.
-
-Résultat de la première base :
-
-- 4 candidats uniques ;
-- 4 événements `new_listing` initiaux ;
-- 0 règle déclenchée ;
-- 0 message Discord construit ;
-- 0 message envoyé ;
-- 0 écriture persistante.
-
-Ce comportement évite une pluie d'alertes lors de la première mise en service.
-
-## Contrôles automatiques
-
-Les contrôles suivants réussissent dans GitHub Actions :
+Routes authentifiées de test :
 
 ```text
-npm install
+GET /audit?store=<id>
+GET /evaluate?store=<id>
+```
+
+Toutes les autres méthodes sont refusées.
+
+## État et anti-doublon
+
+- `product:v3:*` : identité commerciale stable, indépendante d'une réécriture d'URL ;
+- `baseline:config-v3:<store>` : première collecte silencieuse ;
+- `delivery-claim:*` et `delivery-receipt:*` : anti-doublon de livraison ;
+- `discovery:v1:<store>` : fiches directes actives découvertes ;
+- `official-calendar:fr:v1` : cache officiel de 15 minutes.
+
+Un état inchangé n'est pas réécrit. En cas d'échec Discord, la transition produit n'est pas validée et redevient immédiatement éligible au cycle suivant.
+
+## Boutiques et flux autorisés
+
+Les 21 connecteurs sont définis dans `src/connectors`. Les six origines protégées ne sont jamais interrogées sans flux autorisé :
+
+```text
+AUTHORIZED_FEED_PLAYIN_URL
+AUTHORIZED_FEED_CULTURA_URL
+AUTHORIZED_FEED_MICROMANIA_URL
+AUTHORIZED_FEED_FNAC_URL
+AUTHORIZED_FEED_CARREFOUR_URL
+AUTHORIZED_FEED_KING_JOUET_URL
+```
+
+Le parseur accepte CSV, TSV, JSON et XML. Les URL de flux doivent être HTTPS, ne peuvent pas cibler une adresse locale/privée et sont remplacées par `authorized-feed:<store>` dans les diagnostics.
+
+## Commandes
+
+```bash
+npm ci
 npm run typecheck
 npm test
+npm audit
 npx wrangler deploy --dry-run
 ```
 
-Aucune de ces commandes ne déploie le Worker.
+`npm run smoke-preview` et `npm run audit-preview` sont réservées au workflow après déploiement. Elles nécessitent `PREVIEW_URL` et `PREVIEW_AUDIT_TOKEN`.
 
-## Architecture retenue
+## Production
 
-- Maxi Rêves, Ludotrotter et Oupi : connecteurs Cloudflare directs.
-- Fantasy Sphere : catégorie visible contrôlée par Cloudflare, découverte exhaustive du sitemap assurée à fréquence plus lente par GitHub Actions.
-- Le watcher historique Maxi Rêves sur `main` reste la solution de secours.
+Le moteur Node peut être appelé par un ordonnanceur externe. Aucun cron Cloudflare n'est utilisé. La version de branche du workflow `watch-maxireves.yml` offre un fallback GitHub toutes les cinq minutes et un événement `op-watch-fast-watch`, mais le job entier reste bloqué tant que `OP_WATCH_PRODUCTION_ENABLED != true`. Le workflow de production actuellement présent sur `main` a en plus été désactivé manuellement dans GitHub Actions le 2026-08-09 ; il doit le rester.
 
-## Ce qui reste avant activation
-
-1. Créer le namespace Cloudflare KV et son binding `TCG_STATE`.
-2. Déployer une prévisualisation manuelle sans cron.
-3. Construire la base initiale avec Discord toujours en `dry-run`.
-4. Tester artificiellement un retour en stock et une baisse de prix.
-5. Ajouter le webhook Discord comme secret.
-6. Activer l'envoi réel, puis le cron progressivement.
+Cette branche ne doit pas activer cette variable, installer un webhook LIVE, fusionner `main` ou déclencher le workflow de production.

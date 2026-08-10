@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "officialCatalogUrl": "https://fr.onepiece-cardgame.com/products/",
+  "watchWindow": {
+    "activationPolicy": "official_calendar_presence",
+    "endPolicy": "one_calendar_month_after_release",
+    "daysBeforeRelease": 120,
+    "daysAfterRelease": 30
+  },
+  "polling": {
+    "fastWatchSeconds": 60,
+    "discoverySeconds": 900
+  },
+  "language": {
+    "target": "fr",
+    "strict": true,
+    "minimumAlertConfidence": 90
+  },
+  "formats": [
+    "booster",
+    "display",
+    "case",
+    "double_pack",
+    "starter"
+  ],
+  "discord": {
+    "includeProductImage": true,
+    "sendAmbiguousListings": false,
+    "username": "OP Watch"
+  }
+}
