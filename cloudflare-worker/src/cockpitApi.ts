@@ -37,7 +37,7 @@ function corsHeaders(request: Request): Record<string, string> {
   return {
     "access-control-allow-origin": origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN,
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type,x-op-watch-admin-password",
+    "access-control-allow-headers": "content-type,x-op-watch-admin-password,authorization",
     "access-control-max-age": "600",
     "vary": "Origin"
   };
@@ -70,10 +70,14 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function authorized(request: Request): Promise<boolean> {
+async function authorized(request: Request, env: RuntimeEnv): Promise<boolean> {
   const password = request.headers.get("x-op-watch-admin-password") ?? "";
-  if (password.length < 12 || password.length > 200) return false;
-  return constantTimeEqual(await sha256(password), ADMIN_PASSWORD_SHA256);
+  if (password.length >= 12 && password.length <= 200 && constantTimeEqual(await sha256(password), ADMIN_PASSWORD_SHA256)) {
+    return true;
+  }
+  const expected = env.PREVIEW_AUDIT_TOKEN?.trim() ?? "";
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  return Boolean(expected && bearer) && constantTimeEqual(bearer, expected);
 }
 
 function calendarStub(env: RuntimeEnv): DurableObjectStub {
@@ -264,6 +268,30 @@ async function buildStatus(env: RuntimeEnv): Promise<unknown> {
     env.RUNTIME_TEST_MODE !== "true" &&
     Boolean(env.STORE_MONITORS && env.CALENDAR_COORDINATOR);
 
+  const activeById = new Map(calendar.activeProducts.map((product) => [product.id, product]));
+  const manualById = new Map(control.manualProducts.map((product) => [product.id, product]));
+  const controllableIds = [...new Set([
+    ...activeById.keys(),
+    ...manualById.keys(),
+    ...Object.keys(control.productOverrides)
+  ])].sort();
+  const controllableProducts = controllableIds.map((id) => {
+    const active = activeById.get(id);
+    const manual = manualById.get(id);
+    const override = control.productOverrides[id];
+    return {
+      id,
+      label: active?.label ?? manual?.label ?? `${id} — référence désactivée`,
+      releaseDate: active?.releaseDate ?? manual?.releaseDate ?? null,
+      aliases: active?.aliases ?? manual?.aliases ?? [id],
+      manual: Boolean(manual),
+      active: Boolean(active),
+      enabled: override?.enabled !== false && manual?.enabled !== false,
+      stopAt: override?.stopAt ?? manual?.stopAt ?? null,
+      game: manual?.game ?? "one-piece"
+    };
+  });
+
   return {
     checkedAt: new Date(now).toISOString(),
     runtime: {
@@ -281,6 +309,7 @@ async function buildStatus(env: RuntimeEnv): Promise<unknown> {
     calendar: {
       fetchedAt: calendar.fetchedAt ?? null,
       activeProducts: calendar.activeProducts,
+      controllableProducts,
       acceptedLanguages: calendar.acceptedLanguages ?? control.languages,
       controlUpdatedAt: calendar.controlUpdatedAt ?? control.updatedAt
     },
@@ -404,7 +433,7 @@ export async function handleCockpitApi(request: Request, env: RuntimeEnv): Promi
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
   const origin = request.headers.get("origin");
   if (origin && origin !== ALLOWED_ORIGIN) return json(request, { error: "Origine refusée." }, 403);
-  if (!await authorized(request)) return json(request, { error: "Mot de passe cockpit invalide." }, 401);
+  if (!await authorized(request, env)) return json(request, { error: "Accès cockpit invalide." }, 401);
 
   const pathname = new URL(request.url).pathname;
   try {
