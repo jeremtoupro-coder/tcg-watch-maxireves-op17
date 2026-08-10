@@ -16,7 +16,7 @@ function runtimeBindings(): Pick<RuntimeEnv, "STORE_MONITORS" | "CALENDAR_COORDI
 }
 
 describe("Fast Watch Durable Objects à budget borné", () => {
-  it("ne sollicite pas les six boutiques protégées sans feed et reporte les discovery-only hors quart d'heure", () => {
+  it("ne sollicite pas les six boutiques protégées sans feed et reporte seulement Ludiworld hors quart d'heure", () => {
     const selection = selectStoresForCycle({}, {
       scheduledTime: Date.UTC(2026, 7, 10, 8, 1, 0)
     });
@@ -30,11 +30,12 @@ describe("Fast Watch Durable Objects à budget borné", () => {
       "carrefour",
       "king-jouet"
     ]);
-    expect(selection.deferredDiscoveryStores).toEqual(["ludiworld", "otakuland"]);
-    expect(selection.stores).toHaveLength(13);
+    expect(selection.deferredDiscoveryStores).toEqual(["ludiworld"]);
+    expect(selection.stores).toHaveLength(14);
+    expect(selection.stores).toContain("otakuland");
   });
 
-  it("inclut Ludiworld et Otakuland uniquement lors de la Discovery", () => {
+  it("ajoute Ludiworld lors de la Discovery et garde Otakuland actif sur les deux cadences", () => {
     const selection = selectStoresForCycle({}, {
       scheduledTime: Date.UTC(2026, 7, 10, 8, 15, 0)
     });
