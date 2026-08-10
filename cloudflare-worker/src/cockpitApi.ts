@@ -208,7 +208,7 @@ function classifyStore(
       ageMs: age
     };
   }
-  if (connector.key === "amazon" && health.candidates === 0) {
+  if (connector.key === "amazon-fr" && health.candidates === 0) {
     return {
       level: "red",
       label: "Non opérationnel",
