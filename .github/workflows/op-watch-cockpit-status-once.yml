@@ -1,0 +1,36 @@
+name: OP Watch Cockpit Status One-Shot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/op-watch-cockpit-status-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Read sanitized cockpit status
+        shell: bash
+        run: |
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          status="$(curl -fsS --max-time 30 -H "Authorization: Bearer $token" "https://op-watch-tcg-fr.pages.dev/cockpit/api/status")"
+          STATUS_JSON="$status" node - <<'NODE'
+          const s=JSON.parse(process.env.STATUS_JSON||'{}');
+          console.log(JSON.stringify({runtime:s.runtime,totals:s.totals,stores:(s.stores||[]).map(x=>({key:x.key,name:x.name,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,candidates:x.candidates,lastCheck:x.lastCheck,detail:x.detail}))},null,2));
+          NODE
