@@ -10,17 +10,20 @@ export const philibert: ConnectorDefinition = {
   key: "philibert",
   name: "Philibert",
   sources: [
-    "https://www.philibertnet.com/fr/15860-one-piece-le-jeu-de-cartes"
+    "https://www.philibertnet.com/modules/feeder/rss.php?id_category=15860"
   ],
   productUrlPatterns: [/\/fr\/[^/]+\/\d+-[^?#]+\.html/i],
   requestHeaders: honestHeaders,
   responseMustContainAny: [/one[\s-]*piece/i],
   followDiscoveredProductPages: true,
-  maxDiscoveredProductPages: 12,
+  maxDiscoveredProductPages: 8,
+  maxConcurrency: 1,
   requiresDirectProductPageForAlerts: true,
+  authoritativeStructuredFeed: true,
   notes: [
-    "Catégorie française One Piece Card Game actuelle (15860).",
-    "La catégorie publique expose les produits, la langue et le vendeur Philibert ; la fiche directe reste la source de vérité pour stock/prix.",
-    "HTTP 403/429/5xx = source dégradée, jamais rupture. Si l'origine bloque durablement Cloudflare, bascule prévue vers un flux partenaire Affilae autorisé plutôt qu'un contournement anti-bot."
+    "Discovery officielle via le flux RSS public Philibert de la catégorie One Piece (15860).",
+    "Le RSS fournit les nouveautés, références, liens directs et prix ; seules les fiches correspondant aux références actives sont ensuite relues pour confirmer langue et disponibilité.",
+    "La grosse page catégorie HTML n'est plus utilisée dans le chemin critique car elle peut répondre 403 selon la sortie Cloudflare.",
+    "HTTP 403/429/5xx sur une fiche directe = source dégradée, jamais rupture ; aucun contournement anti-bot n'est utilisé."
   ]
 };
