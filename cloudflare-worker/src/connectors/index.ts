@@ -1,4 +1,5 @@
 import { fantasySphere } from "./fantasySphere";
+import { leclerc } from "./leclerc";
 import { maxireves } from "./maxireves";
 import { oupi } from "./oupi";
 import { parkage } from "./parkage";
@@ -7,7 +8,7 @@ import { ROLLOUT_CONNECTORS } from "./rollout";
 import type { ConnectorDefinition, StoreKey } from "../types";
 
 const rolloutConnectors = ROLLOUT_CONNECTORS.map((connector) =>
-  connector.key === "parkage" ? parkage : connector
+  connector.key === "parkage" ? parkage : connector.key === "leclerc" ? leclerc : connector
 );
 
 export const CONNECTORS: ConnectorDefinition[] = [
