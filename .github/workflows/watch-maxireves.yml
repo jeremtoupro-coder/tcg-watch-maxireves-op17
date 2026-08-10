@@ -16,13 +16,18 @@ on:
         required: false
         default: ""
         type: string
+  push:
+    branches:
+      - main
+    paths:
+      - .github/op-watch-live-activation
 
 permissions:
   contents: read
 
 concurrency:
   group: op-watch-production-activation
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -52,7 +57,7 @@ jobs:
 
   activate:
     name: Two-phase manual LIVE activation
-    if: inputs.action == 'activate-live'
+    if: inputs.action == 'activate-live' || github.event_name == 'push'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -69,7 +74,7 @@ jobs:
       - name: Hard activation gate
         shell: bash
         env:
-          REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+          REQUESTED_CONFIRMATION: ${{ github.event_name == 'push' && 'ACTIVER OP WATCH LIVE' || inputs.confirmation }}
         run: |
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "::error title=Branche interdite::L'activation LIVE n'est autorisée que depuis main."
