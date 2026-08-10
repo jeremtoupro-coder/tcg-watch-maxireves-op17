@@ -1,4 +1,4 @@
-name: OP Watch LIVE Health Fix One-Shot
+name: OP Watch Restore Final LIVE One-Shot
 
 on:
   push:
@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   deploy:
-    name: Validate, deploy and independently verify LIVE
+    name: Restore and independently prove final LIVE
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: cloudflare-worker
@@ -36,7 +36,7 @@ jobs:
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
           [ "$GITHUB_EVENT_NAME" = "push" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: deploy health status fix LIVE" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: restore final LIVE after health propagation" ]
 
       - name: Checkout exact production revision
         uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Assert production fixes are present
+      - name: Assert exact hotfix and health code
         shell: bash
         run: |
           set -euo pipefail
@@ -59,21 +59,12 @@ jobs:
           grep -q 'Vendeur non confirmé (Marketplace E.Leclerc)' src/discord.ts
           grep -q 'stateBackend' src/index.ts
           grep -q 'durable_objects' src/index.ts
-          if grep -q 'requiredSellerPatterns' src/connectors/leclerc.ts; then
-            echo 'Leclerc seller gate is still present'
-            exit 1
-          fi
+          if grep -q 'requiredSellerPatterns' src/connectors/leclerc.ts; then exit 1; fi
 
-      - name: TypeScript check
-        run: npm run typecheck
+      - name: TypeScript check and tests
+        run: npm run typecheck && npm test
 
-      - name: Automated tests
-        run: npm test
-
-      - name: Worker build dry run
-        run: npx wrangler deploy --dry-run
-
-      - name: Verify production credentials
+      - name: Verify required production secrets exist
         shell: bash
         run: |
           set -euo pipefail
@@ -88,28 +79,29 @@ jobs:
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Generate standby production config
+      - name: Generate final LIVE config
         run: npm run generate-production-config
         env:
-          PRODUCTION_PHASE: standby
+          PRODUCTION_PHASE: live
 
-      - name: Assert standby is inert and not test
+      - name: Assert final LIVE gates before deployment
         run: >-
-          node -e "const c=require('./wrangler.production-standby.generated.json'); const b=c.durable_objects?.bindings||[];
-          if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='false'||c.vars.WRITE_STATE!=='false'||
-          c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||c.vars.RUNTIME_TEST_MODE!=='false'||
-          c.kv_namespaces?.length||c.triggers?.crons?.length||b.length!==2) process.exit(1)"
+          node -e "const c=require('./wrangler.production-live.generated.json'); const b=c.durable_objects?.bindings||[];
+          if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||
+          c.vars.DISCORD_MODE!=='live'||c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE!=='false'||
+          c.kv_namespaces?.length||b.length!==2||JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])) process.exit(1)"
 
-      - name: Deploy inert standby
-        run: npx wrangler deploy --config wrangler.production-standby.generated.json
+      - name: Deploy final LIVE Worker and one-minute cron
+        run: npx wrangler deploy --config wrangler.production-live.generated.json
 
-      - name: Install private readiness token
-        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-standby.generated.json
+      - name: Reinstall private readiness and Discord secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-live.generated.json
+          printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-live.generated.json
 
-      - name: Install Discord webhook secret while standby is inert
-        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-standby.generated.json
-
-      - name: Install configured authorized feed secrets
+      - name: Reinstall any configured authorized feed secrets
         shell: bash
         env:
           AUTHORIZED_FEED_PLAYIN_URL: ${{ secrets.AUTHORIZED_FEED_PLAYIN_URL }}
@@ -124,81 +116,52 @@ jobs:
             value="${!name}"
             if [ -n "$value" ]; then
               echo "::add-mask::$value"
-              printf '%s' "$value" | npx wrangler secret put "$name" --config wrangler.production-standby.generated.json
+              printf '%s' "$value" | npx wrangler secret put "$name" --config wrangler.production-live.generated.json
             fi
           done
 
-      - name: Smoke standby
-        run: npm run smoke-production
-        env:
-          PRODUCTION_SMOKE_PHASE: standby
-
-      - name: Generate armed LIVE config without cron
-        run: npm run generate-production-config
-        env:
-          PRODUCTION_PHASE: armed
-
-      - name: Assert armed LIVE has no cron and is not test
-        run: >-
-          node -e "const c=require('./wrangler.production-armed.generated.json');
-          if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
-          c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE!=='false'||c.kv_namespaces?.length||c.triggers?.crons?.length) process.exit(1)"
-
-      - name: Deploy armed LIVE without cron
-        run: npx wrangler deploy --config wrangler.production-armed.generated.json
-
-      - name: Smoke armed LIVE readiness
-        run: npm run smoke-production
-        env:
-          PRODUCTION_SMOKE_PHASE: armed
-
-      - name: Generate final one-minute LIVE config
-        run: npm run generate-production-config
-        env:
-          PRODUCTION_PHASE: live
-
-      - name: Assert final LIVE gates
-        run: >-
-          node -e "const c=require('./wrangler.production-live.generated.json');
-          if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
-          c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE!=='false'||c.kv_namespaces?.length||
-          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])) process.exit(1)"
-
-      - name: Activate final LIVE cron
-        run: npx wrangler deploy --config wrangler.production-live.generated.json
-
-      - name: Final LIVE readiness smoke
-        run: npm run smoke-production
-        env:
-          PRODUCTION_SMOKE_PHASE: live
-
-      - name: Verify public health reflects actual Durable Objects LIVE runtime
+      - name: Wait until runtime readiness is actually propagated
         shell: bash
         run: |
           set -euo pipefail
-          health="$(curl -fsS --max-time 20 "$PRODUCTION_URL/health")"
-          HEALTH_JSON="$health" node - <<'NODE'
-          const h=JSON.parse(process.env.HEALTH_JSON);
-          const parkage=h.stores?.find(s=>s.store==='parkage');
-          const leclerc=h.stores?.find(s=>s.store==='leclerc');
-          const proof={
-            status:h.status, mode:h.mode, monitoringEnabled:h.monitoringEnabled,
-            discordMode:h.discordMode, schedulerMode:h.schedulerMode,
-            runtimeTestMode:h.runtimeTestMode, stateBindingPresent:h.stateBindingPresent,
-            stateBackend:h.stateBackend, automaticPolling:h.automaticPolling,
-            parkage:parkage&&{status:parkage.status,sourceKind:parkage.sourceKind},
-            leclerc:leclerc&&{status:leclerc.status,sourceKind:leclerc.sourceKind}
-          };
-          console.log(JSON.stringify(proof,null,2));
-          if(h.status!=='ok'||h.mode!=='LIVE'||h.monitoringEnabled!==true||h.discordMode!=='live'||
-             h.schedulerMode!=='live'||h.runtimeTestMode!==false||h.stateBindingPresent!==true||
-             h.stateBackend!=='durable_objects'||h.automaticPolling!==true) process.exit(1);
-          if(!parkage||parkage.status!=='active_fast_watch'||parkage.sourceKind!=='public_structured_feed') process.exit(1);
-          if(!leclerc||leclerc.status!=='active_fast_watch') process.exit(1);
+          for attempt in $(seq 1 30); do
+            raw="$(curl -sS --max-time 15 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready?probe=$attempt" || true)"
+            if READY_JSON="$raw" node - <<'NODE'
+          try {
+            const x=JSON.parse(process.env.READY_JSON||'{}');
+            process.exit(x.status==='ready'&&x.mode==='live'&&x.schedulerMode==='live'&&x.discordMode==='live'&&x.monitoringEnabled===true&&x.stateWritesEnabled===true&&Array.isArray(x.stores)&&x.stores.length===21 ? 0 : 1);
+          } catch { process.exit(1); }
           NODE
+            then echo "runtime-ready PASS attempt=$attempt"; break; fi
+            if [ "$attempt" -eq 30 ]; then echo "runtime-ready never reached LIVE"; exit 1; fi
+            sleep 2
+          done
 
-      - name: Independently verify Cloudflare bindings and one-minute cron
-        if: always()
+      - name: Verify public health after propagation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            health="$(curl -sS --max-time 15 "$PRODUCTION_URL/health?probe=$attempt" || true)"
+            if HEALTH_JSON="$health" node - <<'NODE'
+          try {
+            const h=JSON.parse(process.env.HEALTH_JSON||'{}');
+            const p=h.stores?.find(s=>s.store==='parkage');
+            const l=h.stores?.find(s=>s.store==='leclerc');
+            const ok=h.status==='ok'&&h.mode==='LIVE'&&h.monitoringEnabled===true&&h.discordMode==='live'&&
+              h.schedulerMode==='live'&&h.runtimeTestMode===false&&h.stateBindingPresent===true&&
+              h.stateBackend==='durable_objects'&&h.automaticPolling===true&&
+              p?.status==='active_fast_watch'&&p?.sourceKind==='public_structured_feed'&&l?.status==='active_fast_watch';
+            if(ok) console.log(JSON.stringify({mode:h.mode,monitoring:h.monitoringEnabled,discord:h.discordMode,scheduler:h.schedulerMode,runtimeTest:h.runtimeTestMode,stateBackend:h.stateBackend,automaticPolling:h.automaticPolling,parkage:{status:p.status,sourceKind:p.sourceKind},leclerc:{status:l.status,sourceKind:l.sourceKind}},null,2));
+            process.exit(ok?0:1);
+          } catch { process.exit(1); }
+          NODE
+            then break; fi
+            if [ "$attempt" -eq 30 ]; then echo "health never reflected LIVE"; exit 1; fi
+            sleep 2
+          done
+
+      - name: Independently prove Cloudflare bindings and cron
         shell: bash
         run: |
           set -euo pipefail
@@ -209,17 +172,12 @@ jobs:
           const s=JSON.parse(process.env.SETTINGS_JSON); const c=JSON.parse(process.env.SCHEDULES_JSON);
           if(s.success!==true||c.success!==true) process.exit(1);
           const bindings=Array.isArray(s.result?.bindings)?s.result.bindings:[];
-          const safeVars={};
           const wanted=new Set(['MONITORING_ENABLED','WRITE_STATE','DISCORD_MODE','SCHEDULER_MODE','RUNTIME_TEST_MODE','PRODUCTION_PROBE_MODE']);
-          for(const b of bindings){
-            if(wanted.has(b.name) && b.type==='plain_text') safeVars[b.name]=b.text ?? b.value;
-          }
+          const vars={}; for(const b of bindings) if(wanted.has(b.name)&&b.type==='plain_text') vars[b.name]=b.text??b.value;
           const names=new Set(bindings.map(b=>b.name));
           const crons=(Array.isArray(c.result)?c.result:[]).map(x=>x.cron).filter(Boolean).sort();
-          const proof={vars:safeVars,crons,discordSecretPresent:names.has('DISCORD_WEBHOOK_URL'),durableObjects:{store:names.has('STORE_MONITORS'),calendar:names.has('CALENDAR_COORDINATOR')}};
+          const proof={vars,crons,discordSecretPresent:names.has('DISCORD_WEBHOOK_URL'),storeDO:names.has('STORE_MONITORS'),calendarDO:names.has('CALENDAR_COORDINATOR')};
           console.log(JSON.stringify(proof,null,2));
-          if(safeVars.MONITORING_ENABLED!=='true'||safeVars.WRITE_STATE!=='true'||safeVars.DISCORD_MODE!=='live'||
-             safeVars.SCHEDULER_MODE!=='live'||safeVars.RUNTIME_TEST_MODE!=='false'||safeVars.PRODUCTION_PROBE_MODE!=='true') process.exit(1);
-          if(JSON.stringify(crons)!==JSON.stringify(['* * * * *'])) process.exit(1);
-          if(!names.has('DISCORD_WEBHOOK_URL')||!names.has('STORE_MONITORS')||!names.has('CALENDAR_COORDINATOR')) process.exit(1);
+          const ok=vars.MONITORING_ENABLED==='true'&&vars.WRITE_STATE==='true'&&vars.DISCORD_MODE==='live'&&vars.SCHEDULER_MODE==='live'&&vars.RUNTIME_TEST_MODE==='false'&&vars.PRODUCTION_PROBE_MODE==='true'&&JSON.stringify(crons)===JSON.stringify(['* * * * *'])&&proof.discordSecretPresent&&proof.storeDO&&proof.calendarDO;
+          process.exit(ok?0:1);
           NODE
