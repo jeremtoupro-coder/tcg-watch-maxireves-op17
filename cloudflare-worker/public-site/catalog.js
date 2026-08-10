@@ -2,6 +2,21 @@
   const input = document.getElementById('productRef');
   if (!input) return;
 
+  const officialIds = new Set();
+  const originalNormalizeRef = typeof window.normalizeRef === 'function' ? window.normalizeRef : null;
+  if (originalNormalizeRef) {
+    window.normalizeRef = value => {
+      const known = originalNormalizeRef(value);
+      if (known) return known;
+
+      const raw = String(value || '').trim().toUpperCase().replace(/\s+/g, '-');
+      const match = raw.match(/^([A-Z]{2,4})-?(\d{1,2})$/);
+      if (!match) return '';
+      const canonical = `${match[1]}-${match[2].padStart(2, '0')}`;
+      return officialIds.has(canonical) ? canonical : '';
+    };
+  }
+
   const style = document.createElement('style');
   style.textContent = '.official-picks{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.official-pick{border:1px solid #343945;background:#12161d;color:#e6e9ee;border-radius:999px;padding:7px 10px;font:inherit;font-size:.82rem;cursor:pointer}.official-pick:hover{border-color:#6b5730;background:#181b22}.official-meta{font-size:.78rem;color:#8d949f;margin-top:9px}';
   document.head.appendChild(style);
@@ -33,6 +48,9 @@
     })
     .then(data => {
       const products = Array.isArray(data.activeProducts) ? data.activeProducts : [];
+      products.forEach(product => {
+        if (/^[A-Z]{2,4}-\d{2}$/.test(String(product.id || ''))) officialIds.add(product.id);
+      });
       datalist.innerHTML = products.map(product => {
         const label = String(product.label || product.id || '').replace(/"/g, '&quot;');
         return `<option value="${product.id}" label="${label} · ${prettyDate(product.releaseDate)}"></option>`;
