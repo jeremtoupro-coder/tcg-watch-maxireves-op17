@@ -13,45 +13,53 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 7
     steps:
-      - name: Extract French One Piece products from Parkage category payload
+      - name: Locate Parkage public catalog endpoint in frontend bundles
         shell: bash
         run: |
           set -euo pipefail
-          url='https://www.parkage.com/fr/one-piece-card-game?language%5B%5D=fr'
-          file="$(mktemp)"
+          page="$(mktemp)"
           curl -fsSL --max-time 20 \
             -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' \
-            -H 'Accept-Language: fr-FR,fr;q=0.9,en;q=0.6' \
-            "$url" -o "$file"
-          echo "bytes=$(wc -c < "$file")"
-          python3 - "$file" <<'PY'
-          import re, sys, html
+            'https://www.parkage.com/fr/one-piece-card-game?language%5B%5D=fr' -o "$page"
+          python3 - "$page" > /tmp/scripts.txt <<'PY'
+          import re,sys,html
           raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-          # Next.js streams escaped JSON chunks. Decode common escapes enough to inspect product payloads.
-          decoded=html.unescape(raw)
-          decoded=decoded.replace('\\u0026','&').replace('\\u0027',"'").replace('\\u003c','<').replace('\\u003e','>')
-          decoded=decoded.replace('\\"','"').replace('\\/','/')
-          for ref in ['ST-31','ST-32','ST-33','ST-34','ST-35','ST-36','OP-17']:
-              print(f'===== {ref} =====')
-              matches=list(re.finditer(re.escape(ref), decoded, re.I))
-              print('occurrences=',len(matches))
-              seen=[]
-              for m in matches[:30]:
-                  s=decoded[max(0,m.start()-900):min(len(decoded),m.end()+1500)]
-                  s=re.sub(r'\s+',' ',s)
-                  # Keep snippets containing identifiers/title/language rather than whole page chrome.
-                  if s not in seen:
-                      seen.append(s)
-              for i,s in enumerate(seen[:12]): print(f'snippet[{i}]={s[:2400]}')
-          # Extract all Parkage product-looking URLs that carry tracked references.
-          urls=[]
-          for m in re.finditer(r'(?:https://www\.parkage\.com)?/fr/\d{6,}-[^"\\<> ]+', decoded, re.I):
-              u=m.group(0).rstrip('),.;')
-              if re.search(r'\b(?:OP|EB|PRB|ST|DP|TS)[-_ ]?\d{1,2}\b',u,re.I) and u not in urls:
-                  urls.append(u)
-          print('===== PRODUCT URLS =====')
-          for u in urls[:100]: print(u)
+          srcs=[]
+          for m in re.finditer(r'<script\b[^>]*\bsrc=["\']([^"\']+)["\']',raw,re.I):
+              src=html.unescape(m.group(1))
+              if '/_next/' in src and src not in srcs: srcs.append(src)
+          for src in srcs: print(src)
           PY
-          rm -f "$file"
+          echo "next_scripts=$(wc -l < /tmp/scripts.txt)"
+          n=0
+          while IFS= read -r src; do
+            n=$((n+1)); [ "$n" -le 80 ] || break
+            case "$src" in
+              http*) url="$src" ;;
+              /*) url="https://www.parkage.com${src}" ;;
+              *) url="https://www.parkage.com/${src}" ;;
+            esac
+            js="$(mktemp)"
+            if ! curl -fsSL --max-time 15 -H 'User-Agent: OPWatch/1.0 (+personal read-only stock monitor)' "$url" -o "$js"; then rm -f "$js"; continue; fi
+            if grep -Eqi 'strapiUrl|category_id|back\.parkage\.com|queryString|language.*category|products.*category' "$js"; then
+              echo "===== BUNDLE $url ====="
+              python3 - "$js" <<'PY'
+          import re,sys
+          raw=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+          pats=[r'back\.parkage\.com',r'strapiUrl',r'category_id',r'queryString',r'/api/',r'products?',r'recherche']
+          out=[]
+          for pat in pats:
+              for m in re.finditer(pat,raw,re.I):
+                  s=raw[max(0,m.start()-700):min(len(raw),m.end()+1200)]
+                  s=re.sub(r'\s+',' ',s)
+                  if s not in out: out.append(s)
+                  if len(out)>=15: break
+              if len(out)>=15: break
+          for i,s in enumerate(out): print(f'snippet[{i}]={s[:2200]}')
+          PY
+            fi
+            rm -f "$js"
+          done < /tmp/scripts.txt
+          rm -f "$page" /tmp/scripts.txt
