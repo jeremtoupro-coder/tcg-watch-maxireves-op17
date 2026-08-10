@@ -1,3 +1,5 @@
+export {};
+
 const baseUrl = process.env.PRODUCTION_URL?.replace(/\/$/, "");
 const token = process.env.PREVIEW_AUDIT_TOKEN?.trim();
 const phase = process.env.PRODUCTION_SMOKE_PHASE?.trim();
