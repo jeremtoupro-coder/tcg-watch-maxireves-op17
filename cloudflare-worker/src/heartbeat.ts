@@ -2,11 +2,18 @@ import { dispatchDiscordPayloads } from "./discord";
 import type { DurableCycleResult, RuntimeEnv } from "./durableMonitoring";
 import type { DiscordPayload } from "./types";
 
-export const HEARTBEAT_INTERVAL_MINUTES = 12 * 60;
+export const HEARTBEAT_PARIS_HOURS = new Set([10, 22]);
 
 export function isHeartbeatTick(scheduledTime: number): boolean {
-  const minuteBucket = Math.floor(scheduledTime / 60_000);
-  return minuteBucket % HEARTBEAT_INTERVAL_MINUTES === 0;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Paris",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit"
+  }).formatToParts(new Date(scheduledTime));
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return HEARTBEAT_PARIS_HOURS.has(hour) && minute === 0;
 }
 
 function parisDate(iso: string): string {
@@ -36,7 +43,7 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
     embeds: [{
       title,
       url: "https://op-watch-tcg-fr.pages.dev/",
-      description: "Heartbeat automatique de production — envoyé toutes les 12 heures après un cycle réel du moteur.",
+      description: "Heartbeat automatique de production — envoyé à 10h00 et 22h00 (heure de Paris) après un cycle réel du moteur.",
       fields: [
         { name: "🟢 Runtime", value: "LIVE", inline: true },
         { name: "⏱️ Cycle", value: cycle.discovery ? "Discovery + Fast Watch" : "Fast Watch", inline: true },
@@ -46,7 +53,7 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
         { name: "🕒 Contrôle", value: parisDate(checkedAt), inline: true },
         { name: "Détail", value: incidentText, inline: false }
       ],
-      footer: { text: "OP Watch • heartbeat production 12h" },
+      footer: { text: "OP Watch • heartbeat production 10h/22h" },
       timestamp: checkedAt
     }]
   };
