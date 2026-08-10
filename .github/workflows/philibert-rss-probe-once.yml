@@ -21,60 +21,29 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "test: probe Philibert RSS from Cloudflare final" ]
+          [ "${{ github.event.head_commit.message }}" = "test: probe Philibert One Piece RSS categories" ]
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Deploy ephemeral Cloudflare probe and inspect official feeds
+      - name: Deploy ephemeral Cloudflare probe
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/philibert-probe && cd /tmp/philibert-probe
           cat > worker.js <<'JS'
-          function clean(value) {
-            return String(value || '').replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          function clean(value) { return String(value||'').replace(/<!\[CDATA\[|\]\]>/g,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(); }
+          function inspect(text) {
+            const items=text.match(/<item\b[\s\S]*?<\/item>/gi)||[];
+            return {itemCount:items.length,titles:items.slice(0,20).map(item=>clean((item.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]).slice(0,180)),links:items.slice(0,8).map(item=>clean((item.match(/<link[^>]*>([\s\S]*?)<\/link>/i)||[])[1]).slice(0,240))};
           }
-          function titlesFromRss(text) {
-            const items = text.match(/<item\b[\s\S]*?<\/item>/gi) || [];
-            return items.slice(0, 12).map((item) => clean((item.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1]).slice(0, 160));
-          }
-          export default {
-            async fetch() {
-              const urls = [
-                'https://www.philibertnet.com/modules/feeder/rss.php?id_category=119',
-                'https://www.philibertnet.com/modules/feeder/rss.php?id_category=578',
-                'https://www.philibertnet.com/modules/feeder/rss.php?id_category=8051',
-                'https://www.philibertnet.com/fr/15860-one-piece-le-jeu-de-cartes'
-              ];
-              const out = [];
-              for (const url of urls) {
-                const started = Date.now();
-                try {
-                  const res = await fetch(url, {headers:{
-                    'User-Agent':'OPWatch/1.0 (+personal read-only stock monitor)',
-                    'Accept':'application/rss+xml,application/xml,text/xml,text/html;q=0.8,*/*;q=0.4',
-                    'Accept-Language':'fr-FR,fr;q=0.9,en;q=0.6'
-                  }});
-                  const text = await res.text();
-                  out.push({
-                    url,
-                    status:res.status,
-                    durationMs:Date.now()-started,
-                    contentType:res.headers.get('content-type'),
-                    length:text.length,
-                    hasOnePiece:/one[\s-]*piece/i.test(text),
-                    hasOP17:/OP[-\s]?17/i.test(text),
-                    itemCount:(text.match(/<item\b/gi)||[]).length,
-                    titles:titlesFromRss(text),
-                    prefix:clean(text).slice(0,220)
-                  });
-                } catch(e) {
-                  out.push({url,status:'fetch-error',durationMs:Date.now()-started,error:String(e)});
-                }
-              }
-              return Response.json(out,{headers:{'cache-control':'no-store'}});
+          export default { async fetch() {
+            const ids=[15860,17214,17215,119]; const out=[];
+            for(const id of ids){
+              const url=`https://www.philibertnet.com/modules/feeder/rss.php?id_category=${id}`; const started=Date.now();
+              try{const res=await fetch(url,{headers:{'User-Agent':'OPWatch/1.0 (+personal read-only stock monitor)','Accept':'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.4','Accept-Language':'fr-FR,fr;q=0.9'}}); const text=await res.text(); const info=inspect(text); out.push({id,url,status:res.status,durationMs:Date.now()-started,contentType:res.headers.get('content-type'),length:text.length,hasOnePiece:/one[\s-]*piece/i.test(text),hasOP17:/OP[-\s]?17/i.test(text),...info});}catch(e){out.push({id,url,status:'fetch-error',error:String(e)});}
             }
-          };
+            return Response.json(out,{headers:{'cache-control':'no-store'}});
+          }};
           JS
           cat > wrangler.jsonc <<'JSON'
           {"name":"opwatch-philibert-rss-probe","main":"worker.js","compatibility_date":"2026-08-01","workers_dev":true}
@@ -82,7 +51,6 @@ jobs:
           npx wrangler@4.120.0 deploy --config wrangler.jsonc | tee /tmp/deploy.log
           sleep 10
           url="$(grep -Eo 'https://[^ ]+workers\.dev' /tmp/deploy.log | tail -1)"
-          test -n "$url"
           curl -fsS --retry 4 --retry-delay 2 --max-time 180 "$url" | tee /tmp/result.json
           node -e "const x=require('/tmp/result.json'); console.log(JSON.stringify(x,null,2)); if(!Array.isArray(x)||x.length!==4)process.exit(1)"
           npx wrangler@4.120.0 delete --config wrangler.jsonc --force || true
