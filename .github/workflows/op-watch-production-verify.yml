@@ -1,0 +1,125 @@
+name: OP Watch Production Verify (one-off)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/op-watch-production-verify.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify actual Cloudflare LIVE state
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_NAME: tcg-watch-one-piece
+      PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+    steps:
+      - name: Checkout production revision
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        working-directory: cloudflare-worker
+        run: npm ci --no-audit --no-fund
+      - name: Fetch actual Worker settings, schedules and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json")
+          curl -fsS "${auth[@]}" "${base}/settings" > /tmp/settings.json
+          curl -fsS "${auth[@]}" "${base}/schedules" > /tmp/schedules.json
+          curl -fsS "${auth[@]}" "${base}/secrets" > /tmp/secrets.json
+      - name: Assert deployed environment is fully LIVE and not test
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const settings = JSON.parse(fs.readFileSync('/tmp/settings.json', 'utf8'));
+          const schedules = JSON.parse(fs.readFileSync('/tmp/schedules.json', 'utf8'));
+          const secrets = JSON.parse(fs.readFileSync('/tmp/secrets.json', 'utf8'));
+          if (settings.success !== true) throw new Error('Cloudflare settings API failed');
+          if (schedules.success !== true) throw new Error('Cloudflare schedules API failed');
+          if (secrets.success !== true) throw new Error('Cloudflare secrets API failed');
+
+          const bindings = settings.result?.bindings ?? [];
+          const byName = new Map(bindings.map((b) => [b.name, b]));
+          const valueOf = (name) => {
+            const b = byName.get(name);
+            return b?.text ?? b?.value ?? b?.json;
+          };
+          const expected = {
+            MONITORING_ENABLED: 'true',
+            WRITE_STATE: 'true',
+            DISCORD_MODE: 'live',
+            SCHEDULER_MODE: 'live',
+            RUNTIME_TEST_MODE: 'false',
+            PRODUCTION_PROBE_MODE: 'true'
+          };
+          for (const [name, expectedValue] of Object.entries(expected)) {
+            const actual = valueOf(name);
+            if (String(actual) !== expectedValue) {
+              throw new Error(`${name} expected ${expectedValue}, got ${String(actual)}`);
+            }
+          }
+          if (bindings.some((b) => /kv/i.test(String(b.type)))) {
+            throw new Error('Unexpected KV binding in production');
+          }
+          for (const name of ['STORE_MONITORS', 'CALENDAR_COORDINATOR']) {
+            if (!byName.has(name)) throw new Error(`Missing Durable Object binding ${name}`);
+          }
+
+          const scheduleList = Array.isArray(schedules.result)
+            ? schedules.result
+            : (schedules.result?.schedules ?? schedules.schedules ?? []);
+          const crons = scheduleList.map((s) => s.cron);
+          if (crons.length !== 1 || crons[0] !== '* * * * *') {
+            throw new Error(`Unexpected cron set: ${JSON.stringify(crons)}`);
+          }
+
+          const secretList = Array.isArray(secrets.result) ? secrets.result : (secrets.result?.secrets ?? []);
+          const secretNames = new Set(secretList.map((s) => s.name));
+          for (const name of ['DISCORD_WEBHOOK_URL', 'PREVIEW_AUDIT_TOKEN']) {
+            if (!secretNames.has(name)) throw new Error(`Missing Worker secret ${name}`);
+          }
+
+          console.log(JSON.stringify({
+            ok: true,
+            monitoring: valueOf('MONITORING_ENABLED'),
+            stateWrites: valueOf('WRITE_STATE'),
+            discord: valueOf('DISCORD_MODE'),
+            scheduler: valueOf('SCHEDULER_MODE'),
+            runtimeTest: valueOf('RUNTIME_TEST_MODE'),
+            productionProbe: valueOf('PRODUCTION_PROBE_MODE'),
+            cron: crons[0],
+            durableObjects: ['STORE_MONITORS', 'CALENDAR_COORDINATOR'],
+            discordSecretPresent: secretNames.has('DISCORD_WEBHOOK_URL')
+          }));
+          NODE
+      - name: Verify deployed LIVE readiness endpoint independently
+        working-directory: cloudflare-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          body="$(curl -fsS --retry 2 --retry-delay 2 -H "Authorization: Bearer ${token}" "${PRODUCTION_URL}/runtime-ready")"
+          LIVE_BODY="$body" node <<'NODE'
+          const body = JSON.parse(process.env.LIVE_BODY || '{}');
+          if (body.status !== 'ready' || body.mode !== 'live') throw new Error('runtime-ready is not LIVE');
+          if (body.monitoringEnabled !== true || body.stateWritesEnabled !== true) throw new Error('runtime-ready persistence disabled');
+          if (body.discordMode !== 'live' || body.schedulerMode !== 'live') throw new Error('runtime-ready still has test/dry-run mode');
+          if (!Array.isArray(body.stores) || body.stores.length !== 21) throw new Error('runtime-ready connector set incomplete');
+          console.log(JSON.stringify({ok:true, status:body.status, mode:body.mode, stores:body.stores.length, monitoring:body.monitoringEnabled, stateWrites:body.stateWritesEnabled, discord:body.discordMode, scheduler:body.schedulerMode}));
+          NODE
