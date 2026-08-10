@@ -38,7 +38,7 @@ jobs:
             echo 'Production workflow still contains a push trigger' >&2
             exit 1
           fi
-      - name: Cancel stale queued activation and verify workflow states
+      - name: Force-cancel stale activation and verify workflow states
         shell: bash
         run: |
           set -euo pipefail
@@ -48,17 +48,40 @@ jobs:
           stale="$(curl -fsS "${auth[@]}" "${api}/actions/runs/${STALE_RUN_ID}")"
           status="$(RUN_JSON="$stale" node -e "const j=JSON.parse(process.env.RUN_JSON); process.stdout.write(j.status || '')")"
           if [ "$status" = "queued" ] || [ "$status" = "in_progress" ] || [ "$status" = "waiting" ]; then
-            curl -fsS -X POST "${auth[@]}" "${api}/actions/runs/${STALE_RUN_ID}/cancel" >/dev/null
+            normal_code="$(curl -sS -o /tmp/cancel.json -w '%{http_code}' -X POST "${auth[@]}" "${api}/actions/runs/${STALE_RUN_ID}/cancel")"
+            if [ "$normal_code" -lt 200 ] || [ "$normal_code" -ge 300 ]; then
+              force_code="$(curl -sS -o /tmp/force-cancel.json -w '%{http_code}' -X POST "${auth[@]}" "${api}/actions/runs/${STALE_RUN_ID}/force-cancel")"
+              if [ "$force_code" -lt 200 ] || [ "$force_code" -ge 300 ]; then
+                echo "Unable to cancel stale run: normal=${normal_code}, force=${force_code}" >&2
+                cat /tmp/force-cancel.json >&2 || true
+                exit 1
+              fi
+            fi
+          fi
+
+          for i in 1 2 3 4 5; do
+            stale="$(curl -fsS "${auth[@]}" "${api}/actions/runs/${STALE_RUN_ID}")"
+            status="$(RUN_JSON="$stale" node -e "const j=JSON.parse(process.env.RUN_JSON); process.stdout.write(j.status || '')")"
+            [ "$status" = "completed" ] && break
+            sleep 2
+          done
+          if [ "$status" != "completed" ]; then
+            echo "Stale run still not completed after cancellation: ${status}" >&2
+            exit 1
           fi
 
           prod="$(curl -fsS "${auth[@]}" "${api}/actions/workflows/${PRODUCTION_WORKFLOW_ID}")"
           legacy="$(curl -fsS "${auth[@]}" "${api}/actions/workflows/${LEGACY_WORKFLOW_ID}")"
-          PROD_JSON="$prod" LEGACY_JSON="$legacy" node <<'NODE'
+          PROD_JSON="$prod" LEGACY_JSON="$legacy" STALE_JSON="$stale" node <<'NODE'
           const prod = JSON.parse(process.env.PROD_JSON);
           const legacy = JSON.parse(process.env.LEGACY_JSON);
+          const stale = JSON.parse(process.env.STALE_JSON);
           if (prod.state !== 'active') throw new Error(`Production workflow not active: ${prod.state}`);
           if (legacy.state !== 'disabled_manually') throw new Error(`Legacy workflow unexpectedly enabled: ${legacy.state}`);
-          console.log(JSON.stringify({productionWorkflow:prod.state, legacyWorkflow:legacy.state}));
+          if (stale.status !== 'completed' || !['cancelled','failure','skipped'].includes(stale.conclusion)) {
+            throw new Error(`Stale run not safely terminated: ${stale.status}/${stale.conclusion}`);
+          }
+          console.log(JSON.stringify({productionWorkflow:prod.state, legacyWorkflow:legacy.state, staleRun:`${stale.status}/${stale.conclusion}`}));
           NODE
       - name: Verify actual Cloudflare LIVE settings after repository cleanup
         shell: bash
