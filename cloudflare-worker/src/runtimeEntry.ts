@@ -9,6 +9,7 @@ import {
 import { CONNECTORS } from "./connectors";
 import { dispatchRuntimeHeartbeat } from "./heartbeat";
 import { handleCockpitApi } from "./cockpitApi";
+import { detectAvailability, detectLanguage, matchReferences } from "./matching";
 import type { Env, StoreKey } from "./types";
 
 export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
@@ -109,6 +110,81 @@ async function productionReady(request: Request, env: ProductionProbeEnv): Promi
   }
 }
 
+function hostAllowedForConnector(connector: (typeof CONNECTORS)[number], hostname: string): boolean {
+  return connector.sources.some((source) => {
+    try {
+      return new URL(source).hostname === hostname;
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function productionMerchantProbe(request: Request, env: ProductionProbeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+
+  const requestUrl = new URL(request.url);
+  const store = requestUrl.searchParams.get("store") ?? "";
+  const targetRaw = requestUrl.searchParams.get("url") ?? "";
+  const connector = CONNECTORS.find((item) => item.key === store);
+  if (!connector) return json({ error: "Boutique inconnue." }, 400);
+
+  let target: URL;
+  try {
+    target = new URL(targetRaw);
+  } catch {
+    return json({ error: "URL invalide." }, 400);
+  }
+  if (target.protocol !== "https:" || !hostAllowedForConnector(connector, target.hostname)) {
+    return json({ error: "URL hors domaine configuré pour cette boutique." }, 400);
+  }
+  const exactSource = connector.sources.includes(target.toString());
+  const productPage = connector.productUrlPatterns.some((pattern) => pattern.test(target.toString()));
+  if (!exactSource && !productPage) {
+    return json({ error: "URL non reconnue comme source ou fiche produit configurée." }, 400);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const started = performance.now();
+  try {
+    const response = await fetch(target.toString(), {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: connector.requestHeaders
+    });
+    const text = await response.text();
+    return json({
+      store: connector.key,
+      status: response.status,
+      ok: response.ok,
+      finalHost: new URL(response.url || target.toString()).hostname,
+      contentType: response.headers.get("content-type"),
+      durationMs: Math.round(performance.now() - started),
+      responseBytes: new TextEncoder().encode(text).byteLength,
+      signals: {
+        onePiece: /one[\s-]*piece/i.test(text),
+        references: matchReferences(text).slice(0, 20),
+        language: detectLanguage(text),
+        availability: detectAvailability(text)
+      }
+    });
+  } catch (error) {
+    return json({
+      store: connector.key,
+      status: "fetch-error",
+      ok: false,
+      durationMs: Math.round(performance.now() - started),
+      error: error instanceof Error ? error.message : String(error)
+    }, 200);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function productionHeartbeatNow(request: Request, env: ProductionProbeEnv): Promise<Response> {
   if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
   if (request.method !== "POST") return json({ error: "Méthode non autorisée. POST uniquement." }, 405);
@@ -153,6 +229,9 @@ export default {
     }
     if (pathname === "/runtime-ready") {
       return productionReady(request, env as ProductionProbeEnv);
+    }
+    if (pathname === "/merchant-probe") {
+      return productionMerchantProbe(request, env as ProductionProbeEnv);
     }
     if (pathname === "/heartbeat-now") {
       return productionHeartbeatNow(request, env as ProductionProbeEnv);
