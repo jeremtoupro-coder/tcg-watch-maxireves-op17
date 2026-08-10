@@ -1,0 +1,77 @@
+name: Philibert RSS Preview One-Shot
+
+on:
+  push:
+    branches: [fix-philibert-rss-fastwatch]
+    paths:
+      - .github/workflows/philibert-rss-preview-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PREVIEW_URL: https://tcg-watch-one-piece-preview.jeremie-touitou-pro.workers.dev
+    steps:
+      - name: Gate
+        working-directory: .
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/heads/fix-philibert-rss-fastwatch" ]
+          [ "${{ github.event.head_commit.message }}" = "test: verify Philibert RSS hybrid on Cloudflare" ]
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck && npm test
+      - name: Derive preview token
+        shell: bash
+        run: |
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Generate inert preview
+        run: npm run generate-deploy-config
+        env:
+          DEPLOY_WORKER_NAME: tcg-watch-one-piece-preview
+          DEPLOY_BIND_KV: "false"
+          DEPLOY_MONITORING_ENABLED: "false"
+          DEPLOY_WRITE_STATE: "false"
+          DEPLOY_DISCORD_MODE: dry-run
+          DEPLOY_ALLOW_PUBLIC_AUDIT: "true"
+      - name: Assert inert preview
+        run: >-
+          node -e "const c=require('./wrangler.generated.json'); if(c.name!=='tcg-watch-one-piece-preview'||c.vars.MONITORING_ENABLED!=='false'||c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||c.triggers?.crons?.length||c.durable_objects||c.kv_namespaces?.length) process.exit(1)"
+      - run: npx wrangler deploy --config wrangler.generated.json
+      - run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.generated.json
+      - run: npm run stabilize-preview-auth
+      - run: npm run smoke-preview
+      - name: Real Cloudflare audit
+        run: npm run audit-preview
+      - name: Require Philibert healthy structured source
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const r=require('./audit-report.json');
+          const p=(r.stores||[]).find(x=>x.store==='philibert');
+          console.log(JSON.stringify(p,null,2));
+          if(!p||p.runtimeStatus!=='healthy'||p.sourceKind!=='public_structured_feed'||(p.errors||[]).length) process.exit(2);
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: philibert-rss-preview-${{ github.run_id }}
+          path: cloudflare-worker/audit-report.json
+          if-no-files-found: warn
+          retention-days: 7
