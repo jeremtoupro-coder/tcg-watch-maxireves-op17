@@ -28,11 +28,15 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: verify three-store hotfix live" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: verify three-store hotfix live final" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
       - name: Derive private readiness token
         shell: bash
         run: |
