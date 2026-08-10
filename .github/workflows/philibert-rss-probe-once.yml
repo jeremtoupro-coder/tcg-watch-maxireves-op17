@@ -1,4 +1,4 @@
-name: Philibert RSS Probe One-Shot
+name: Philibert AJAX Probe One-Shot
 
 on:
   push:
@@ -21,33 +21,72 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "test: inspect Philibert OP17 RSS item" ]
+          [ "${{ github.event.head_commit.message }}" = "test: probe Philibert product AJAX from Cloudflare" ]
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Inspect one OP17 RSS item from Cloudflare
+      - name: Probe Philibert product endpoints from Cloudflare
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/philibert-probe && cd /tmp/philibert-probe
           cat > worker.js <<'JS'
-          function clean(value) { return String(value||'').replace(/<!\[CDATA\[|\]\]>/g,'').replace(/\s+/g,' ').trim(); }
+          function compact(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+          function summarize(text, contentType) {
+            let jsonKeys = [];
+            let jsonSignals = {};
+            if ((contentType || '').includes('json') || /^[\[{]/.test(text.trim())) {
+              try {
+                const data = JSON.parse(text);
+                jsonKeys = Object.keys(data || {});
+                const pick = ['product_prices','product_cover_thumbnails','product_customization','product_details','product_variants','product_add_to_cart','product_discounts','product_refresh','id_product_attribute','product_url'];
+                for (const key of pick) if (data && data[key] != null) jsonSignals[key] = compact(typeof data[key] === 'string' ? data[key] : JSON.stringify(data[key])).slice(0,500);
+              } catch {}
+            }
+            return {
+              length: text.length,
+              jsonKeys,
+              jsonSignals,
+              hasAddToCart: /add(?:er)?\s+au\s+panier|add\s+to\s+cart|add-to-cart/i.test(text),
+              hasComingSoon: /[àa]\s+venir|coming\s+soon|dispo\s*:?\s*aout/i.test(text),
+              hasOutOfStock: /rupture|out\s+of\s+stock|product\.oos/i.test(text),
+              hasAvailable: /disponible|in\s+stock/i.test(text),
+              hasOP17: /OP[-\s]?17/i.test(text),
+              prefix: compact(text).slice(0,700)
+            };
+          }
           export default { async fetch() {
-            const url='https://www.philibertnet.com/modules/feeder/rss.php?id_category=15860';
-            const res=await fetch(url,{headers:{'User-Agent':'OPWatch/1.0 (+personal read-only stock monitor)','Accept':'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.4','Accept-Language':'fr-FR,fr;q=0.9'}});
-            const text=await res.text();
-            const items=text.match(/<item\b[\s\S]*?<\/item>/gi)||[];
-            const item=items.find(x=>/OP[-\s]?17/i.test(x))||items[0]||'';
-            const tags=[...item.matchAll(/<([A-Za-z0-9:_-]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)].map(m=>({tag:m[1],value:clean(m[2]).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,800)}));
-            return Response.json({status:res.status,contentType:res.headers.get('content-type'),itemCount:items.length,tags,rawSanitized:clean(item).slice(0,3500)},{headers:{'cache-control':'no-store'}});
+            const base='https://www.philibertnet.com/fr/one-piece-le-jeu-de-cartes/179736-one-piece-le-jeu-de-cartes-op17-les-guerriers-les-plus-puissants-au-monde-booster-double-pack-2100001380267.html';
+            const urls=[
+              base,
+              base+'?ajax=1&action=refresh',
+              base+'?ajax=1&action=refresh&quantity_wanted=1',
+              'https://www.philibertnet.com/index.php?controller=product&id_product=179736&ajax=1&action=refresh&quantity_wanted=1'
+            ];
+            const out=[];
+            for(const url of urls){
+              const started=Date.now();
+              try{
+                const res=await fetch(url,{headers:{
+                  'User-Agent':'OPWatch/1.0 (+personal read-only stock monitor)',
+                  'Accept':'application/json,text/html;q=0.9,*/*;q=0.5',
+                  'Accept-Language':'fr-FR,fr;q=0.9,en;q=0.6',
+                  'X-Requested-With':'XMLHttpRequest'
+                }});
+                const text=await res.text();
+                out.push({url,status:res.status,durationMs:Date.now()-started,contentType:res.headers.get('content-type'),...summarize(text,res.headers.get('content-type'))});
+              }catch(e){out.push({url,status:'fetch-error',durationMs:Date.now()-started,error:String(e)});}
+            }
+            return Response.json(out,{headers:{'cache-control':'no-store'}});
           }};
           JS
           cat > wrangler.jsonc <<'JSON'
-          {"name":"opwatch-philibert-rss-probe","main":"worker.js","compatibility_date":"2026-08-01","workers_dev":true}
+          {"name":"opwatch-philibert-ajax-probe","main":"worker.js","compatibility_date":"2026-08-01","workers_dev":true}
           JSON
           npx wrangler@4.120.0 deploy --config wrangler.jsonc | tee /tmp/deploy.log
-          sleep 10
+          sleep 12
           url="$(grep -Eo 'https://[^ ]+workers\.dev' /tmp/deploy.log | tail -1)"
-          curl -fsS --retry 4 --retry-delay 2 --max-time 180 "$url" | tee /tmp/result.json
-          node -e "const x=require('/tmp/result.json'); console.log(JSON.stringify(x,null,2)); if(x.status!==200||!x.itemCount)process.exit(1)"
+          test -n "$url"
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 2 --max-time 180 "$url" | tee /tmp/result.json
+          node -e "const x=require('/tmp/result.json'); console.log(JSON.stringify(x,null,2)); if(!Array.isArray(x)||x.length!==4)process.exit(1)"
           npx wrangler@4.120.0 delete --config wrangler.jsonc --force || true
