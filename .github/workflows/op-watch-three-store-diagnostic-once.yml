@@ -1,0 +1,59 @@
+name: OP Watch Three Store Diagnostic One-Shot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/op-watch-three-store-diagnostic-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      COCKPIT_URL: https://op-watch-tcg-fr.pages.dev/cockpit/api
+    steps:
+      - name: Gate
+        working-directory: .
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/heads/main" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: diagnose oupi philibert otakuland once" ]
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Run three stores and print sanitized health
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          for store in oupi philibert otakuland; do
+            echo "=== FORCE $store ==="
+            curl -fsS --max-time 150 \
+              -H "Authorization: Bearer $token" \
+              -H "Content-Type: application/json" \
+              -X POST --data "{\"action\":\"runStoreNow\",\"store\":\"$store\"}" \
+              "$COCKPIT_URL/control" >/tmp/run.json || true
+            sleep 2
+          done
+          status="$(curl -fsS --max-time 30 -H "Authorization: Bearer $token" "$COCKPIT_URL/status")"
+          STATUS_JSON="$status" node - <<'NODE'
+          const s=JSON.parse(process.env.STATUS_JSON||'{}');
+          const keys=new Set(['oupi','philibert','otakuland']);
+          const rows=(s.stores||[]).filter(x=>keys.has(x.key)).map(x=>({key:x.key,name:x.name,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,sourceKind:x.sourceKind,candidates:x.candidates,lastCheck:x.lastCheck,detail:x.detail}));
+          console.log(JSON.stringify(rows,null,2));
+          if(rows.length!==3) process.exit(1);
+          NODE
