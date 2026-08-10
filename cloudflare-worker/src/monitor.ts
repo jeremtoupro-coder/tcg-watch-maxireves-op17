@@ -9,7 +9,7 @@ import { buildActiveWatchConfig, candidateForActiveProducts, type OfficialProduc
 import { createStateStore, type StateStore } from "./state";
 import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
 import { canonicalProductUrl } from "./connectorUrls";
-import type { Env, StoreAudit, StoreKey } from "./types";
+import type { Env, LanguageStatus, StoreAudit, StoreKey } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
 
 const DISCOVERY_INTERVAL_MINUTES = 15;
@@ -131,12 +131,13 @@ async function persistDiscoveryCache(
   connector: ReturnType<typeof selectConnectors>[number],
   stateStore: StateStore,
   officialProducts: OfficialProduct[],
+  acceptedLanguages: LanguageStatus[],
   discoveredAt: string
 ): Promise<void> {
   if (!stateStore.writable || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
 
   const entries = audit.candidates.flatMap((candidate) => {
-    const qualified = candidateForActiveProducts(candidate, officialProducts);
+    const qualified = candidateForActiveProducts(candidate, officialProducts, acceptedLanguages);
     if (!qualified) return [];
     const normalized = normalizedFastWatchUrl(qualified.url, connector);
     return normalized ? [{
@@ -166,6 +167,8 @@ export async function runMonitoringCycle(
     forceStore?: StoreKey;
     forceDiscovery?: boolean;
     officialProducts?: OfficialProduct[];
+    acceptedLanguages?: LanguageStatus[];
+    extraSourcesByStore?: Partial<Record<StoreKey, string[]>>;
     stateStore?: StateStore;
     now?: Date;
   } = {}
@@ -199,7 +202,14 @@ export async function runMonitoringCycle(
   const activeStores = options.forceStore
     ? [options.forceStore]
     : parseActiveStores(env.ACTIVE_STORES);
-  const requestedConnectors = selectConnectors(activeStores);
+  const requestedConnectors = selectConnectors(activeStores).map((connector) => {
+    const extras = options.extraSourcesByStore?.[connector.key] ?? [];
+    if (extras.length === 0 || connector.directPollingDisabledWithoutFeed === true) return connector;
+    return { ...connector, sources: [...new Set([...connector.sources, ...extras])] };
+  });
+  const acceptedLanguages = options.acceptedLanguages?.length
+    ? [...new Set(options.acceptedLanguages)]
+    : ["Français confirmé" as LanguageStatus];
 
   if (requestedConnectors.length === 0) {
     return {
@@ -222,7 +232,7 @@ export async function runMonitoringCycle(
       reason: "Aucun produit officiel n'est actuellement dans la fenêtre J-120/J+30."
     };
   }
-  const dynamicConfig = buildActiveWatchConfig(officialProducts);
+  const dynamicConfig = buildActiveWatchConfig(officialProducts, acceptedLanguages);
 
   const includeDiscoveryOnly = await discoveryDue(
     stateStore,
@@ -276,7 +286,7 @@ export async function runMonitoringCycle(
     };
   }
 
-  const audits = await Promise.all(connectors.map((connector) => auditStore(connector, env)));
+  const audits = await Promise.all(connectors.map((connector) => auditStore(connector, env, officialProducts)));
   const connectorByKey = new Map(connectors.map((connector) => [connector.key, connector]));
   const degradedStores = audits
     .map((audit) => ({
@@ -293,7 +303,7 @@ export async function runMonitoringCycle(
     for (const audit of healthyAudits) {
       const connector = connectorByKey.get(audit.store);
       if (connector) {
-        await persistDiscoveryCache(audit, connector, stateStore, officialProducts, discoveredAt);
+        await persistDiscoveryCache(audit, connector, stateStore, officialProducts, acceptedLanguages, discoveredAt);
       }
     }
     if (stateStore.writable) {
@@ -305,7 +315,7 @@ export async function runMonitoringCycle(
     const connector = connectorByKey.get(audit.store);
     if (connector?.commercialAlertsEnabled === false) return [];
     return audit.candidates
-      .map((candidate) => candidateForActiveProducts(candidate, officialProducts))
+      .map((candidate) => candidateForActiveProducts(candidate, officialProducts, acceptedLanguages))
       .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
   });
 

@@ -1,6 +1,7 @@
 import { auditConnector } from "./audit";
 import { auditAuthorizedFeed } from "./authorizedFeed";
 import { auditParkagePublicCatalog } from "./parkagePublicCatalog";
+import type { OfficialProduct } from "./opwatchV1";
 import type {
   ConnectorDefinition,
   Env,
@@ -72,7 +73,7 @@ function withOperationalStatus(
  * son programme d'affiliation / partenaire. L'URL reste un secret Cloudflare
  * et n'est jamais incluse dans le rapport d'audit.
  */
-export async function auditStore(connector: ConnectorDefinition, env: Env): Promise<StoreAudit> {
+export async function auditStore(connector: ConnectorDefinition, env: Env, watchProducts: OfficialProduct[] = []): Promise<StoreAudit> {
   const feedUrl = configuredAuthorizedFeedUrl(connector, env);
   if (feedUrl) {
     return withOperationalStatus(
@@ -107,7 +108,7 @@ export async function auditStore(connector: ConnectorDefinition, env: Env): Prom
   }
 
   return withOperationalStatus(
-    await auditConnector(connector),
+    await auditConnector(connector, watchProducts),
     connector,
     env,
     connector.authoritativeStructuredFeed ? "public_structured_feed" : "public_html"

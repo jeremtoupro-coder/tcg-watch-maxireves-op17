@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#071322">
+  <title>OP Watch Cockpit</title>
+  <style>
+    :root{--bg:#071322;--panel:#0d1c2f;--panel2:#11243b;--line:#213754;--text:#f7f8fb;--muted:#94a8c2;--green:#31d07d;--amber:#ffb33e;--red:#ff5d68;--gray:#77879b;--accent:#ff8a2a;--shadow:0 18px 45px rgba(0,0,0,.24)}
+    *{box-sizing:border-box}html{background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;min-height:100vh;background:radial-gradient(circle at 85% -10%,#183c63 0,transparent 34%),var(--bg)}button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:none!important}.wrap{width:min(1180px,100%);margin:auto;padding:18px 16px 90px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:11px}.logo{width:42px;height:42px;border:1px solid #355270;border-radius:13px;background:linear-gradient(145deg,#15385c,#0b1c30);display:grid;place-items:center;font-weight:900;color:var(--accent);box-shadow:var(--shadow)}.brand h1{font-size:19px;margin:0}.brand small{display:block;color:var(--muted);margin-top:2px}.pill{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border-radius:999px;font-size:12px;font-weight:800;border:1px solid var(--line);background:#0a1829}.dot{width:8px;height:8px;border-radius:50%;background:var(--gray);box-shadow:0 0 0 3px rgba(255,255,255,.04)}.dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}
+    .login{min-height:78vh;display:grid;place-items:center}.login-card{width:min(440px,100%);background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:22px;padding:28px;box-shadow:var(--shadow)}.login-card h2{margin:0 0 8px}.login-card p{color:var(--muted);line-height:1.5}.field{display:grid;gap:7px;margin:14px 0}.field label{font-size:12px;font-weight:800;color:#bdcce0}.field input,.field select,.field textarea{width:100%;background:#071525;color:var(--text);border:1px solid #294260;border-radius:12px;padding:12px 13px;outline:none}.field textarea{min-height:100px;resize:vertical}.field input:focus,.field textarea:focus,.field select:focus{border-color:#4779a7}.btn{border:0;border-radius:12px;padding:11px 14px;font-weight:850;background:#18314e;color:var(--text)}.btn.primary{background:linear-gradient(135deg,#ff9d45,#ff7b18);color:#15100b}.btn.good{background:#123d2b;color:#9df0c2}.btn.danger{background:#431c25;color:#ffadb4}.btn.ghost{border:1px solid var(--line);background:transparent}.btn:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;gap:8px;flex-wrap:wrap}.error{margin-top:10px;color:#ffadb4;font-size:13px}
+    .summary{display:grid;grid-template-columns:1.55fr repeat(4,1fr);gap:10px;margin:14px 0}.hero,.metric,.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}.hero{padding:18px}.hero h2{font-size:24px;margin:0 0 7px}.hero p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.metric{padding:15px}.metric strong{display:block;font-size:27px}.metric span{font-size:12px;color:var(--muted);font-weight:700}.metric.green strong{color:var(--green)}.metric.amber strong{color:var(--amber)}.metric.red strong{color:var(--red)}
+    .tabs{display:flex;gap:7px;overflow:auto;padding:3px 0 12px;scrollbar-width:none;position:sticky;top:0;z-index:5;background:linear-gradient(var(--bg) 76%,transparent)}.tabs::-webkit-scrollbar{display:none}.tab{white-space:nowrap;border:1px solid var(--line);background:#091829;color:var(--muted);border-radius:999px;padding:9px 13px;font-weight:800}.tab.active{background:#183757;color:#fff;border-color:#365a7d}.view{display:none}.view.active{display:block}.section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:10px 0}.section-head h3{margin:0;font-size:17px}.section-head p{margin:4px 0 0;color:var(--muted);font-size:12px}.card{padding:16px;margin-bottom:12px}
+    .stores{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.store{background:#0b192b;border:1px solid var(--line);border-radius:15px;padding:14px;display:grid;gap:9px}.store-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.store h4{margin:0;font-size:14px}.status{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:850;border-radius:999px;padding:5px 8px;background:#12233a}.status.green{color:#91f0bb}.status.amber{color:#ffd080}.status.red{color:#ff9fa6}.status.gray{color:#aeb8c5}.detail{font-size:12px;line-height:1.4;color:var(--muted)}.meta{display:flex;gap:8px;flex-wrap:wrap;font-size:10px;color:#8197b3}.meta b{color:#c7d5e6}.store-actions{display:flex;gap:7px}.store-actions .btn{padding:7px 9px;font-size:11px}
+    .lang-grid{display:flex;gap:9px;flex-wrap:wrap}.choice{display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:#091827;font-size:13px;font-weight:750}.choice input{accent-color:var(--accent);width:17px;height:17px}.product-list{display:grid;gap:8px}.product{display:grid;grid-template-columns:minmax(0,1.4fr) auto auto;gap:10px;align-items:center;background:#0a192a;border:1px solid var(--line);border-radius:14px;padding:12px}.product strong{font-size:13px}.product small{display:block;color:var(--muted);margin-top:3px}.switch{display:flex;gap:7px;align-items:center;font-size:11px;color:var(--muted)}.switch input{accent-color:var(--green);width:18px;height:18px}.date-mini{width:142px!important;padding:8px!important;font-size:11px!important}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.notice{border-left:3px solid var(--amber);padding:10px 12px;background:#171c25;border-radius:8px;color:#c9d3df;font-size:12px;line-height:1.45}.request{padding:12px;background:#091827;border:1px solid var(--line);border-radius:13px;margin-top:8px}.request small{color:var(--muted)}.request p{margin:7px 0 0;font-size:13px;line-height:1.45}.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(30px);opacity:0;pointer-events:none;background:#15283f;border:1px solid #34506f;border-radius:12px;padding:11px 15px;box-shadow:var(--shadow);font-size:13px;z-index:99;transition:.22s}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+    @media(max-width:850px){.summary{grid-template-columns:1fr 1fr}.hero{grid-column:1/-1}.stores{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}.product{grid-template-columns:1fr}.date-mini{width:100%!important}.wrap{padding:14px 12px 90px}.top{align-items:flex-start}.top .actions{justify-content:flex-end}.brand small{max-width:180px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section id="login" class="login">
+      <div class="login-card">
+        <div class="brand"><div class="logo">OP</div><div><h1>OP Watch Cockpit</h1><small>Console personnelle de supervision</small></div></div>
+        <h2 style="margin-top:24px">Accès administrateur</h2>
+        <p>Le tableau de bord et les actions sont protégés. Le mot de passe reste uniquement dans cette session de navigateur.</p>
+        <form id="loginForm">
+          <div class="field"><label>Mot de passe cockpit</label><input id="password" type="password" autocomplete="current-password" required></div>
+          <button class="btn primary" style="width:100%">Ouvrir le cockpit</button>
+          <div id="loginError" class="error"></div>
+        </form>
+      </div>
+    </section>
+
+    <section id="app" class="hidden">
+      <header class="top">
+        <div class="brand"><div class="logo">OP</div><div><h1>OP Watch Cockpit</h1><small id="lastRefresh">Chargement…</small></div></div>
+        <div class="actions"><span id="runtimePill" class="pill"><span class="dot"></span> Runtime</span><button id="logout" class="btn ghost">Quitter</button></div>
+      </header>
+
+      <section class="summary">
+        <div class="hero"><h2 id="heroTitle">Contrôle en cours…</h2><p id="heroText">Lecture du runtime et des 21 boutiques.</p></div>
+        <div class="metric green"><strong id="greenCount">—</strong><span>opérationnels</span></div>
+        <div class="metric amber"><strong id="amberCount">—</strong><span>en attente / limités</span></div>
+        <div class="metric red"><strong id="redCount">—</strong><span>incidents</span></div>
+        <div class="metric"><strong id="productCount">—</strong><span>références actives</span></div>
+      </section>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="supervision">Supervision</button>
+        <button class="tab" data-tab="products">Produits</button>
+        <button class="tab" data-tab="settings">Réglages</button>
+        <button class="tab" data-tab="assistant">Assistant</button>
+      </nav>
+
+      <section id="supervision" class="view active">
+        <div class="section-head"><div><h3>21 boutiques</h3><p>Vert = cycle réel récent. Orange = dépendance connue. Rouge = problème à traiter.</p></div><button id="refresh" class="btn">Actualiser</button></div>
+        <div id="stores" class="stores"></div>
+      </section>
+
+      <section id="products" class="view">
+        <div class="section-head"><div><h3>Références surveillées</h3><p>Désactivation et cutoff appliqués au runtime à partir du cycle suivant.</p></div></div>
+        <div class="card"><div id="productList" class="product-list"></div></div>
+        <div class="card">
+          <h3 style="margin-top:0">Ajouter une référence manuelle</h3>
+          <p class="detail">Pour One Piece, une référence/alias suffit souvent. Pour un autre jeu, tu peux ajouter des URLs directes de fiches par boutique afin que le moteur ait une source précise.</p>
+          <form id="addProductForm">
+            <div class="grid2"><div class="field"><label>Jeu</label><select id="game"><option value="one-piece">One Piece</option><option value="pokemon">Pokémon</option><option value="other">Autre</option></select></div><div class="field"><label>Référence / identifiant</label><input id="productId" placeholder="OP-18, ME02, EV10…" required></div></div>
+            <div class="field"><label>Nom du produit</label><input id="productLabel" placeholder="Nom lisible du produit" required></div>
+            <div class="grid2"><div class="field"><label>Date de sortie</label><input id="releaseDate" type="date"></div><div class="field"><label>Arrêter la recherche le</label><input id="manualStopAt" type="date"></div></div>
+            <div class="field"><label>Alias de recherche (séparés par des virgules)</label><input id="aliases" placeholder="ME02, Mega Evolution 02, nom exact…"></div>
+            <div class="field"><label>URLs directes facultatives — une ligne par boutique</label><textarea id="storeUrls" placeholder="parkage=https://…\nphilibert=https://…"></textarea></div>
+            <button class="btn primary">Ajouter au circuit</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="settings" class="view">
+        <div class="card">
+          <h3 style="margin-top:0">Langues autorisées</h3>
+          <p class="detail">Au moins une langue doit rester active. La modification change réellement le filtre d’alerte du moteur.</p>
+          <div id="languages" class="lang-grid"></div>
+          <div class="actions" style="margin-top:12px"><button id="saveLanguages" class="btn primary">Enregistrer les langues</button></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Discord & contrôle</h3>
+          <p class="detail">Heartbeat automatique prévu à <b>10h00</b> et <b>22h00</b> heure de Paris. Le bouton ci-dessous exécute d’abord un cycle réel puis envoie le résumé.</p>
+          <div class="actions"><button id="heartbeatNow" class="btn good">Envoyer un heartbeat maintenant</button></div>
+        </div>
+        <div class="card"><h3 style="margin-top:0">Runtime</h3><div id="runtimeDetails" class="detail">—</div></div>
+      </section>
+
+      <section id="assistant" class="view">
+        <div class="card">
+          <h3 style="margin-top:0">Demandes complexes</h3>
+          <p class="detail">Utilise cette zone pour une évolution qui dépasse un réglage direct : ajouter un nouveau jeu, trouver des routes marchandes, modifier un connecteur, etc.</p>
+          <div class="notice">Les réglages structurés du cockpit sont instantanés. Les demandes complexes sont enregistrées dans une file dédiée pour traitement assisté ; l’exécution ChatGPT événementielle sera branchée séparément afin de ne jamais laisser une IA modifier la prod sans garde-fou.</div>
+          <form id="assistantForm"><div class="field"><label>Demande</label><textarea id="assistantText" placeholder="Ex : ajoute le prochain set Pokémon et trouve les routes fiables chez les boutiques déjà connectées."></textarea></div><button class="btn primary">Ajouter à la file</button></form>
+          <div id="requests"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script>
+    const PASSWORD_KEY='opwatch-cockpit-password';
+    let state=null;
+    const $=id=>document.getElementById(id);
+    const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const password=()=>sessionStorage.getItem(PASSWORD_KEY)||'';
+    async function api(path,options={}){
+      const headers={...(options.headers||{}),'x-op-watch-admin-password':password()};
+      if(options.body&&!headers['content-type'])headers['content-type']='application/json';
+      const res=await fetch(path,{...options,headers,cache:'no-store'});
+      const data=await res.json().catch(()=>({error:'Réponse invalide'}));
+      if(res.status===401){sessionStorage.removeItem(PASSWORD_KEY);showLogin('Mot de passe invalide.');throw new Error('Session refusée');}
+      if(!res.ok)throw new Error(data.error||`HTTP ${res.status}`);
+      return data;
+    }
+    function toast(text){const el=$('toast');el.textContent=text;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)}
+    function showLogin(message=''){$('login').classList.remove('hidden');$('app').classList.add('hidden');$('loginError').textContent=message}
+    function showApp(){$('login').classList.add('hidden');$('app').classList.remove('hidden')}
+    function ageText(ms){if(ms==null)return 'jamais';const s=Math.round(ms/1000);if(s<60)return `${s}s`;const m=Math.round(s/60);if(m<60)return `${m} min`;return `${Math.round(m/60)} h`}
+    function sourceText(value){return ({public_structured_feed:'API structurée',public_html:'Site marchand',authorized_feed:'Flux partenaire',authorized_feed_required:'Flux partenaire requis',unknown:'—'})[value]||value}
+    async function load(){const data=await api('/cockpit/api/status');state=data;render();showApp();}
+    function render(){
+      $('lastRefresh').textContent='Actualisé '+new Date(state.checkedAt).toLocaleTimeString('fr-FR');
+      $('greenCount').textContent=state.totals.green;$('amberCount').textContent=state.totals.amber;$('redCount').textContent=state.totals.red;$('productCount').textContent=state.calendar.activeProducts.length;
+      const runtime=state.runtime.live;const pill=$('runtimePill');pill.innerHTML=`<span class="dot ${runtime?'green':'red'}"></span>${runtime?'PRODUCTION LIVE':'RUNTIME À CONTRÔLER'}`;
+      $('heroTitle').textContent=state.totals.red===0?'Tout ce qui doit tourner est au vert':'OP Watch tourne, mais il reste des rouges';
+      $('heroText').textContent=`${state.totals.green} vert(s), ${state.totals.amber} orange(s), ${state.totals.red} rouge(s). Heartbeat : 10h00 / 22h00 Paris.`;
+      $('stores').innerHTML=state.stores.map(s=>`<article class="store"><div class="store-top"><div><h4>${esc(s.name)}</h4><div class="meta"><span>${esc(sourceText(s.sourceKind))}</span>${s.lastCheck?`<span>il y a <b>${esc(ageText(s.ageMs))}</b></span>`:''}</div></div><span class="status ${s.level}"><span class="dot ${s.level}"></span>${esc(s.label)}</span></div><div class="detail">${esc(s.detail)}</div><div class="meta"><span>Candidats: <b>${s.candidates??'—'}</b></span>${s.durationMs!=null?`<span>Cycle: <b>${s.durationMs} ms</b></span>`:''}</div><div class="store-actions"><button class="btn ghost" onclick="runStore('${esc(s.key)}')">Tester maintenant</button></div></article>`).join('');
+      renderLanguages();renderProducts();renderRequests();
+      $('runtimeDetails').innerHTML=`Monitoring : <b>${state.runtime.monitoring?'ON':'OFF'}</b> · Discord : <b>${state.runtime.discord?'LIVE':'OFF'}</b> · Scheduler : <b>${state.runtime.scheduler?'LIVE':'OFF'}</b> · État : <b>${esc(state.runtime.stateBackend)}</b> · Runtime test : <b>${state.runtime.runtimeTest?'OUI':'NON'}</b>`;
+    }
+    function renderLanguages(){const active=new Set(state.control.languages);const all=[['Français confirmé','🇫🇷 Français'],['Anglais détecté','🇬🇧 Anglais'],['Japonais détecté','🇯🇵 Japonais']];$('languages').innerHTML=all.map(([value,label])=>`<label class="choice"><input type="checkbox" value="${value}" ${active.has(value)?'checked':''}>${label}</label>`).join('')}
+    function renderProducts(){const products=state.calendar.controllableProducts||state.calendar.activeProducts||[];$('productList').innerHTML=products.length?products.map(p=>{const enabled=p.enabled!==false;const release=p.releaseDate?`Sortie ${esc(p.releaseDate)}`:'Date de sortie non chargée';return `<div class="product"><div><strong>${esc(p.id)} — ${esc(p.label)}</strong><small>${release}${p.manual?' · manuel':' · calendrier/contrôle'}${p.active?' · actif':' · hors circuit'}</small></div><label class="switch"><input type="checkbox" ${enabled?'checked':''} onchange="setProductEnabled('${esc(p.id)}',this.checked)"> Surveillé</label><div class="actions"><input class="field date-mini" type="date" value="${esc(p.stopAt||'')}" title="Arrêter la surveillance après cette date" onchange="setProductStop('${esc(p.id)}',this.value)">${p.manual?`<button class="btn danger" onclick="deleteManual('${esc(p.id)}')">Supprimer</button>`:''}</div></div>`}).join(''):'<div class="detail">Aucune référence configurée.</div>'}
+    function renderRequests(){const rows=[...(state.control.assistantRequests||[])].reverse();$('requests').innerHTML=rows.length?rows.map(r=>`<div class="request"><small>${new Date(r.createdAt).toLocaleString('fr-FR')} · ${esc(r.status)}</small><p>${esc(r.text)}</p>${r.status==='pending'?`<div class="actions"><button class="btn ghost" onclick="cancelRequest('${r.id}')">Annuler</button></div>`:''}</div>`).join(''):'<div class="detail" style="margin-top:12px">Aucune demande en attente.</div>'}
+    async function control(payload,msg){try{await api('/cockpit/api/control',{method:'POST',body:JSON.stringify(payload)});toast(msg);await load()}catch(e){toast(e.message)}}
+    window.runStore=store=>control({action:'runStoreNow',store},`Contrôle ${store} terminé`);
+    window.setProductEnabled=(id,enabled)=>control({action:'setProductOverride',id,enabled},`${id} mis à jour`);
+    window.setProductStop=(id,stopAt)=>control({action:'setProductOverride',id,stopAt},`Cutoff ${id} mis à jour`);
+    window.deleteManual=id=>{if(confirm(`Supprimer ${id} du circuit ?`))control({action:'deleteManualProduct',id},`${id} supprimé`)};
+    window.cancelRequest=id=>control({action:'cancelAssistantRequest',id},'Demande annulée');
+    $('loginForm').addEventListener('submit',async e=>{e.preventDefault();sessionStorage.setItem(PASSWORD_KEY,$('password').value);$('loginError').textContent='';try{await load()}catch(err){$('loginError').textContent=err.message}});
+    $('logout').addEventListener('click',()=>{sessionStorage.removeItem(PASSWORD_KEY);location.reload()});
+    $('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));
+    $('saveLanguages').addEventListener('click',()=>{const languages=[...$('languages').querySelectorAll('input:checked')].map(i=>i.value);control({action:'setLanguages',languages},'Langues enregistrées')});
+    $('heartbeatNow').addEventListener('click',()=>control({action:'heartbeatNow'},'Heartbeat Discord envoyé'));
+    $('addProductForm').addEventListener('submit',e=>{e.preventDefault();const urls={};$('storeUrls').value.split('\n').map(x=>x.trim()).filter(Boolean).forEach(line=>{const i=line.indexOf('=');if(i>0){const store=line.slice(0,i).trim();const url=line.slice(i+1).trim();(urls[store]??=[]).push(url)}});const product={id:$('productId').value,label:$('productLabel').value,game:$('game').value,releaseDate:$('releaseDate').value||undefined,stopAt:$('manualStopAt').value||undefined,aliases:$('aliases').value.split(',').map(x=>x.trim()).filter(Boolean),storeUrls:urls,enabled:true};control({action:'addManualProduct',product},'Référence ajoutée').then(()=>$('addProductForm').reset())});
+    $('assistantForm').addEventListener('submit',e=>{e.preventDefault();const text=$('assistantText').value.trim();if(text){control({action:'queueAssistantRequest',text},'Demande ajoutée').then(()=>$('assistantText').value='')}});
+    document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===btn));document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===btn.dataset.tab))}));
+    if(password())load().catch(()=>showLogin('Session expirée.'));else showLogin();
+    setInterval(()=>{if(password()&&!$('app').classList.contains('hidden'))load().catch(()=>{})},60000);
+  </script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import { decodeHtml, normalizeForMatching, stripHtml } from "./matching";
-import type { ProductCandidate, ProductFormat, WatchConfig } from "./types";
+import type { LanguageStatus, ProductCandidate, ProductFormat, WatchConfig } from "./types";
 
 export type { ProductFormat } from "./types";
 export type ProductFamily = "OP" | "EB" | "PRB" | "ST" | "DP" | "TS" | "OTHER";
@@ -339,14 +339,22 @@ function normalizedIdentityDiscriminator(value: string): string {
     .slice(0, 120);
 }
 
+function identityLanguageKey(language: LanguageStatus): string {
+  if (language === "Anglais détecté") return "en";
+  if (language === "Japonais détecté") return "jp";
+  if (language === "Français confirmé") return "fr";
+  return "other";
+}
+
 export function listingIdentity(
   store: string,
   productId: string,
   format: ProductFormat,
-  discriminator = ""
+  discriminator = "",
+  language: LanguageStatus = "Français confirmé"
 ): string {
   const stablePart = normalizedIdentityDiscriminator(discriminator);
-  return `${store.trim().toLowerCase()}|${productId}|${format}|fr${stablePart ? `|${stablePart}` : ""}`;
+  return `${store.trim().toLowerCase()}|${productId}|${format}|${identityLanguageKey(language)}${stablePart ? `|${stablePart}` : ""}`;
 }
 
 export function enrichCandidateIdentity(candidate: ProductCandidate): ProductCandidate {
@@ -362,22 +370,25 @@ export function enrichCandidateIdentity(candidate: ProductCandidate): ProductCan
     matchedReferences: canonicalReferences,
     format,
     identityKey: reference && format !== "other"
-      ? listingIdentity(candidate.store, reference, format, discriminator)
+      ? listingIdentity(candidate.store, reference, format, discriminator, candidate.language)
       : candidate.identityKey
   };
 }
 
 export function candidateForActiveProducts(
   candidate: ProductCandidate,
-  activeProducts: OfficialProduct[]
+  activeProducts: OfficialProduct[],
+  acceptedLanguages: LanguageStatus[] = ["Français confirmé"]
 ): ProductCandidate | undefined {
   const enriched = enrichCandidateIdentity(candidate);
   const activeIds = new Set(activeProducts.map((product) => product.id));
   const activeReferences = enriched.matchedReferences.filter((reference) => activeIds.has(reference));
 
   if (activeReferences.length !== 1) return undefined;
-  if (!enriched.format || enriched.format === "other") return undefined;
-  if (enriched.language !== "Français confirmé") return undefined;
+  const matchedProduct = activeProducts.find((product) => product.id === activeReferences[0]);
+  if (!enriched.format) return undefined;
+  if (enriched.format === "other" && matchedProduct?.family !== "OTHER") return undefined;
+  if (!acceptedLanguages.includes(enriched.language)) return undefined;
   if (enriched.availability === "unknown") return undefined;
   if (enriched.commercialEligible === false) return undefined;
   if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) return undefined;
@@ -389,12 +400,13 @@ export function candidateForActiveProducts(
       enriched.store,
       activeReferences[0],
       enriched.format,
-      enriched.externalId || enriched.title
+      enriched.externalId || enriched.title,
+      enriched.language
     )
   };
 }
 
-export function buildActiveWatchConfig(products: OfficialProduct[]): WatchConfig {
+export function buildActiveWatchConfig(products: OfficialProduct[], acceptedLanguages: LanguageStatus[] = ["Français confirmé"]): WatchConfig {
   if (products.length === 0) {
     throw new Error("Impossible de construire la surveillance sans produit officiel actif.");
   }
@@ -404,7 +416,7 @@ export function buildActiveWatchConfig(products: OfficialProduct[]): WatchConfig
     version: 3,
     settings: {
       notifyOnInitialDiscovery: false,
-      defaultLanguages: ["Français confirmé"]
+      defaultLanguages: acceptedLanguages
     },
     products: products.map((product) => ({
       id: product.id,
@@ -421,7 +433,7 @@ export function buildActiveWatchConfig(products: OfficialProduct[]): WatchConfig
         enabled: true,
         productIds,
         stores: ["*"],
-        languages: ["Français confirmé"],
+        languages: acceptedLanguages,
         events: ["new_listing", "back_in_stock", "preorder_opened", "became_unavailable"],
         availabilities: ["available", "preorder", "unavailable"],
         notifyOnInitialDiscovery: false
@@ -432,7 +444,7 @@ export function buildActiveWatchConfig(products: OfficialProduct[]): WatchConfig
         enabled: true,
         productIds,
         stores: ["*"],
-        languages: ["Français confirmé"],
+        languages: acceptedLanguages,
         events: ["price_drop", "price_increase"],
         availabilities: ["*"],
         notifyOnInitialDiscovery: false
