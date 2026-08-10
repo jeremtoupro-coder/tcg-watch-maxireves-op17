@@ -1,4 +1,4 @@
-name: OP Watch Three-Store LIVE Hotfix One-Shot
+name: OP Watch Three-Store LIVE Verification One-Shot
 
 on:
   push:
@@ -10,84 +10,59 @@ permissions:
   contents: read
 
 jobs:
-  deploy-and-verify:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: cloudflare-worker
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
       PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
-      - name: Hard hotfix gate
+      - name: Hard verification gate
         working-directory: .
         shell: bash
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: deploy three-store health hotfix live" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: verify three-store hotfix live" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: cloudflare-worker/package-lock.json
-      - name: Install
-        run: npm ci --no-audit --no-fund
-      - name: Validate exact production revision
-        run: npm run typecheck && npm test && npx wrangler deploy --dry-run
-      - name: Verify required credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$DISCORD_WEBHOOK_URL"
       - name: Derive private readiness token
         shell: bash
         run: |
           token="$(npm run --silent derive-preview-audit-token)"
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Generate final LIVE config
-        run: npm run generate-production-config
-        env:
-          PRODUCTION_PHASE: live
-      - name: Assert LIVE config before deploy
-        run: >-
-          node -e "const c=require('./wrangler.production-live.generated.json');
-          const b=c.durable_objects?.bindings||[];
-          if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||
-          c.vars.DISCORD_MODE!=='live'||c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE==='true'||
-          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==2) process.exit(1)"
-      - name: Deploy exact LIVE hotfix
-        run: npx wrangler deploy --config wrangler.production-live.generated.json
-      - name: Refresh private readiness secret
-        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-live.generated.json
-      - name: Refresh Discord webhook secret
-        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-live.generated.json
-      - name: Production readiness smoke
-        run: npm run smoke-production
-        env:
-          PRODUCTION_SMOKE_PHASE: live
+      - name: Require production readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready" > /tmp/ready.json
+          node - <<'NODE'
+          const x=require('/tmp/ready.json');
+          console.log(JSON.stringify(x,null,2));
+          if(x.readiness!=='PASS' && x.ready!==true) process.exit(1);
+          NODE
       - name: Force real Discovery for Oupi Philibert Otakuland
         shell: bash
         run: |
           set -euo pipefail
           for store in oupi philibert otakuland; do
             echo "=== $store ==="
-            response="$(curl -fsS --max-time 150 \
+            curl -fsS --max-time 150 \
               -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
               -H "Content-Type: application/json" \
               -X POST --data "{\"action\":\"runStoreNow\",\"store\":\"$store\"}" \
-              "$PRODUCTION_URL/cockpit/api/control")"
-            BODY="$response" STORE="$store" node - <<'NODE'
-          const x=JSON.parse(process.env.BODY||'{}');
+              "$PRODUCTION_URL/cockpit/api/control" > "/tmp/$store.json"
+            STORE="$store" node - <<'NODE'
           const store=process.env.STORE;
+          const x=require(`/tmp/${store}.json`);
           if(!x.ok) throw new Error(`${store}: control not ok`);
           const row=(x.cycle?.stores||[]).find(s=>s.store===store);
           console.log(JSON.stringify({store,status:row?.status,durationMs:row?.durationMs,merchantDurationMs:row?.merchantDurationMs},null,2));
@@ -98,9 +73,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          status="$(curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status")"
-          STATUS_JSON="$status" node - <<'NODE'
-          const s=JSON.parse(process.env.STATUS_JSON||'{}');
+          curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/status.json
+          node - <<'NODE'
+          const s=require('/tmp/status.json');
           if(s.runtime?.live!==true) throw new Error('runtime not live');
           const wanted=['oupi','philibert','otakuland'];
           const rows=(s.stores||[]).filter(x=>wanted.includes(x.key)).map(x=>({key:x.key,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,candidates:x.candidates,lastCheck:x.lastCheck,detail:x.detail}));
@@ -113,11 +88,11 @@ jobs:
           set -euo pipefail
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
           base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PRODUCTION_WORKER_NAME"
-          settings="$(curl -fsS -H "$auth" "$base/settings")"
-          schedules="$(curl -fsS -H "$auth" "$base/schedules")"
-          SETTINGS="$settings" SCHEDULES="$schedules" node - <<'NODE'
-          const settings=JSON.parse(process.env.SETTINGS||'{}');
-          const schedules=JSON.parse(process.env.SCHEDULES||'{}');
+          curl -fsS -H "$auth" "$base/settings" > /tmp/settings.json
+          curl -fsS -H "$auth" "$base/schedules" > /tmp/schedules.json
+          node - <<'NODE'
+          const settings=require('/tmp/settings.json');
+          const schedules=require('/tmp/schedules.json');
           const bindings=settings.result?.bindings||[];
           const plain=Object.fromEntries(bindings.filter(b=>b.type==='plain_text').map(b=>[b.name,b.text]));
           const names=new Set(bindings.map(b=>b.name));
