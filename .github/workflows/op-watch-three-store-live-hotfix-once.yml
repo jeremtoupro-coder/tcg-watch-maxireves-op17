@@ -1,4 +1,4 @@
-name: OP Watch Three-Store Final Proof One-Shot
+name: OP Watch FINAL Three-Store LIVE Proof
 
 on:
   push:
@@ -10,38 +10,73 @@ permissions:
   contents: read
 
 jobs:
-  prove:
+  deploy-and-prove:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: cloudflare-worker
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
       PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
-      - name: Gate
+      - name: Hard gate
         working-directory: .
+        shell: bash
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: final proof Oupi Philibert Otakuland green" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: deploy and prove final three-store cadence" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: cloudflare-worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Validate exact main
+        run: npm run typecheck && npm test && npx wrangler deploy --dry-run
       - name: Derive private token
         shell: bash
         run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$DISCORD_WEBHOOK_URL"
           token="$(npm run --silent derive-preview-audit-token)"
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Force Philibert and Otakuland real cycles
+      - name: Generate and assert LIVE config
+        run: |
+          npm run generate-production-config
+          node -e "const c=require('./wrangler.production-live.generated.json'); const b=c.durable_objects?.bindings||[]; if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE==='true'||JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==2) process.exit(1)"
+        env:
+          PRODUCTION_PHASE: live
+      - name: Deploy exact LIVE code
+        run: npx wrangler deploy --config wrangler.production-live.generated.json
+      - name: Restore private readiness secret
+        run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-live.generated.json
+      - name: Restore Discord secret
+        run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-live.generated.json
+      - name: Wait for LIVE readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..18}; do
+            if curl -fsS --max-time 20 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready" > /tmp/ready.json; then
+              if node -e "const x=require('/tmp/ready.json'); process.exit(x.status==='ready'&&x.mode==='live'&&x.monitoringEnabled===true&&x.stateWritesEnabled===true&&x.discordMode==='live'&&x.schedulerMode==='live'?0:1)"; then
+                cat /tmp/ready.json
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          exit 1
+      - name: Force fresh Discovery for Philibert and Otakuland
         shell: bash
         run: |
           set -euo pipefail
@@ -59,18 +94,39 @@ jobs:
           if(!x.ok||row?.status!=='completed') process.exit(2);
           NODE
           done
-      - name: Require Oupi Philibert Otakuland GREEN in production cockpit
+      - name: Record Discovery timestamps
+        shell: bash
+        run: |
+          curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/before.json
+          node - <<'NODE'
+          const s=require('/tmp/before.json');
+          const rows=Object.fromEntries((s.stores||[]).filter(x=>['oupi','philibert','otakuland'].includes(x.key)).map(x=>[x.key,{lastCheck:x.lastCheck,level:x.level,sourceKind:x.sourceKind,runtimeStatus:x.runtimeStatus,candidates:x.candidates}]));
+          console.log(JSON.stringify(rows,null,2));
+          require('fs').writeFileSync('/tmp/philibert-before.txt', rows.philibert?.lastCheck||'');
+          NODE
+      - name: Prove scheduled Fast Watch takes over without Philibert RSS
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/status.json
-          node - <<'NODE'
-          const s=require('/tmp/status.json');
-          const wanted=['oupi','philibert','otakuland'];
-          const rows=(s.stores||[]).filter(x=>wanted.includes(x.key)).map(x=>({key:x.key,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,candidates:x.candidates,lastCheck:x.lastCheck,sourceKind:x.sourceKind,detail:x.detail}));
-          console.log(JSON.stringify({runtime:s.runtime,totals:s.totals,stores:rows},null,2));
-          if(s.runtime?.live!==true||rows.length!==3||rows.some(x=>x.level!=='green'||x.runtimeStatus!=='completed')) process.exit(3);
+          before="$(cat /tmp/philibert-before.txt)"
+          for attempt in {1..24}; do
+            sleep 10
+            curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/after.json
+            if BEFORE="$before" node - <<'NODE'
+          const s=require('/tmp/after.json');
+          const rows=(s.stores||[]).filter(x=>['oupi','philibert','otakuland'].includes(x.key));
+          const p=rows.find(x=>x.key==='philibert');
+          const ok=s.runtime?.live===true && rows.length===3 && rows.every(x=>x.level==='green'&&x.runtimeStatus==='completed') && p?.sourceKind==='public_html' && p?.lastCheck && p.lastCheck!==process.env.BEFORE;
+          if(!ok) process.exit(1);
+          console.log(JSON.stringify({runtime:s.runtime,totals:s.totals,stores:rows.map(x=>({key:x.key,level:x.level,runtimeStatus:x.runtimeStatus,sourceKind:x.sourceKind,candidates:x.candidates,lastCheck:x.lastCheck,detail:x.detail}))},null,2));
           NODE
+            then
+              exit 0
+            fi
+          done
+          echo "Le Fast Watch planifié n'a pas produit la preuve attendue dans le délai." >&2
+          cat /tmp/after.json || true
+          exit 3
       - name: Independent Cloudflare LIVE proof
         shell: bash
         run: |
