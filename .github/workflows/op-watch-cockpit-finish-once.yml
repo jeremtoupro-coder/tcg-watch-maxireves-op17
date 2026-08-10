@@ -1,0 +1,42 @@
+name: OP Watch Cockpit Finish One-Shot
+
+on:
+  push:
+    branches: [op-watch-cockpit-v1]
+    paths:
+      - .github/workflows/op-watch-cockpit-finish-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: op-watch-cockpit-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Apply finishing patches
+        run: python3 cloudflare-worker/scripts/finish-cockpit.py
+      - name: Validate full cockpit runtime
+        working-directory: cloudflare-worker
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npx wrangler deploy --dry-run
+      - name: Commit finished cockpit
+        run: |
+          git config user.name "op-watch-cockpit-bot"
+          git config user.email "op-watch-cockpit-bot@users.noreply.github.com"
+          git add cloudflare-worker/src cloudflare-worker/public-site/cockpit
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: finish cockpit product controls"
+          git push origin HEAD:op-watch-cockpit-v1
