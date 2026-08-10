@@ -56,7 +56,7 @@ describe("Philibert RSS + fiches directes", () => {
     expect(audit.candidates).toHaveLength(1);
     expect(audit.candidates[0]).toMatchObject({
       store: "philibert",
-      matchedReferences: expect.arrayContaining(["OP17"]),
+      matchedReferences: expect.arrayContaining(["OP-17"]),
       language: "Français confirmé",
       commercialEligible: true
     });
