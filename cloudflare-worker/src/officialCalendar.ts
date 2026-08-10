@@ -1,10 +1,9 @@
 import { stripHtml } from "./matching";
 import {
-  activeOfficialProducts,
-  computeWatchWindow,
   parseOfficialCatalog,
   type OfficialProduct
 } from "./opwatchV1";
+import { computeOfficialWatchWindow, type OfficialWatchWindow } from "./officialWatchPolicy";
 import type { StateStore } from "./state";
 
 const CACHE_KEY = "official-calendar:fr:v1";
@@ -20,7 +19,7 @@ export interface OfficialCalendarSnapshot {
   sourcePages: number;
   catalogProducts: OfficialProduct[];
   activeProducts: Array<OfficialProduct & {
-    watchWindow: ReturnType<typeof computeWatchWindow>;
+    watchWindow: OfficialWatchWindow;
   }>;
   cache: "hit" | "miss";
 }
@@ -28,7 +27,9 @@ export interface OfficialCalendarSnapshot {
 interface CalendarOptions {
   sourceUrl: string;
   now?: Date;
+  /** Compatibilité de configuration V1 : la borne de début n'est plus utilisée. */
   daysBefore: number;
+  /** Compatibilité de configuration V1 : la fin réelle est désormais +1 mois calendaire. */
   daysAfter: number;
   stateStore?: StateStore;
   fetcher?: typeof fetch;
@@ -80,17 +81,15 @@ export function validateOfficialCatalogPage(html: string): void {
 function buildSnapshot(
   cached: CachedCalendar,
   now: Date,
-  daysBefore: number,
-  daysAfter: number,
   cache: "hit" | "miss"
 ): OfficialCalendarSnapshot {
-  const active = activeOfficialProducts(cached.catalogProducts, now, daysBefore, daysAfter);
+  const activeProducts = cached.catalogProducts.flatMap((product) => {
+    const watchWindow = computeOfficialWatchWindow(product.releaseDate, now);
+    return watchWindow.active ? [{ ...product, watchWindow }] : [];
+  });
   return {
     ...cached,
-    activeProducts: active.map((product) => ({
-      ...product,
-      watchWindow: computeWatchWindow(product.releaseDate, now, daysBefore, daysAfter)
-    })),
+    activeProducts,
     cache
   };
 }
@@ -173,7 +172,7 @@ export async function loadOfficialCalendar(options: CalendarOptions): Promise<Of
   if (cached) {
     const cachedAt = Date.parse(cached.fetchedAt);
     if (Number.isFinite(cachedAt) && now.getTime() - cachedAt < CACHE_MAX_AGE_MS) {
-      return buildSnapshot(cached, now, options.daysBefore, options.daysAfter, "hit");
+      return buildSnapshot(cached, now, "hit");
     }
   }
 
@@ -222,5 +221,5 @@ export async function loadOfficialCalendar(options: CalendarOptions): Promise<Of
   if (options.stateStore?.writable) {
     await options.stateStore.putMetadata(CACHE_KEY, JSON.stringify(fresh));
   }
-  return buildSnapshot(fresh, now, options.daysBefore, options.daysAfter, "miss");
+  return buildSnapshot(fresh, now, "miss");
 }
