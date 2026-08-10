@@ -1,5 +1,6 @@
 import { auditConnector } from "./audit";
 import { auditAuthorizedFeed } from "./authorizedFeed";
+import { auditParkagePublicCatalog } from "./parkagePublicCatalog";
 import type {
   ConnectorDefinition,
   Env,
@@ -94,6 +95,15 @@ export async function auditStore(connector: ConnectorDefinition, env: Env): Prom
         `Flux autorisé en attente (${connector.authorizedFeedEnv ?? "secret non déclaré"}) : origine protégée non interrogée.`
       ]
     }, connector, env, "none");
+  }
+
+  if (connector.key === "parkage") {
+    return withOperationalStatus(
+      await auditParkagePublicCatalog(connector),
+      connector,
+      env,
+      "public_structured_feed"
+    );
   }
 
   return withOperationalStatus(
