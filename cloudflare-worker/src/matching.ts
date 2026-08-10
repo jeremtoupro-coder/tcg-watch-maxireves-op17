@@ -55,6 +55,8 @@ const UNAVAILABLE_PATTERNS = [
   /n['’]est\s+pas\s+actuellement\s+vendu/i
 ];
 
+const RELEASE_MONTH = "(?:janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre|january|february|march|april|may|june|july|august|september|october|november|december)";
+
 const PREORDER_PATTERNS = [
   /précommande/i,
   /precommande/i,
@@ -62,7 +64,11 @@ const PREORDER_PATTERNS = [
   /preco\b/i,
   /pre[-\s]?order/i,
   /réservation/i,
-  /reservation/i
+  /reservation/i,
+  /\b[àa]\s+venir\b/i,
+  /\bcoming\s+soon\b/i,
+  new RegExp(`\\bdispo\\s*:\\s*${RELEASE_MONTH}\\b`, "i"),
+  new RegExp(`\\bavailable\\s*:\\s*${RELEASE_MONTH}\\b`, "i")
 ];
 
 const AVAILABLE_PATTERNS = [
