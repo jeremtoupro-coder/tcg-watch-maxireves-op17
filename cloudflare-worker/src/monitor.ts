@@ -10,7 +10,7 @@ import { createStateStore, scopedStateStore, type StateStore } from "./state";
 import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
 import { canonicalProductUrl } from "./connectorUrls";
 import { buildAllOnePieceWatchConfig, candidateForAllOnePiece } from "./watchModes";
-import type { Env, LanguageStatus, StoreAudit, StoreKey } from "./types";
+import type { Env, LanguageStatus, StoreAudit, StoreKey, WatchConfig } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
 
 const DISCOVERY_INTERVAL_MINUTES = 15;
@@ -105,6 +105,9 @@ async function fastWatchConnector(
   stateStore: StateStore,
   activeIds: Set<string>
 ): Promise<ReturnType<typeof selectConnectors>[number] | undefined> {
+  // Sans référence active Bandai il n'y a rien à relire à la minute. Le
+  // circuit ONE PIECE ALL continuera néanmoins à chaque Discovery 15 min.
+  if (activeIds.size === 0) return undefined;
   if (connector.authoritativeStructuredFeed) return connector;
 
   // Une fiche HTML ordinaire n'entre en Fast Watch qu'après une Discovery saine
@@ -151,6 +154,18 @@ async function persistDiscoveryCache(
     discoveredAt,
     entries: unique
   } satisfies DiscoveryCache));
+}
+
+function emptyReleaseWatchConfig(acceptedLanguages: LanguageStatus[]): WatchConfig {
+  return {
+    version: 3,
+    settings: {
+      notifyOnInitialDiscovery: false,
+      defaultLanguages: acceptedLanguages
+    },
+    products: [],
+    alerts: []
+  };
 }
 
 /**
@@ -232,13 +247,9 @@ export async function runMonitoringCycle(
     daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
     stateStore
   })).activeProducts;
-  if (officialProducts.length === 0) {
-    return {
-      status: "disabled",
-      reason: "Aucun produit officiel n'est actuellement dans la fenêtre J-120/J+30."
-    };
-  }
-  const dynamicConfig = buildActiveWatchConfig(officialProducts, acceptedLanguages);
+  const dynamicConfig = officialProducts.length > 0
+    ? buildActiveWatchConfig(officialProducts, acceptedLanguages)
+    : emptyReleaseWatchConfig(acceptedLanguages);
 
   const includeDiscoveryOnly = await discoveryDue(
     stateStore,
@@ -265,7 +276,7 @@ export async function runMonitoringCycle(
     ? eligibleConnectors.map((connector) => ({ original: connector, fast: connector }))
     : await Promise.all(eligibleConnectors.map(async (connector) => ({
         original: connector,
-        fast: connector.authorizedFeedEnv && hasConfiguredAuthorizedFeed(connector, env)
+        fast: connector.authorizedFeedEnv && hasConfiguredAuthorizedFeed(connector, env) && activeIds.size > 0
           ? connector
           : await fastWatchConnector(connector, stateStore, activeIds)
       })));
@@ -291,7 +302,7 @@ export async function runMonitoringCycle(
       audits: [],
       evaluation,
       analysis: {
-        newReleases: { scanned: true, candidates: 0, alerts: evaluation.alertMatches.length },
+        newReleases: { scanned: officialProducts.length > 0, candidates: 0, alerts: evaluation.alertMatches.length },
         onePieceAll: { scanned: includeDiscoveryOnly, candidates: 0, alerts: 0 }
       }
     };
@@ -372,7 +383,7 @@ export async function runMonitoringCycle(
     ...(allEvaluation ? { allEvaluation } : {}),
     analysis: {
       newReleases: {
-        scanned: true,
+        scanned: officialProducts.length > 0,
         candidates: candidates.length,
         alerts: evaluation.alertMatches.length
       },
