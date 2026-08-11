@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "test: validate Oupi retry on isolated Cloudflare preview once" ]
+          [ "${{ github.event.head_commit.message }}" = "test: run Oupi retry isolated Cloudflare preview" ]
       - uses: actions/checkout@v4
         with:
           ref: fix-oupi-transient-retry
