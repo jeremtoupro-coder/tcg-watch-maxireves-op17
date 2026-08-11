@@ -36,8 +36,10 @@ function canonicalAllReference(reference: string): string | undefined {
  *
  * Contrairement au circuit Nouvelles sorties, aucune fenêtre de calendrier
  * n'est appliquée : une ancienne référence reste mémorisée afin de détecter un
- * véritable retour en stock. Les mêmes garde-fous langue / disponibilité /
- * accessoire / éligibilité marchande restent toutefois obligatoires.
+ * véritable retour en stock. Un candidat provenant d'une carte de catégorie
+ * peut donc alimenter l'état même s'il n'est pas encore éligible à une alerte ;
+ * alerts.ts exige ensuite explicitement l'éligibilité commerciale, ce qui
+ * conserve la validation de fiche directe avant Discord.
  */
 export function candidateForAllOnePiece(
   candidate: ProductCandidate,
@@ -52,7 +54,6 @@ export function candidateForAllOnePiece(
   if (references.length !== 1) return undefined;
   if (!acceptedLanguages.includes(enriched.language)) return undefined;
   if (enriched.availability === "unknown") return undefined;
-  if (enriched.commercialEligible === false) return undefined;
   if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) return undefined;
 
   const reference = references[0];
