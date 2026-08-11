@@ -1,4 +1,4 @@
-name: OP Watch Three-Store LIVE Diagnostic One-Shot
+name: OP Watch Oupi LIVE Source Diagnostic One-Shot
 
 on:
   push:
@@ -12,15 +12,12 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: cloudflare-worker
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
-      PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
       - name: Hard diagnostic gate
         working-directory: .
@@ -28,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: diagnose three-store live health with one retry" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: inspect Oupi live source details once" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -51,81 +48,42 @@ jobs:
           curl -fsS --max-time 30 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready" > /tmp/ready.json
           node - <<'NODE'
           const x=require('/tmp/ready.json');
-          console.log(JSON.stringify(x,null,2));
           if(x.status!=='ready'||x.mode!=='live'||x.monitoringEnabled!==true||x.stateWritesEnabled!==true||x.discordMode!=='live'||x.schedulerMode!=='live') process.exit(1);
+          console.log('LIVE readiness OK');
           NODE
-      - name: Diagnose all three stores and retry one transient failure
+      - name: Force one Oupi Discovery and print nested source details
         shell: bash
         run: |
           set -euo pipefail
-          : > /tmp/results.ndjson
-          for store in oupi philibert otakuland; do
-            final_status=""
-            for attempt in 1 2; do
-              echo "=== $store attempt $attempt ==="
-              curl -fsS --max-time 180 \
-                -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
-                -H "Content-Type: application/json" \
-                -X POST --data "{\"action\":\"runStoreNow\",\"store\":\"$store\"}" \
-                "$PRODUCTION_URL/cockpit/api/control" > "/tmp/${store}-${attempt}.json"
-              STORE="$store" ATTEMPT="$attempt" node - <<'NODE'
-          const store=process.env.STORE;
-          const attempt=Number(process.env.ATTEMPT);
-          const x=require(`/tmp/${store}-${attempt}.json`);
-          const row=(x.cycle?.stores||[]).find(s=>s.store===store);
-          const degraded=(x.cycle?.degradedStores||[]).find(s=>s.store===store);
-          const out={store,attempt,ok:x.ok===true,status:row?.status||'missing',durationMs:row?.durationMs??null,merchantDurationMs:row?.merchantDurationMs??null,error:row?.error||null,degradedErrors:degraded?.errors||[],pending:x.cycle?.pendingAuthorizedFeedStores||[]};
-          console.log(JSON.stringify(out,null,2));
-          require('fs').appendFileSync('/tmp/results.ndjson',JSON.stringify(out)+'\n');
-          NODE
-              final_status="$(STORE="$store" ATTEMPT="$attempt" node -e "const x=require('/tmp/'+process.env.STORE+'-'+process.env.ATTEMPT+'.json'); const r=(x.cycle?.stores||[]).find(s=>s.store===process.env.STORE); process.stdout.write(r?.status||'missing')")"
-              if [ "$final_status" = "completed" ]; then break; fi
-              if [ "$attempt" = "1" ]; then sleep 15; fi
-            done
-          done
-          echo '=== summary ==='
-          cat /tmp/results.ndjson
-      - name: Read final production cockpit state
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/status.json
+          curl -fsS --max-time 180 \
+            -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -X POST --data '{"action":"runStoreNow","store":"oupi"}' \
+            "$PRODUCTION_URL/cockpit/api/control" > /tmp/oupi.json
           node - <<'NODE'
-          const s=require('/tmp/status.json');
-          const wanted=['oupi','philibert','otakuland'];
-          const rows=(s.stores||[]).filter(x=>wanted.includes(x.key)).map(x=>({key:x.key,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,candidates:x.candidates,lastCheck:x.lastCheck,detail:x.detail}));
-          console.log(JSON.stringify({runtime:s.runtime,totals:s.totals,stores:rows},null,2));
-          if(s.runtime?.live!==true) process.exit(2);
-          require('fs').writeFileSync('/tmp/final-stores.json',JSON.stringify(rows));
-          NODE
-      - name: Verify Cloudflare LIVE state independently
-        shell: bash
-        run: |
-          set -euo pipefail
-          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PRODUCTION_WORKER_NAME"
-          curl -fsS -H "$auth" "$base/settings" > /tmp/settings.json
-          curl -fsS -H "$auth" "$base/schedules" > /tmp/schedules.json
-          node - <<'NODE'
-          const settings=require('/tmp/settings.json');
-          const schedules=require('/tmp/schedules.json');
-          const b=settings.result?.bindings||[];
-          const p=Object.fromEntries(b.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text]));
-          const n=new Set(b.map(x=>x.name));
-          const rows=Array.isArray(schedules.result)?schedules.result:(schedules.result?.schedules||[]);
-          const crons=rows.map(x=>x.cron||x.schedule).filter(Boolean);
-          const proof={monitoring:p.MONITORING_ENABLED,write:p.WRITE_STATE,discord:p.DISCORD_MODE,scheduler:p.SCHEDULER_MODE,runtimeTest:p.RUNTIME_TEST_MODE,storeDO:n.has('STORE_MONITORS'),calendarDO:n.has('CALENDAR_COORDINATOR'),discordSecret:n.has('DISCORD_WEBHOOK_URL'),crons};
-          console.log(JSON.stringify(proof,null,2));
-          if(proof.monitoring!=='true'||proof.write!=='true'||proof.discord!=='live'||proof.scheduler!=='live'||proof.runtimeTest==='true'||!proof.storeDO||!proof.calendarDO||!proof.discordSecret||!crons.includes('* * * * *')) process.exit(3);
-          NODE
-      - name: Require final three-store health
-        shell: bash
-        run: |
-          node - <<'NODE'
-          const rows=require('/tmp/final-stores.json');
-          if(rows.length!==3||rows.some(x=>x.level!=='green'||x.runtimeStatus!=='completed')) {
-            console.error('At least one store is still not green after one controlled retry.');
-            process.exit(4);
-          }
-          console.log('All three stores are green.');
+          const x=require('/tmp/oupi.json');
+          const row=(x.cycle?.stores||[]).find(s=>s.store==='oupi');
+          const result=row?.result||{};
+          const audit=(result.audits||[]).find(a=>a.store==='oupi');
+          const sources=(audit?.sources||[]).map(s=>({
+            sourceUrl:s.sourceUrl,
+            finalUrl:s.finalUrl||null,
+            status:s.status??null,
+            durationMs:s.durationMs??null,
+            responseBytes:s.responseBytes??null,
+            productLinksSeen:s.productLinksSeen??null,
+            candidates:s.candidates?.length??0,
+            error:s.error||null
+          }));
+          const degraded=(result.degradedStores||[]).find(s=>s.store==='oupi');
+          console.log(JSON.stringify({
+            status:row?.status,
+            durationMs:row?.durationMs,
+            merchantDurationMs:row?.merchantDurationMs,
+            auditRuntimeStatus:audit?.runtimeStatus,
+            candidates:audit?.candidates?.length??0,
+            degradedErrors:degraded?.errors||[],
+            sources
+          },null,2));
+          if(!row) process.exit(2);
           NODE
