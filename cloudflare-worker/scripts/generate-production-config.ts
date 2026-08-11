@@ -37,13 +37,18 @@ const generated: WranglerConfig = {
   durable_objects: {
     bindings: [
       { name: "STORE_MONITORS", class_name: "StoreMonitorDurableObject" },
-      { name: "CALENDAR_COORDINATOR", class_name: "CalendarCoordinatorDurableObject" }
+      { name: "CALENDAR_COORDINATOR", class_name: "CalendarCoordinatorDurableObject" },
+      { name: "WEB_SCOUT", class_name: "WebScoutDurableObject" }
     ]
   },
   migrations: [
     {
       tag: "op-watch-runtime-do-v1",
       new_sqlite_classes: ["StoreMonitorDurableObject", "CalendarCoordinatorDurableObject"]
+    },
+    {
+      tag: "op-watch-web-scout-do-v1",
+      new_sqlite_classes: ["WebScoutDurableObject"]
     }
   ],
   triggers: {
@@ -57,5 +62,5 @@ const output = `wrangler.production-${phase}.generated.json`;
 await writeFile(output, `${JSON.stringify(generated, null, 2)}\n`, "utf8");
 console.log(
   `Production config generated: phase=${phase}, monitoring=${vars.MONITORING_ENABLED}, ` +
-  `discord=${vars.DISCORD_MODE}, cron=${phase === "live" ? "1m" : "disabled"}`
+  `discord=${vars.DISCORD_MODE}, cron=${phase === "live" ? "1m" : "disabled"}, webScout=hourly`
 );
