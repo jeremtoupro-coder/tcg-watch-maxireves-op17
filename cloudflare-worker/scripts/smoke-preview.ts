@@ -84,8 +84,8 @@ const health = await getJson("/health");
 if (health.status !== "ok" || health.mode !== "SAFE_PREVIEW") {
   throw new Error(`Healthcheck invalide: ${JSON.stringify(health)}`);
 }
-if (!Array.isArray(health.stores) || health.stores.length !== 21) {
-  throw new Error(`Le healthcheck ne décrit pas les 21 boutiques: ${JSON.stringify(health.stores)}`);
+if (!Array.isArray(health.stores) || health.stores.length !== 24) {
+  throw new Error(`Le healthcheck ne décrit pas les 24 boutiques: ${JSON.stringify(health.stores)}`);
 }
 
 const config = await getJson("/config");
@@ -95,8 +95,8 @@ if (config.opWatchV1?.officialCatalogUrl !== "https://fr.onepiece-cardgame.com/p
 if (config.opWatchV1?.language?.strict !== true || config.opWatchV1?.language?.target !== "fr") {
   throw new Error("La configuration commerciale n'est pas strictement française.");
 }
-if (!Array.isArray(config.stores) || config.stores.length !== 21) {
-  throw new Error("La configuration déployée ne contient pas exactement 21 boutiques.");
+if (!Array.isArray(config.stores) || config.stores.length !== 24) {
+  throw new Error("La configuration déployée ne contient pas exactement 24 boutiques.");
 }
 
 const calendar = await getJson(

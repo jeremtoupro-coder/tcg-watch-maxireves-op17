@@ -1,4 +1,7 @@
+import { bcdJeux } from "./bcdJeux";
+import { espritJeu } from "./espritJeu";
 import { fantasySphere } from "./fantasySphere";
+import { laGrandeRecre } from "./laGrandeRecre";
 import { leclerc } from "./leclerc";
 import { maxireves } from "./maxireves";
 import { otakuland } from "./otakuland";
@@ -22,7 +25,10 @@ export const CONNECTORS: ConnectorDefinition[] = [
   oupi,
   pixelheart,
   fantasySphere,
-  ...rolloutConnectors
+  ...rolloutConnectors,
+  espritJeu,
+  laGrandeRecre,
+  bcdJeux
 ];
 
 export const DEFAULT_CLOUDFLARE_STORES: StoreKey[] = CONNECTORS.map((connector) => connector.key);

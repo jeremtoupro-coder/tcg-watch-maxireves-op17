@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_CLOUDFLARE_STORES } from "../src/connectors";
 import { isDiscoveryTick, parseActiveStores, runMonitoringCycle } from "../src/monitor";
 import { aliasesForProduct, type OfficialProduct } from "../src/opwatchV1";
 import { MemoryStateStore } from "../src/state";
@@ -14,30 +15,9 @@ const OP17: OfficialProduct = {
 };
 
 describe("surveillance planifiée", () => {
-  it("utilise les vingt-et-une boutiques OP Watch par défaut", () => {
-    expect(parseActiveStores()).toEqual([
-      "maxireves",
-      "oupi",
-      "pixelheart",
-      "fantasy-sphere",
-      "ludisphere",
-      "parkage",
-      "ultrajeux",
-      "playin",
-      "philibert",
-      "cultura",
-      "micromania",
-      "fnac",
-      "leclerc",
-      "carrefour",
-      "king-jouet",
-      "joueclub",
-      "amazon-fr",
-      "mystic-ambre",
-      "ludiworld",
-      "vegastore",
-      "otakuland"
-    ]);
+  it("utilise les vingt-quatre boutiques OP Watch par défaut", () => {
+    expect(parseActiveStores()).toEqual(DEFAULT_CLOUDFLARE_STORES);
+    expect(parseActiveStores()).toHaveLength(24);
   });
 
   it("ignore les boutiques inconnues et supprime les doublons", () => {
