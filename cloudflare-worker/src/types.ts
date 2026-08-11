@@ -218,6 +218,7 @@ export interface Env {
   PREVIEW_AUDIT_TOKEN?: string;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
+  BRAVE_SEARCH_API_KEY?: string;
   AUTHORIZED_FEED_PLAYIN_URL?: string;
   AUTHORIZED_FEED_CULTURA_URL?: string;
   AUTHORIZED_FEED_MICROMANIA_URL?: string;
