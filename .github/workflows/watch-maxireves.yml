@@ -136,6 +136,9 @@ jobs:
           AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
           AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
           AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
+          AUTHORIZED_FEED_JOUECLUB_URL: ${{ secrets.AUTHORIZED_FEED_JOUECLUB_URL }}
+          AUTHORIZED_FEED_LA_GRANDE_RECRE_URL: ${{ secrets.AUTHORIZED_FEED_LA_GRANDE_RECRE_URL }}
+          AUTHORIZED_FEED_BCD_JEUX_URL: ${{ secrets.AUTHORIZED_FEED_BCD_JEUX_URL }}
         run: |
           for name in \
             AUTHORIZED_FEED_PLAYIN_URL \
@@ -143,7 +146,10 @@ jobs:
             AUTHORIZED_FEED_MICROMANIA_URL \
             AUTHORIZED_FEED_FNAC_URL \
             AUTHORIZED_FEED_CARREFOUR_URL \
-            AUTHORIZED_FEED_KING_JOUET_URL; do
+            AUTHORIZED_FEED_KING_JOUET_URL \
+            AUTHORIZED_FEED_JOUECLUB_URL \
+            AUTHORIZED_FEED_LA_GRANDE_RECRE_URL \
+            AUTHORIZED_FEED_BCD_JEUX_URL; do
             value="${!name}"
             if [ -n "$value" ]; then
               echo "::add-mask::$value"
