@@ -8,6 +8,11 @@ function matchesRule(change: ProductChange, rule: AlertRule, config: WatchConfig
   if (!rule.enabled) return false;
   if (!rule.events.includes(change.type)) return false;
 
+  // Une carte de catégorie peut alimenter l'état (notamment pour ONE PIECE ALL)
+  // mais ne doit jamais déclencher Discord tant que la fiche directe / source
+  // structurée n'a pas satisfait les garde-fous commerciaux du connecteur.
+  if (change.candidate.commercialEligible === false) return false;
+
   if (
     change.initial &&
     !rule.notifyOnInitialDiscovery &&
