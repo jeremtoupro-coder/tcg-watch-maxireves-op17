@@ -51,6 +51,7 @@ jobs:
   deploy-preview:
     name: Deploy and audit isolated preview
     if: >-
+      github.event_name == 'pull_request' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/op-watch-v1-test') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/op-watch-v1-test')
     needs: validate
@@ -138,9 +139,9 @@ jobs:
         run: npm run stabilize-preview-auth
       - name: Smoke test real preview
         run: npm run smoke-preview
-      - name: Audit all 21 shops through preview
+      - name: Audit all 24 shops through preview
         run: npm run audit-preview
-      - name: Upload 21-shop audit evidence
+      - name: Upload 24-shop audit evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -152,6 +153,7 @@ jobs:
   runtime-cadence:
     name: Measure isolated 60s/15m runtime budget
     if: >-
+      github.event_name == 'pull_request' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/op-watch-v1-test') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/op-watch-v1-test')
     needs:

@@ -10,18 +10,21 @@ export const espritJeu: ConnectorDefinition = {
   key: "esprit-jeu",
   name: "Esprit Jeu",
   sources: [
-    "https://www.espritjeu.com/cartes-et-jcc/one-piece-le-jeu-de-cartes.html"
+    "https://www.espritjeu.com/cartes-et-jcc/one-piece-le-jeu-de-cartes.html",
+    "https://www.espritjeu.com/cartes-et-jcc/one-piece-le-jeu-de-cartes.html?numPage=2"
   ],
   productUrlPatterns: [/\/one-piece-[^/?#]+\.html/i],
   requestHeaders: honestHeaders,
   responseMustContainAny: [/one[\s-]*piece/i],
   followDiscoveredProductPages: true,
-  maxDiscoveredProductPages: 20,
+  maxDiscoveredProductPages: 50,
   requiresDirectProductPageForAlerts: true,
   notes: [
-    "Catégorie publique dédiée au One Piece Card Game avec prix et disponibilité visibles sans authentification.",
+    "Catégorie publique dédiée au One Piece Card Game avec prix et disponibilité visibles sans authentification ; pagination explicitement couverte.",
+    "Discovery intelligente : lecture de tout le catalogue puis fiche directe uniquement pour une sortie Bandai active ou un ancien produit annoncé disponible.",
     "Les fiches directes confirment la référence, la langue, le prix et l'état stock/précommande avant toute alerte.",
-    "Candidature Affilae en attente : un flux partenaire pourra remplacer ou compléter la Discovery HTML lorsqu'il sera disponible.",
+    "ONE PIECE ALL mémorise les états de catégorie, mais Discord reste bloqué tant qu'une fiche directe n'a pas confirmé l'offre.",
+    "Le partenariat Affilae est validé mais n'est pas requis pour la surveillance personnelle tant que la source publique reste exploitable.",
     "HTTP 403/429/5xx = source dégradée, jamais rupture."
   ]
 };

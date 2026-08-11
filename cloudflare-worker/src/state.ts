@@ -89,6 +89,25 @@ export function createStateStore(env: Env): StateStore {
   return new MemoryStateStore({ writable: false });
 }
 
+/**
+ * Isole physiquement les snapshots, baselines et reçus de livraison d'un
+ * circuit de veille tout en gardant les clés produit logiques inchangées.
+ * Cela permet à `new_releases` et `one_piece_all` de mémoriser le même produit
+ * sans se voler leurs transitions ni leurs déduplications Discord.
+ */
+export function scopedStateStore(store: StateStore, scope: string): StateStore {
+  const cleanScope = scope.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-") || "default";
+  const prefix = `scope:${cleanScope}:`;
+  return {
+    mode: store.mode,
+    writable: store.writable,
+    get: (key) => store.get(`${prefix}${key}`),
+    put: (key, value) => store.put(`${prefix}${key}`, value),
+    getMetadata: (key) => store.getMetadata(`${prefix}${key}`),
+    putMetadata: (key, value) => store.putMetadata(`${prefix}${key}`, value)
+  };
+}
+
 function fnv1a(value: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {

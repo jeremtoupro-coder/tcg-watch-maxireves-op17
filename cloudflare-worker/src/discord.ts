@@ -1,4 +1,4 @@
-import type { AlertMatch, DiscordPayload, Env } from "./types";
+import type { AlertMatch, DiscordPayload, Env, WatchScope } from "./types";
 import { detectProductFormat } from "./opwatchV1";
 
 const EVENT_LABELS: Record<AlertMatch["change"]["type"], string> = {
@@ -26,6 +26,16 @@ const FORMAT_LABELS = {
   starter: "Starter deck",
   other: "Format non déterminé"
 } as const;
+
+const WATCH_LABELS: Record<WatchScope, string> = {
+  new_releases: "Nouvelles sorties • catalogue Bandai",
+  one_piece_all: "One Piece ALL • restocks catalogue"
+};
+
+const WATCH_TITLES: Record<WatchScope, string> = {
+  new_releases: "🆕 NOUVELLE SORTIE",
+  one_piece_all: "♻️ ONE PIECE ALL"
+};
 
 const DISCORD_TIMEOUT_MS = 15_000;
 const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com"]);
@@ -58,9 +68,21 @@ function sellerLabel(match: AlertMatch): string | undefined {
   return candidate.seller?.trim() || undefined;
 }
 
+function scopeForMatch(match: AlertMatch): WatchScope {
+  return match.rule.scope ?? "new_releases";
+}
+
+function eventLabelForMatch(match: AlertMatch, scope: WatchScope): string {
+  if (scope === "one_piece_all" && match.change.type === "new_listing") {
+    return "Nouvelle offre en stock";
+  }
+  return EVENT_LABELS[match.change.type];
+}
+
 export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
   const candidate = match.change.candidate;
-  const eventLabel = EVENT_LABELS[match.change.type];
+  const scope = scopeForMatch(match);
+  const eventLabel = eventLabelForMatch(match, scope);
   const price = candidate.priceText ?? "Prix non détecté";
   const oldPrice = previousPrice(match);
   const priceValue = oldPrice && oldPrice !== price ? `${oldPrice} → ${price}` : price;
@@ -73,10 +95,11 @@ export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
   }).format(new Date(match.change.detectedAt));
 
   const embed: DiscordPayload["embeds"][number] = {
-    title: `${eventLabel} — ${match.matchedProductIds.join(", ")}`,
+    title: `${WATCH_TITLES[scope]} • ${eventLabel} — ${match.matchedProductIds.join(", ")}`,
     url: candidate.url,
     description: candidate.title,
     fields: [
+      { name: "🎯 Veille", value: WATCH_LABELS[scope], inline: false },
       { name: "🏷️ Référence", value: match.matchedProductIds.join(", "), inline: true },
       { name: "🧩 Format", value: FORMAT_LABELS[format], inline: true },
       { name: "💰 Prix", value: priceValue, inline: true },
@@ -87,7 +110,7 @@ export function buildDiscordPayload(match: AlertMatch): DiscordPayload {
       { name: "🕒 Détecté", value: detectedAt, inline: true },
       { name: "🔗 Offre", value: `[Voir le produit](${candidate.url})`, inline: false }
     ],
-    footer: { text: `OP Watch • ${match.rule.id}` },
+    footer: { text: `OP Watch • ${WATCH_LABELS[scope]} • ${match.rule.id}` },
     timestamp: match.change.detectedAt
   };
 
