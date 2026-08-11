@@ -82,7 +82,7 @@ export default {
     }
 
     const scripts = cockpit
-      ? '<script src="/catalog.js" defer></script><script src="/cockpit-assistant.js"></script>'
+      ? '<script src="/catalog.js" defer></script><script src="/cockpit-assistant.js"></script><script src="/cockpit-web-scout.js"></script>'
       : '<script src="/catalog.js" defer></script>';
     return new Response(
       html.replace("</body>", `${scripts}</body>`),
