@@ -10,11 +10,13 @@ import { CONNECTORS } from "./connectors";
 import { dispatchRuntimeHeartbeat } from "./heartbeat";
 import { handleCockpitApi } from "./cockpitApi";
 import { detectAvailability, detectLanguage, matchReferences } from "./matching";
+import { WebScoutDurableObject, isWebScoutTick } from "./webScout";
 import type { Env, StoreKey } from "./types";
 
-export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject };
+export { CalendarCoordinatorDurableObject, StoreMonitorDurableObject, WebScoutDurableObject };
 
 type ProductionProbeEnv = RuntimeEnv & { PRODUCTION_PROBE_MODE?: string };
+type WebScoutRuntimeEnv = ProductionProbeEnv & { WEB_SCOUT?: DurableObjectNamespace };
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -43,6 +45,30 @@ function validRuntimeToken(request: Request, env: RuntimeEnv): boolean {
   const explicit = request.headers.get("x-op-watch-audit-token")?.trim() ?? "";
   const received = bearer || explicit;
   return Boolean(received) && constantTimeEqual(received, expected);
+}
+
+function webScoutStub(env: WebScoutRuntimeEnv): DurableObjectStub | undefined {
+  if (!env.WEB_SCOUT) return undefined;
+  return env.WEB_SCOUT.get(env.WEB_SCOUT.idFromName("production:web-scout"));
+}
+
+async function runHourlyWebScout(env: WebScoutRuntimeEnv, scheduledTime: number): Promise<void> {
+  if (!isWebScoutTick(scheduledTime)) return;
+  const stub = webScoutStub(env);
+  if (!stub || !env.BRAVE_SEARCH_API_KEY?.trim()) return;
+  try {
+    const response = await stub.fetch(new Request("https://web-scout.internal/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scheduledTime })
+    }));
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`Web Scout HTTP ${response.status}: ${text.slice(0, 600)}`);
+    }
+  } catch (error) {
+    console.error("Web Scout error:", error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -87,7 +113,7 @@ async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response>
   }
 }
 
-async function productionReady(request: Request, env: ProductionProbeEnv): Promise<Response> {
+async function productionReady(request: Request, env: WebScoutRuntimeEnv): Promise<Response> {
   if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
   if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
   if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
@@ -103,7 +129,29 @@ async function productionReady(request: Request, env: ProductionProbeEnv): Promi
       stateWritesEnabled: env.WRITE_STATE === "true",
       stores: CONNECTORS.map((connector) => connector.key),
       automaticPolling: false,
+      webScout: {
+        bindingPresent: Boolean(env.WEB_SCOUT),
+        searchConfigured: Boolean(env.BRAVE_SEARCH_API_KEY?.trim()),
+        cadence: "hourly at minute 07"
+      },
       note: "Sonde de readiness uniquement : aucun audit marchand n'est exécuté par cette route."
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
+async function productionWebScoutHealth(request: Request, env: WebScoutRuntimeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+  const stub = webScoutStub(env);
+  if (!stub) return json({ error: "Binding WEB_SCOUT absent." }, 503);
+  try {
+    const response = await stub.fetch(new Request("https://web-scout.internal/health", { method: "GET" }));
+    return new Response(await response.text(), {
+      status: response.status,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
     });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 503);
@@ -228,7 +276,10 @@ export default {
       return runtimeTest(request, env as RuntimeEnv);
     }
     if (pathname === "/runtime-ready") {
-      return productionReady(request, env as ProductionProbeEnv);
+      return productionReady(request, env as WebScoutRuntimeEnv);
+    }
+    if (pathname === "/web-scout-health") {
+      return productionWebScoutHealth(request, env as WebScoutRuntimeEnv);
     }
     if (pathname === "/merchant-probe") {
       return productionMerchantProbe(request, env as ProductionProbeEnv);
@@ -240,7 +291,7 @@ export default {
   },
 
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
-    const runtimeEnv = env as RuntimeEnv;
+    const runtimeEnv = env as WebScoutRuntimeEnv;
     if (runtimeEnv.SCHEDULER_MODE !== "live") return;
     ctx.waitUntil((async () => {
       const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
@@ -248,6 +299,7 @@ export default {
         scheduledTime: controller.scheduledTime
       });
       await dispatchRuntimeHeartbeat(cycle, runtimeEnv);
+      await runHourlyWebScout(runtimeEnv, controller.scheduledTime);
     })());
   }
 };
