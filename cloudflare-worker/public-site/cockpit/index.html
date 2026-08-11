@@ -177,7 +177,7 @@
     window.cancelRequest=id=>control({action:'cancelAssistantRequest',id},'Demande annulée');
     $('loginForm').addEventListener('submit',async e=>{e.preventDefault();sessionStorage.setItem(PASSWORD_KEY,$('password').value);$('loginError').textContent='';try{await load()}catch(err){$('loginError').textContent=err.message}});
     $('logout').addEventListener('click',()=>{sessionStorage.removeItem(PASSWORD_KEY);location.reload()});
-    $('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));
+    $('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));
     $('saveLanguages').addEventListener('click',()=>{const languages=[...$('languages').querySelectorAll('input:checked')].map(i=>i.value);control({action:'setLanguages',languages},'Langues enregistrées')});
     $('heartbeatNow').addEventListener('click',()=>control({action:'heartbeatNow'},'Heartbeat Discord envoyé'));
     $('addProductForm').addEventListener('submit',e=>{e.preventDefault();const urls={};$('storeUrls').value.split('\n').map(x=>x.trim()).filter(Boolean).forEach(line=>{const i=line.indexOf('=');if(i>0){const store=line.slice(0,i).trim();const url=line.slice(i+1).trim();(urls[store]??=[]).push(url)}});const product={id:$('productId').value,label:$('productLabel').value,game:$('game').value,releaseDate:$('releaseDate').value||undefined,stopAt:$('manualStopAt').value||undefined,aliases:$('aliases').value.split(',').map(x=>x.trim()).filter(Boolean),storeUrls:urls,enabled:true};control({action:'addManualProduct',product},'Référence ajoutée').then(()=>$('addProductForm').reset())});
