@@ -17,6 +17,8 @@ jobs:
       run:
         working-directory: cloudflare-worker
     env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
     steps:
       - name: Hard diagnostic gate
@@ -25,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: inspect Oupi live source details once" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: inspect Oupi live source details final" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
