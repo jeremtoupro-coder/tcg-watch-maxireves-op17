@@ -120,7 +120,7 @@ jobs:
           if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='false'||
           c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||
           c.vars.PRODUCTION_PROBE_MODE!=='false'||c.kv_namespaces?.length||c.triggers?.crons?.length||
-          b.length!==2) process.exit(1)"
+          b.length!==3||!b.some(x=>x.name==='WEB_SCOUT')) process.exit(1)"
       - name: Deploy inert standby
         run: npx wrangler deploy --config wrangler.production-standby.generated.json
       - name: Install private readiness token
@@ -135,6 +135,15 @@ jobs:
           if [ -n "$OPENAI_API_KEY" ]; then
             echo "::add-mask::$OPENAI_API_KEY"
             printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --config wrangler.production-standby.generated.json
+          fi
+      - name: Install Brave Search API key if configured
+        shell: bash
+        env:
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+        run: |
+          if [ -n "$BRAVE_SEARCH_API_KEY" ]; then
+            echo "::add-mask::$BRAVE_SEARCH_API_KEY"
+            printf '%s' "$BRAVE_SEARCH_API_KEY" | npx wrangler secret put BRAVE_SEARCH_API_KEY --config wrangler.production-standby.generated.json
           fi
       - name: Install configured authorized feed secrets
         shell: bash
@@ -179,9 +188,10 @@ jobs:
       - name: Assert armed phase has no cron
         run: >-
           node -e "const c=require('./wrangler.production-armed.generated.json');
+          const b=c.durable_objects?.bindings||[];
           if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
           c.vars.SCHEDULER_MODE!=='live'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
-          c.triggers?.crons?.length) process.exit(1)"
+          c.triggers?.crons?.length||b.length!==3||!b.some(x=>x.name==='WEB_SCOUT')) process.exit(1)"
       - name: Deploy armed LIVE config without automatic polling
         run: npx wrangler deploy --config wrangler.production-armed.generated.json
       - name: Smoke LIVE readiness without merchant polling
@@ -197,9 +207,10 @@ jobs:
       - name: Assert final cron and LIVE gates
         run: >-
           node -e "const c=require('./wrangler.production-live.generated.json');
+          const b=c.durable_objects?.bindings||[];
           if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
           c.vars.SCHEDULER_MODE!=='live'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
-          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])) process.exit(1)"
+          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==3||!b.some(x=>x.name==='WEB_SCOUT')) process.exit(1)"
       - name: Activate final LIVE cron
         run: npx wrangler deploy --config wrangler.production-live.generated.json
       - name: Final LIVE readiness smoke
