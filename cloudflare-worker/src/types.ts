@@ -4,6 +4,8 @@ export type Availability = "available" | "preorder" | "unavailable" | "unknown";
 
 export type ProductFormat = "booster" | "display" | "case" | "double_pack" | "starter" | "other";
 
+export type WatchScope = "new_releases" | "one_piece_all";
+
 export type StoreConfiguredStatus =
   | "active_fast_watch"
   | "discovery_only"
@@ -41,6 +43,12 @@ export interface AlertRule {
   id: string;
   label: string;
   enabled: boolean;
+  /**
+   * Permet de distinguer clairement les alertes issues du calendrier officiel
+   * des restocks du catalogue historique. Les anciennes règles sans scope
+   * restent interprétées comme `new_releases` pour compatibilité.
+   */
+  scope?: WatchScope;
   productIds: string[];
   stores: Array<StoreKey | "*">;
   languages: Array<LanguageStatus | "*">;
