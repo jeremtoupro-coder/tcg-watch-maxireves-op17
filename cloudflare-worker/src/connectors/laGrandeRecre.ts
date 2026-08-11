@@ -20,11 +20,13 @@ export const laGrandeRecre: ConnectorDefinition = {
   followDiscoveredProductPages: true,
   maxDiscoveredProductPages: 20,
   requiresDirectProductPageForAlerts: true,
+  authorizedFeedEnv: "AUTHORIZED_FEED_LA_GRANDE_RECRE_URL",
   notes: [
     "La catégorie publique Cartes à collectionner expose des produits One Piece avec prix et disponibilité livraison.",
+    "Flux produit Affilae/Lengow autorisé disponible : il est prioritaire lorsqu'il est configuré.",
+    "Sans flux configuré, la veille publique reste active comme fallback opérationnel.",
     "Le motif d'URL limite la Discovery aux fiches One Piece afin de ne pas relire inutilement les autres TCG de la catégorie.",
-    "Les fiches directes restent la source de vérité pour la référence, la langue et la disponibilité avant alerte.",
-    "Candidature Affilae en attente : un flux partenaire pourra être privilégié s'il devient disponible.",
+    "Les fiches directes restent la source de vérité lorsque le fallback HTML est utilisé.",
     "HTTP 403/429/5xx = source dégradée, jamais rupture."
   ]
 };

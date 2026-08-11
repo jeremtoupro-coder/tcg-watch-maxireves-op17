@@ -122,8 +122,6 @@ async function auditEspritJeuCatalog(
     ...connector,
     sources: directUrls,
     followDiscoveredProductPages: false,
-    // Deux lectures concurrentes restent très modérées et évitent de transformer
-    // une Discovery en longue chaîne séquentielle de requêtes réseau.
     maxConcurrency: 2
   }, watchProducts);
 
@@ -137,22 +135,11 @@ async function auditEspritJeuCatalog(
   };
 }
 
-/**
- * Une boutique protégée peut basculer vers un flux produit obtenu auprès de
- * son programme d'affiliation / partenaire. L'URL reste un secret Cloudflare
- * et n'est jamais incluse dans le rapport d'audit.
- */
-export async function auditStore(connector: ConnectorDefinition, env: Env, watchProducts: OfficialProduct[] = []): Promise<StoreAudit> {
-  const feedUrl = configuredAuthorizedFeedUrl(connector, env);
-  if (feedUrl) {
-    return withOperationalStatus(
-      await auditAuthorizedFeed(connector, feedUrl),
-      connector,
-      env,
-      "authorized_feed"
-    );
-  }
-
+async function auditPublicStore(
+  connector: ConnectorDefinition,
+  env: Env,
+  watchProducts: OfficialProduct[]
+): Promise<StoreAudit> {
   if (connector.directPollingDisabledWithoutFeed === true) {
     return withOperationalStatus({
       store: connector.key,
@@ -176,10 +163,6 @@ export async function auditStore(connector: ConnectorDefinition, env: Env, watch
     );
   }
 
-  // En Discovery, le connecteur original Esprit Jeu parcourt la catégorie.
-  // En Fast Watch, monitor.ts remplace déjà ses sources par les fiches directes
-  // actives et force followDiscoveredProductPages=false : on ne repasse donc pas
-  // par cette stratégie catalogue à chaque minute.
   if (connector.key === "esprit-jeu" && connector.followDiscoveredProductPages === true) {
     return withOperationalStatus(
       await auditEspritJeuCatalog(connector, watchProducts),
@@ -189,9 +172,6 @@ export async function auditStore(connector: ConnectorDefinition, env: Env, watch
     );
   }
 
-  // En Discovery, le connecteur original contient le RSS officiel. En Fast
-  // Watch, monitor.ts remplace ses sources par les fiches directes qualifiées
-  // mises en cache : on ne relit alors surtout pas le RSS à chaque minute.
   if (isPhilibertRssDiscovery(connector)) {
     return withOperationalStatus(
       await auditPhilibertPublicCatalog(connector, watchProducts),
@@ -207,4 +187,33 @@ export async function auditStore(connector: ConnectorDefinition, env: Env, watch
     env,
     connector.authoritativeStructuredFeed ? "public_structured_feed" : "public_html"
   );
+}
+
+/**
+ * Un flux produit partenaire est prioritaire lorsqu'il est configuré.
+ * Pour les marchands dont le site public reste une source autorisée et saine
+ * (JouéClub, La Grande Récré, BCD Jeux), une panne du feed ne doit pas créer
+ * un angle mort : on retombe sur la stratégie publique existante pour ce cycle.
+ * Les marchands protégés par anti-bot restent strictement fail-closed.
+ */
+export async function auditStore(connector: ConnectorDefinition, env: Env, watchProducts: OfficialProduct[] = []): Promise<StoreAudit> {
+  const feedUrl = configuredAuthorizedFeedUrl(connector, env);
+  if (feedUrl) {
+    const feedAudit = await auditAuthorizedFeed(connector, feedUrl);
+    const feedHealthy = feedAudit.sources.length > 0 && feedAudit.sources.every((source) => !source.error);
+    if (feedHealthy || connector.directPollingDisabledWithoutFeed === true) {
+      return withOperationalStatus(feedAudit, connector, env, "authorized_feed");
+    }
+
+    const fallback = await auditPublicStore(connector, env, watchProducts);
+    return {
+      ...fallback,
+      notes: [
+        ...fallback.notes,
+        "Flux produit partenaire configuré mais indisponible sur ce cycle : fallback public utilisé."
+      ]
+    };
+  }
+
+  return auditPublicStore(connector, env, watchProducts);
 }

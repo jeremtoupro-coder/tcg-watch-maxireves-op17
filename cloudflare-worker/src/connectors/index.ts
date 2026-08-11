@@ -17,6 +17,17 @@ const rolloutConnectors = ROLLOUT_CONNECTORS.map((connector) => {
   if (connector.key === "leclerc") return leclerc;
   if (connector.key === "philibert") return philibert;
   if (connector.key === "otakuland") return otakuland;
+  if (connector.key === "joueclub") {
+    return {
+      ...connector,
+      authorizedFeedEnv: "AUTHORIZED_FEED_JOUECLUB_URL",
+      notes: [
+        ...connector.notes,
+        "Flux produits Affilae/Shopping Feed autorisé disponible : il est prioritaire lorsqu'il est configuré.",
+        "Sans flux configuré, la catégorie publique JouéClub reste le fallback opérationnel."
+      ]
+    };
+  }
   return connector;
 });
 

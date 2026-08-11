@@ -18,10 +18,12 @@ export const bcdJeux: ConnectorDefinition = {
   followDiscoveredProductPages: true,
   maxDiscoveredProductPages: 20,
   requiresDirectProductPageForAlerts: true,
+  authorizedFeedEnv: "AUTHORIZED_FEED_BCD_JEUX_URL",
   notes: [
     "Catégorie publique One Piece TCG dédiée avec boosters, displays et Starter Decks.",
-    "Les fiches directes exposent explicitement édition FR/EN, prix et état En stock/Rupture/Précommande.",
-    "Candidature Affilae en attente : un flux partenaire pourra compléter ou remplacer la Discovery HTML lorsqu'il sera disponible.",
+    "Flux produit Affilae/BeezUP autorisé disponible : il est prioritaire lorsqu'il est configuré.",
+    "Sans flux configuré, la veille publique reste active comme fallback opérationnel.",
+    "Les fiches directes exposent explicitement édition FR/EN, prix et état En stock/Rupture/Précommande lorsque le fallback HTML est utilisé.",
     "HTTP 403/429/5xx = source dégradée, jamais rupture."
   ]
 };
