@@ -65,6 +65,7 @@ jobs:
           Path('/tmp/op-watch-cockpit.js').write_text(scripts[0])
           PY
           node --check /tmp/op-watch-cockpit.js
+          node --check public-site/cockpit-assistant.js
 
       - name: Deploy public landing
         run: >-
@@ -82,6 +83,7 @@ jobs:
             body="$(curl -fsSL --max-time 20 "$url" || true)"
             calendar="$(curl -fsSL --max-time 20 "${url}api/calendar" || true)"
             cockpit="$(curl -fsSL --max-time 20 "${url}cockpit/" || true)"
+            assistant="$(curl -fsSL --max-time 20 "${url}cockpit-assistant.js" || true)"
             anon="$(curl -sS -o /tmp/cockpit-anon.json -w '%{http_code}' --max-time 15 "${url}cockpit/api/status" || true)"
             if grep -q "OP WATCH" <<<"$body" && \
                grep -q "Utiliser OP Watch" <<<"$body" && \
@@ -90,6 +92,8 @@ jobs:
                grep -q '"activeProducts"' <<<"$calendar" && \
                grep -q "OP Watch Cockpit" <<<"$cockpit" && \
                grep -Fq "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));" <<<"$cockpit" && \
+               grep -q 'cockpit-assistant.js' <<<"$cockpit" && \
+               grep -q 'Envoyer à ChatGPT' <<<"$assistant" && \
                [ "$anon" = "401" ]; then
               printf '%s' "$cockpit" > /tmp/deployed-cockpit.html
               python3 - <<'PY'
