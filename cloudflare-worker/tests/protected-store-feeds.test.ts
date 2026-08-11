@@ -7,7 +7,7 @@ import {
 } from "../src/storeAudit";
 import type { Env } from "../src/types";
 
-const EXPECTED_FEEDS: Record<string, string> = {
+const PROTECTED_FEEDS: Record<string, string> = {
   playin: "AUTHORIZED_FEED_PLAYIN_URL",
   cultura: "AUTHORIZED_FEED_CULTURA_URL",
   micromania: "AUTHORIZED_FEED_MICROMANIA_URL",
@@ -16,13 +16,26 @@ const EXPECTED_FEEDS: Record<string, string> = {
   "king-jouet": "AUTHORIZED_FEED_KING_JOUET_URL"
 };
 
+const OPTIONAL_PARTNER_FEEDS: Record<string, string> = {
+  joueclub: "AUTHORIZED_FEED_JOUECLUB_URL",
+  "la-grande-recre": "AUTHORIZED_FEED_LA_GRANDE_RECRE_URL",
+  "bcd-jeux": "AUTHORIZED_FEED_BCD_JEUX_URL"
+};
+
+const ALL_FEEDS = { ...PROTECTED_FEEDS, ...OPTIONAL_PARTNER_FEEDS };
+
 afterEach(() => vi.unstubAllGlobals());
 
-describe("remédiation des boutiques protégées", () => {
-  it("déclare exactement les six flux partenaires attendus", () => {
-    const protectedConnectors = CONNECTORS.filter((connector) => connector.authorizedFeedEnv);
-    expect(Object.fromEntries(protectedConnectors.map((connector) => [connector.key, connector.authorizedFeedEnv]))).toEqual(EXPECTED_FEEDS);
-    expect(protectedConnectors.every((connector) => connector.directPollingDisabledWithoutFeed === true)).toBe(true);
+describe("flux partenaires et boutiques protégées", () => {
+  it("déclare les six feeds anti-bot et les trois feeds Affilae optionnels", () => {
+    const feedConnectors = CONNECTORS.filter((connector) => connector.authorizedFeedEnv);
+    expect(Object.fromEntries(feedConnectors.map((connector) => [connector.key, connector.authorizedFeedEnv]))).toEqual(ALL_FEEDS);
+
+    const protectedConnectors = feedConnectors.filter((connector) => connector.directPollingDisabledWithoutFeed === true);
+    expect(Object.fromEntries(protectedConnectors.map((connector) => [connector.key, connector.authorizedFeedEnv]))).toEqual(PROTECTED_FEEDS);
+
+    const optionalConnectors = feedConnectors.filter((connector) => connector.directPollingDisabledWithoutFeed !== true);
+    expect(Object.fromEntries(optionalConnectors.map((connector) => [connector.key, connector.authorizedFeedEnv]))).toEqual(OPTIONAL_PARTNER_FEEDS);
   });
 
   it("conserve Ludisphere sur son flux Shopify public validé", () => {
@@ -59,6 +72,68 @@ describe("remédiation des boutiques protégées", () => {
     });
     expect(audit.sources).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("garde JouéClub actif sur le public même avant configuration de son feed", () => {
+    const joueclub = CONNECTORS.find((connector) => connector.key === "joueclub")!;
+    expect(joueclub.authorizedFeedEnv).toBe("AUTHORIZED_FEED_JOUECLUB_URL");
+    expect(joueclub.directPollingDisabledWithoutFeed).not.toBe(true);
+    expect(configuredStoreStatus(joueclub, {})).toBe("active_fast_watch");
+    expect(hasConfiguredAuthorizedFeed(joueclub, {})).toBe(false);
+  });
+
+  it("bascule JouéClub sur le flux partenaire lorsqu'il est configuré", async () => {
+    const joueclub = CONNECTORS.find((connector) => connector.key === "joueclub")!;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("https://feed.example/joueclub.xml");
+      return new Response(
+        "<products><product><title>One Piece OP17 Display FR</title><url>https://www.joueclub.fr/one-piece/display-op17-12345678.html</url><price>129.90</price><stock>1</stock><language>français</language></product></products>",
+        { status: 200, headers: { "content-type": "application/xml" } }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditStore(joueclub, {
+      AUTHORIZED_FEED_JOUECLUB_URL: "https://feed.example/joueclub.xml"
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(audit.sourceKind).toBe("authorized_feed");
+    expect(audit.runtimeStatus).toBe("healthy");
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].matchedReferences).toContain("OP-17");
+    expect(audit.candidates[0].availability).toBe("available");
+  });
+
+  it("retombe sur la source publique si un feed Affilae optionnel tombe", async () => {
+    const bcd = CONNECTORS.find((connector) => connector.key === "bcd-jeux")!;
+    const product = "https://www.bcd-jeux.fr/one-piece-tcg/39999-one-piece-op17-display-24-boosters-fr-4580000000000.html";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://feed.example/bcd.csv") {
+        return new Response("indisponible", { status: 503, headers: { "content-type": "text/plain" } });
+      }
+      if (url === product) {
+        return new Response("<html><body><h1>One Piece OP17 Display 24 boosters Français</h1><p>129,90 €</p><p>En Stock</p></body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" }
+        });
+      }
+      return new Response(`<html><body>One Piece TCG <a href="${product}">OP17 Display</a></body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditStore(bcd, {
+      AUTHORIZED_FEED_BCD_JEUX_URL: "https://feed.example/bcd.csv"
+    });
+
+    expect(audit.sourceKind).toBe("public_html");
+    expect(audit.runtimeStatus).toBe("healthy");
+    expect(audit.notes.some((note) => /fallback public/i.test(note))).toBe(true);
+    expect(audit.candidates.some((candidate) => candidate.matchedReferences.includes("OP-17"))).toBe(true);
   });
 
   it("détecte uniquement un flux réellement configuré", () => {
