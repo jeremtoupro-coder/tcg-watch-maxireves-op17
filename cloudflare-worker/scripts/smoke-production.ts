@@ -52,7 +52,7 @@ if (phase === "standby") {
     ready.stateWritesEnabled !== true ||
     ready.automaticPolling !== false ||
     !Array.isArray(ready.stores) ||
-    ready.stores.length !== 21
+    ready.stores.length !== 24
   ) {
     throw new Error(`Readiness ${phase} invalide: ${JSON.stringify(ready)}`);
   }
