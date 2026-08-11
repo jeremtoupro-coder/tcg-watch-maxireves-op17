@@ -19,7 +19,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: build Oupi transient retry branch once" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: rebuild Oupi retry branch with fresh 503 mocks" ]
       - uses: actions/checkout@v4
         with:
           ref: fix-oupi-transient-retry
@@ -181,7 +181,7 @@ jobs:
             it("borne les 5xx à deux tentatives maximum", async () => {
               vi.useFakeTimers();
               const fetchMock = vi.spyOn(globalThis, "fetch")
-                .mockResolvedValue(new Response("temporaire", { status: 503 }));
+                .mockImplementation(() => Promise.resolve(new Response("temporaire", { status: 503 })));
               const promise = auditConnector(connector);
               await vi.advanceTimersByTimeAsync(1_500);
               const audit = await promise;
