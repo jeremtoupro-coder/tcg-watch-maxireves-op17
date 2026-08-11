@@ -17,40 +17,48 @@ const categoryUrl = "https://www.espritjeu.com/cartes-et-jcc/one-piece-le-jeu-de
 const op09Url = "https://www.espritjeu.com/one-piece-display-op09-francais.html";
 const op17Url = "https://www.espritjeu.com/one-piece-display-op17-francais.html";
 
+function installEspritFixture(options: { op09Available: () => boolean; includeOp17?: boolean }): void {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === categoryUrl) {
+      return new Response(`
+        <html><body><h1>One Piece Card Game</h1>
+          <a href="${op09Url}">One Piece Display OP09 Français</a>
+          ${options.includeOp17 === false ? "" : `<a href="${op17Url}">One Piece Display OP17 Français</a>`}
+        </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    if (url === op09Url) {
+      return new Response(`
+        <html><body><h1>One Piece Display OP09 Français</h1>
+          <p>149,90 €</p><p>${options.op09Available() ? "En stock" : "Rupture de stock"}</p>
+        </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    if (url === op17Url && options.includeOp17 !== false) {
+      return new Response(`
+        <html><body><h1>One Piece Display OP17 Français</h1>
+          <p>179,90 €</p><p>En stock</p>
+        </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+    }
+    throw new Error(`URL inattendue: ${url}`);
+  }));
+}
+
+function monitoringEnv() {
+  return {
+    MONITORING_ENABLED: "true",
+    WRITE_STATE: "true",
+    DISCORD_MODE: "dry-run" as const,
+    ACTIVE_STORES: "esprit-jeu"
+  };
+}
+
 describe("double circuit en cycle marchand réel", () => {
   it("baseline l'ancien catalogue puis remonte OP09 sans doubler OP17", async () => {
     let op09Available = false;
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === categoryUrl) {
-        return new Response(`
-          <html><body><h1>One Piece Card Game</h1>
-            <a href="${op09Url}">One Piece Display OP09 Français</a>
-            <a href="${op17Url}">One Piece Display OP17 Français</a>
-          </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
-      }
-      if (url === op09Url) {
-        return new Response(`
-          <html><body><h1>One Piece Display OP09 Français</h1>
-            <p>149,90 €</p><p>${op09Available ? "En stock" : "Rupture de stock"}</p>
-          </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
-      }
-      if (url === op17Url) {
-        return new Response(`
-          <html><body><h1>One Piece Display OP17 Français</h1>
-            <p>179,90 €</p><p>En stock</p>
-          </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
-      }
-      throw new Error(`URL inattendue: ${url}`);
-    }));
+    installEspritFixture({ op09Available: () => op09Available });
 
     const stateStore = new MemoryStateStore({ writable: true });
-    const env = {
-      MONITORING_ENABLED: "true",
-      WRITE_STATE: "true",
-      DISCORD_MODE: "dry-run" as const,
-      ACTIVE_STORES: "esprit-jeu"
-    };
+    const env = monitoringEnv();
 
     const baseline = await runMonitoringCycle(env, {
       officialProducts: [OP17],
@@ -74,5 +82,32 @@ describe("double circuit en cycle marchand réel", () => {
     expect(restock.allEvaluation?.alertMatches[0].matchedProductIds).toEqual(["OP-09"]);
     expect(restock.allEvaluation?.alertMatches[0].change.type).toBe("back_in_stock");
     expect(restock.allEvaluation?.alertMatches.some((match) => match.matchedProductIds.includes("OP-17"))).toBe(false);
+  });
+
+  it("continue ONE PIECE ALL même lorsqu'aucune sortie Bandai n'est active", async () => {
+    let op09Available = false;
+    installEspritFixture({ op09Available: () => op09Available, includeOp17: false });
+    const stateStore = new MemoryStateStore({ writable: true });
+    const env = monitoringEnv();
+
+    const baseline = await runMonitoringCycle(env, {
+      officialProducts: [],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 10, 11, 18, 0, 0)
+    });
+    expect(baseline.status).toBe("completed");
+    expect(baseline.analysis?.newReleases.scanned).toBe(false);
+    expect(baseline.analysis?.onePieceAll.scanned).toBe(true);
+    expect(baseline.allEvaluation?.alertMatches).toEqual([]);
+
+    op09Available = true;
+    const restock = await runMonitoringCycle(env, {
+      officialProducts: [],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 10, 11, 18, 15, 0)
+    });
+    expect(restock.allEvaluation?.alertMatches).toHaveLength(1);
+    expect(restock.allEvaluation?.alertMatches[0].matchedProductIds).toEqual(["OP-09"]);
+    expect(restock.allEvaluation?.alertMatches[0].change.type).toBe("back_in_stock");
   });
 });
