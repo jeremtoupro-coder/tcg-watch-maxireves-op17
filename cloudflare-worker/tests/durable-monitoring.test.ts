@@ -31,19 +31,25 @@ describe("Fast Watch Durable Objects à budget borné", () => {
       "king-jouet"
     ]);
     expect(selection.deferredDiscoveryStores).toEqual(["ludiworld"]);
-    expect(selection.stores).toHaveLength(14);
+    expect(selection.stores).toHaveLength(17);
     expect(selection.stores).toContain("otakuland");
+    expect(selection.stores).toContain("esprit-jeu");
+    expect(selection.stores).toContain("la-grande-recre");
+    expect(selection.stores).toContain("bcd-jeux");
   });
 
-  it("ajoute Ludiworld lors de la Discovery et garde Otakuland actif sur les deux cadences", () => {
+  it("ajoute Ludiworld lors de la Discovery et garde les trois nouveaux marchands actifs", () => {
     const selection = selectStoresForCycle({}, {
       scheduledTime: Date.UTC(2026, 7, 10, 8, 15, 0)
     });
 
     expect(selection.discovery).toBe(true);
-    expect(selection.stores).toHaveLength(15);
+    expect(selection.stores).toHaveLength(18);
     expect(selection.stores).toContain("ludiworld");
     expect(selection.stores).toContain("otakuland");
+    expect(selection.stores).toContain("esprit-jeu");
+    expect(selection.stores).toContain("la-grande-recre");
+    expect(selection.stores).toContain("bcd-jeux");
   });
 
   it("sépare forceStore de forceDiscovery", () => {
@@ -66,7 +72,7 @@ describe("Fast Watch Durable Objects à budget borné", () => {
   it("projette exactement un échantillon de quinze minutes sur 24 heures et garde la marge cible", () => {
     const cycles = Array.from({ length: CADENCE_SAMPLE_CYCLES }, () => ({
       durableDurationMs: 40_000,
-      durableRequestCount: 14
+      durableRequestCount: 17
     }));
     const budget = projectCadenceBudget(cycles);
 
@@ -90,7 +96,7 @@ describe("Fast Watch Durable Objects à budget borné", () => {
   it("refuse le verdict PASS au-dessus du plafond opérationnel même sous le quota officiel", () => {
     const cycles = Array.from({ length: CADENCE_SAMPLE_CYCLES }, () => ({
       durableDurationMs: 50_000,
-      durableRequestCount: 14
+      durableRequestCount: 17
     }));
     const budget = projectCadenceBudget(cycles);
 
@@ -121,7 +127,7 @@ describe("Fast Watch Durable Objects à budget borné", () => {
     }, "test")).toThrow(/scheduler/i);
   });
 
-  it("refuse le LIVE si les 21 boutiques et le webhook officiel ne sont pas tous validés", () => {
+  it("refuse le LIVE si les 24 boutiques et le webhook officiel ne sont pas tous validés", () => {
     expect(() => assertRuntimeReadiness({
       ...runtimeBindings(),
       MONITORING_ENABLED: "true",
@@ -140,6 +146,6 @@ describe("Fast Watch Durable Objects à budget borné", () => {
       SCHEDULER_MODE: "live",
       ACTIVE_STORES: "maxireves",
       DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/token"
-    }, "live")).toThrow(/21 boutiques/);
+    }, "live")).toThrow(/24 boutiques/);
   });
 });
