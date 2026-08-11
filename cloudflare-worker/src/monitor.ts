@@ -6,9 +6,10 @@ import {
 import { evaluateCandidates } from "./engine";
 import { loadOfficialCalendar } from "./officialCalendar";
 import { buildActiveWatchConfig, candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
-import { createStateStore, type StateStore } from "./state";
+import { createStateStore, scopedStateStore, type StateStore } from "./state";
 import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
 import { canonicalProductUrl } from "./connectorUrls";
+import { buildAllOnePieceWatchConfig, candidateForAllOnePiece } from "./watchModes";
 import type { Env, LanguageStatus, StoreAudit, StoreKey } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
 
@@ -156,9 +157,9 @@ async function persistDiscoveryCache(
  * Le gestionnaire externe appelle ce cycle à la cadence Fast Watch. Les
  * fiches déjà découvertes et qualifiées sont relues à chaque passage ; les
  * catégories et boutiques discovery-only ne sont explorées que toutes les
- * 15 minutes. Aucun cron Cloudflare n'est requis par la SAFE Preview. Une
- * origine anti-bot connue n'est jamais interrogée sans son flux partenaire
- * autorisé.
+ * 15 minutes. Le même audit de Discovery alimente deux circuits distincts :
+ * les Nouvelles sorties pilotées par Bandai et ONE PIECE ALL pour les restocks
+ * historiques. Aucune origine n'est interrogée deux fois pour alimenter ALL.
  */
 export async function runMonitoringCycle(
   env: Env,
@@ -183,6 +184,11 @@ export async function runMonitoringCycle(
   reason?: string;
   audits?: StoreAudit[];
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
+  allEvaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
+  analysis?: {
+    newReleases: { scanned: boolean; candidates: number; alerts: number };
+    onePieceAll: { scanned: boolean; candidates: number; alerts: number };
+  };
 }> {
   if (env.MONITORING_ENABLED !== "true") {
     return {
@@ -269,6 +275,11 @@ export async function runMonitoringCycle(
   const connectors = selectedForCadence.flatMap((entry) => entry.fast ? [entry.fast] : []);
 
   if (connectors.length === 0) {
+    const evaluation = await evaluateCandidates([], env, {
+      baselineStores: [],
+      config: dynamicConfig,
+      stateStore
+    });
     return {
       status: "completed",
       stores: [],
@@ -278,11 +289,11 @@ export async function runMonitoringCycle(
       healthyStores: [],
       degradedStores: [],
       audits: [],
-      evaluation: await evaluateCandidates([], env, {
-        baselineStores: [],
-        config: dynamicConfig,
-        stateStore
-      })
+      evaluation,
+      analysis: {
+        newReleases: { scanned: true, candidates: 0, alerts: evaluation.alertMatches.length },
+        onePieceAll: { scanned: includeDiscoveryOnly, candidates: 0, alerts: 0 }
+      }
     };
   }
 
@@ -329,6 +340,25 @@ export async function runMonitoringCycle(
     stateStore
   });
 
+  let allEvaluation: Awaited<ReturnType<typeof evaluateCandidates>> | undefined;
+  let allCandidatesCount = 0;
+  if (includeDiscoveryOnly) {
+    const allCandidates = healthyAudits.flatMap((audit) => {
+      const connector = connectorByKey.get(audit.store);
+      if (connector?.commercialAlertsEnabled === false) return [];
+      return audit.candidates
+        .map((candidate) => candidateForAllOnePiece(candidate, acceptedLanguages))
+        .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    });
+    allCandidatesCount = allCandidates.length;
+    const allConfig = buildAllOnePieceWatchConfig(allCandidates, activeIds, acceptedLanguages);
+    allEvaluation = await evaluateCandidates(allCandidates, env, {
+      baselineStores,
+      config: allConfig,
+      stateStore: scopedStateStore(stateStore, "one-piece-all")
+    });
+  }
+
   return {
     status: "completed",
     stores: connectors.map((connector) => connector.key),
@@ -338,6 +368,19 @@ export async function runMonitoringCycle(
     healthyStores,
     degradedStores,
     audits: audits.map((audit) => degradedKeys.has(audit.store) ? { ...audit, candidates: [] } : audit),
-    evaluation
+    evaluation,
+    ...(allEvaluation ? { allEvaluation } : {}),
+    analysis: {
+      newReleases: {
+        scanned: true,
+        candidates: candidates.length,
+        alerts: evaluation.alertMatches.length
+      },
+      onePieceAll: {
+        scanned: includeDiscoveryOnly,
+        candidates: allCandidatesCount,
+        alerts: allEvaluation?.alertMatches.length ?? 0
+      }
+    }
   };
 }
