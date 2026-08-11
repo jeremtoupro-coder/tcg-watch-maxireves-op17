@@ -16,7 +16,12 @@ function compactDiagnostic(raw: string): string {
 function isTransientPlatformError(message: string): boolean {
   return /Durable Object reset because its code was updated/i.test(message) ||
     /Durable Object.*reset/i.test(message) ||
-    /internal error.*Durable Object/i.test(message);
+    /internal error.*Durable Object/i.test(message) ||
+    // Pendant quelques secondes après un déploiement, un DO peut encore
+    // répondre avec la forme de payload de la version précédente. On rejoue le
+    // même cycle, mais seulement dans la limite des 4 tentatives existantes :
+    // une incompatibilité persistante reste donc un échec dur.
+    /Cannot read properties of undefined \(reading '[^']+'\)/i.test(message);
 }
 
 async function waitForRuntime(): Promise<void> {
@@ -109,7 +114,7 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
       const message = payload.error ?? `Runtime test HTTP ${response.status}: ${compactDiagnostic(raw)}`;
       lastError = new Error(message);
       if (response.status >= 500 && isTransientPlatformError(message) && attempt < 4) {
-        console.warn(`[smoke-runtime] reset DO de propagation ${attempt}/4; même cycle rejoué.`);
+        console.warn(`[smoke-runtime] propagation/reset DO ${attempt}/4; même cycle rejoué: ${message}`);
         await new Promise((resolve) => setTimeout(resolve, 4_000));
         continue;
       }
@@ -158,6 +163,10 @@ for (let index = 0; index < CADENCE_SAMPLE_CYCLES; index += 1) {
     const discordMode = store.result?.evaluation?.discordDispatch.mode;
     if (discordMode && discordMode !== "dry-run") {
       throw new Error(`Discord non dry-run détecté pour ${store.store}.`);
+    }
+    const allDiscordMode = store.result?.allEvaluation?.discordDispatch.mode;
+    if (allDiscordMode && allDiscordMode !== "dry-run") {
+      throw new Error(`Discord ONE PIECE ALL non dry-run détecté pour ${store.store}.`);
     }
   }
   cycles.push(cycle);
