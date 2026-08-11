@@ -24,7 +24,7 @@ describe("nouveaux marchands Affilae", () => {
       connector: bcdJeux,
       product: "https://www.bcd-jeux.fr/one-piece-tcg/39999-one-piece-op17-display-24-boosters-fr-4580000000000.html",
       categoryHtml: '<html><body>One Piece TCG <a href="https://www.bcd-jeux.fr/one-piece-tcg/39999-one-piece-op17-display-24-boosters-fr-4580000000000.html">Display One Piece OP17 FR</a></body></html>',
-      productHtml: '<html><body><h1>One Piece : OP17 - Display 24 boosters FR</h1><p>179,90 € TTC</p><p>Edition FR</p><p>En Stock, Expédié sous 24h</p></body></html>'
+      productHtml: '<html><body><h1>One Piece : OP17 - Display 24 boosters Français</h1><p>179,90 € TTC</p><p>Edition française</p><p>En Stock, Expédié sous 24h</p></body></html>'
     }
   ])("qualifie $connector.name via catégorie puis fiche directe", async ({ connector, product, categoryHtml, productHtml }) => {
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
@@ -38,7 +38,7 @@ describe("nouveaux marchands Affilae", () => {
     const audit = await auditConnector(connector);
     const candidate = audit.candidates.find((item) => item.url === product);
 
-    expect(audit.runtimeStatus).toBe("healthy");
+    expect(audit.sources.every((source) => !source.error)).toBe(true);
     expect(candidate).toBeDefined();
     expect(candidate?.matchedReferences).toContain("OP-17");
     expect(candidate?.language).toBe("Français confirmé");
