@@ -337,59 +337,79 @@ function buildRequestHeaders(connector: ConnectorDefinition): Record<string, str
 
 async function fetchSource(sourceUrl: string, connector: ConnectorDefinition, watchProducts: OfficialProduct[]): Promise<SourceAudit> {
   const started = performance.now();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let status: number | undefined;
-  let finalUrl: string | undefined;
-  let contentType: string | undefined;
-  let responseBytes: number | undefined;
+  const attempts = connector.key === "oupi" ? 2 : 1;
+  let lastAudit: SourceAudit | undefined;
 
-  try {
-    const response = await fetch(sourceUrl, {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: buildRequestHeaders(connector)
-    });
-    status = response.status;
-    finalUrl = response.url || sourceUrl;
-    contentType = response.headers.get("content-type") ?? undefined;
-    const body = await response.arrayBuffer();
-    responseBytes = body.byteLength;
-    if (responseBytes > MAX_RESPONSE_BYTES) throw new Error(`Réponse trop volumineuse: ${responseBytes} octets`);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let status: number | undefined;
+    let finalUrl: string | undefined;
+    let contentType: string | undefined;
+    let responseBytes: number | undefined;
 
-    let html = new TextDecoder("utf-8").decode(body);
-    if (connector.key === "ludisphere" && /application\/json/i.test(contentType ?? "")) { html = normalizeLudisphereShopifyJson(html); }
-    validateSemanticResponse(html, connector);
-    const extracted = extractCandidates(html, response.url || sourceUrl, connector, watchProducts);
-    return {
-      sourceUrl,
-      finalUrl,
-      status,
-      contentType,
-      responseBytes,
-      durationMs: Math.round(performance.now() - started),
-      etag: response.headers.get("etag") ?? undefined,
-      lastModified: response.headers.get("last-modified") ?? undefined,
-      productLinksSeen: extracted.productLinksSeen,
-      candidates: extracted.candidates
-    };
-  } catch (error) {
-    return {
-      sourceUrl,
-      finalUrl,
-      status,
-      contentType,
-      responseBytes,
-      durationMs: Math.round(performance.now() - started),
-      productLinksSeen: 0,
-      candidates: [],
-      error: error instanceof Error ? error.message : String(error)
-    };
-  } finally {
-    clearTimeout(timeout);
+    try {
+      const response = await fetch(sourceUrl, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: buildRequestHeaders(connector)
+      });
+      status = response.status;
+      finalUrl = response.url || sourceUrl;
+      contentType = response.headers.get("content-type") ?? undefined;
+      const body = await response.arrayBuffer();
+      responseBytes = body.byteLength;
+      if (responseBytes > MAX_RESPONSE_BYTES) throw new Error(`Réponse trop volumineuse: ${responseBytes} octets`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      let html = new TextDecoder("utf-8").decode(body);
+      if (connector.key === "ludisphere" && /application\/json/i.test(contentType ?? "")) { html = normalizeLudisphereShopifyJson(html); }
+      validateSemanticResponse(html, connector);
+      const extracted = extractCandidates(html, response.url || sourceUrl, connector, watchProducts);
+      return {
+        sourceUrl,
+        finalUrl,
+        status,
+        contentType,
+        responseBytes,
+        durationMs: Math.round(performance.now() - started),
+        etag: response.headers.get("etag") ?? undefined,
+        lastModified: response.headers.get("last-modified") ?? undefined,
+        productLinksSeen: extracted.productLinksSeen,
+        candidates: extracted.candidates
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastAudit = {
+        sourceUrl,
+        finalUrl,
+        status,
+        contentType,
+        responseBytes,
+        durationMs: Math.round(performance.now() - started),
+        productLinksSeen: 0,
+        candidates: [],
+        error: message
+      };
+
+      const retryableTransient = connector.key === "oupi" &&
+        attempt + 1 < attempts &&
+        (status === undefined || status === 429 || status >= 500);
+      if (!retryableTransient) return lastAudit;
+      await sleep(1_500);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  return lastAudit ?? {
+    sourceUrl,
+    durationMs: Math.round(performance.now() - started),
+    productLinksSeen: 0,
+    candidates: [],
+    error: "Échec de requête sans détail"
+  };
 }
 
 function allowedDiscoveryHosts(connector: ConnectorDefinition): Set<string> {
