@@ -1,4 +1,4 @@
-name: OP Watch Oupi LIVE Source Diagnostic One-Shot
+name: OP Watch Oupi LIVE Error Capture One-Shot
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: inspect Oupi live source details final" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: capture Oupi live error body once" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -53,17 +53,22 @@ jobs:
           if(x.status!=='ready'||x.mode!=='live'||x.monitoringEnabled!==true||x.stateWritesEnabled!==true||x.discordMode!=='live'||x.schedulerMode!=='live') process.exit(1);
           console.log('LIVE readiness OK');
           NODE
-      - name: Force one Oupi Discovery and print nested source details
+      - name: Capture Oupi Discovery response even on HTTP 500
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsS --max-time 180 \
+          code="$(curl -sS --max-time 180 \
+            -o /tmp/oupi.json -w '%{http_code}' \
             -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
             -H "Content-Type: application/json" \
             -X POST --data '{"action":"runStoreNow","store":"oupi"}' \
-            "$PRODUCTION_URL/cockpit/api/control" > /tmp/oupi.json
-          node - <<'NODE'
-          const x=require('/tmp/oupi.json');
+            "$PRODUCTION_URL/cockpit/api/control")"
+          echo "HTTP $code"
+          HTTP_CODE="$code" node - <<'NODE'
+          const fs=require('fs');
+          const raw=fs.readFileSync('/tmp/oupi.json','utf8');
+          let x;
+          try { x=JSON.parse(raw); } catch { console.log(raw.slice(0,2000)); process.exit(2); }
           const row=(x.cycle?.stores||[]).find(s=>s.store==='oupi');
           const result=row?.result||{};
           const audit=(result.audits||[]).find(a=>a.store==='oupi');
@@ -79,13 +84,15 @@ jobs:
           }));
           const degraded=(result.degradedStores||[]).find(s=>s.store==='oupi');
           console.log(JSON.stringify({
-            status:row?.status,
-            durationMs:row?.durationMs,
-            merchantDurationMs:row?.merchantDurationMs,
-            auditRuntimeStatus:audit?.runtimeStatus,
+            httpCode:Number(process.env.HTTP_CODE),
+            topLevelError:x.error||null,
+            ok:x.ok,
+            status:row?.status||null,
+            rowError:row?.error||null,
+            durationMs:row?.durationMs??null,
+            merchantDurationMs:row?.merchantDurationMs??null,
             candidates:audit?.candidates?.length??0,
             degradedErrors:degraded?.errors||[],
             sources
           },null,2));
-          if(!row) process.exit(2);
           NODE
