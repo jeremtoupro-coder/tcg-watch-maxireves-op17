@@ -10,7 +10,7 @@ const safeEnv: Env = {
   MONITORING_ENABLED: "false",
   WRITE_STATE: "false",
   DISCORD_MODE: "dry-run",
-  ACTIVE_STORES: "maxireves,oupi,pixelheart,fantasy-sphere,ludisphere,parkage,ultrajeux,playin,philibert,cultura,micromania,fnac,leclerc,carrefour,king-jouet,joueclub,amazon-fr,mystic-ambre,ludiworld,vegastore,otakuland"
+  ACTIVE_STORES: "maxireves,oupi,pixelheart,fantasy-sphere,ludisphere,parkage,ultrajeux,playin,philibert,cultura,micromania,fnac,leclerc,carrefour,king-jouet,joueclub,amazon-fr,mystic-ambre,ludiworld,vegastore,otakuland,esprit-jeu,la-grande-recre,bcd-jeux"
 };
 
 async function json(path: string, env: Env = safeEnv, init?: RequestInit) {
@@ -34,11 +34,11 @@ describe("routes SAFE Preview", () => {
 
     const health = await json("/health");
     expect(health.body.status).toBe("ok");
-    expect(health.body.stores).toHaveLength(21);
+    expect(health.body.stores).toHaveLength(24);
 
     const config = await json("/config");
     expect(config.body.opWatchV1.officialCatalogUrl).toBe("https://fr.onepiece-cardgame.com/products/");
-    expect(config.body.stores).toHaveLength(21);
+    expect(config.body.stores).toHaveLength(24);
     expect(JSON.stringify(config.body)).not.toContain("AUTHORIZED_FEED_PLAYIN_URL=https");
   });
 
