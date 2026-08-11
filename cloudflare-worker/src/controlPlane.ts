@@ -25,11 +25,27 @@ export interface CockpitManualProduct {
   storeUrls: Partial<Record<StoreKey, string[]>>;
 }
 
+export interface CockpitAssistantSource {
+  title: string;
+  url: string;
+}
+
 export interface CockpitAssistantRequest {
   id: string;
   createdAt: string;
+  completedAt?: string;
   text: string;
-  status: "pending" | "done" | "cancelled";
+  status: "pending" | "done" | "cancelled" | "error";
+  answer?: string;
+  model?: string;
+  responseId?: string;
+  error?: string;
+  sources?: CockpitAssistantSource[];
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 export interface RuntimeControlConfig {
@@ -84,6 +100,40 @@ function normalizedStoreUrls(value: unknown): Partial<Record<StoreKey, string[]>
     if (urls.length) output[key] = urls;
   }
   return output;
+}
+
+function normalizedAssistantSources(value: unknown): CockpitAssistantSource[] {
+  if (!Array.isArray(value)) return [];
+  const sources = new Map<string, CockpitAssistantSource>();
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Partial<CockpitAssistantSource>;
+    try {
+      const parsed = new URL(cleanText(item.url, 2000));
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) continue;
+      const source = {
+        title: cleanText(item.title, 200) || parsed.hostname,
+        url: parsed.toString()
+      };
+      sources.set(source.url, source);
+    } catch {
+      // Ignore une citation malformée plutôt que de casser l'historique.
+    }
+  }
+  return [...sources.values()].slice(0, 12);
+}
+
+function normalizedAssistantUsage(value: unknown): CockpitAssistantRequest["usage"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const number = (item: unknown): number | undefined =>
+    typeof item === "number" && Number.isFinite(item) && item >= 0 ? Math.floor(item) : undefined;
+  const usage = {
+    inputTokens: number(raw.inputTokens),
+    outputTokens: number(raw.outputTokens),
+    totalTokens: number(raw.totalTokens)
+  };
+  return Object.values(usage).some((item) => item !== undefined) ? usage : undefined;
 }
 
 export function defaultRuntimeControlConfig(now = new Date()): RuntimeControlConfig {
@@ -146,14 +196,23 @@ export function normalizeRuntimeControlConfig(raw: unknown, now = new Date()): R
         if (!raw || typeof raw !== "object") return [];
         const item = raw as Partial<CockpitAssistantRequest>;
         const id = cleanText(item.id, 80);
-        const text = cleanText(item.text, 2000);
+        const text = cleanText(item.text, 4000);
         const status = item.status;
-        if (!id || !text || !["pending", "done", "cancelled"].includes(status ?? "")) return [];
+        if (!id || !text || !["pending", "done", "cancelled", "error"].includes(status ?? "")) return [];
+        const sources = normalizedAssistantSources(item.sources);
+        const usage = normalizedAssistantUsage(item.usage);
         return [{
           id,
           text,
           status: status as CockpitAssistantRequest["status"],
-          createdAt: typeof item.createdAt === "string" ? item.createdAt : now.toISOString()
+          createdAt: typeof item.createdAt === "string" ? item.createdAt : now.toISOString(),
+          ...(typeof item.completedAt === "string" ? { completedAt: item.completedAt } : {}),
+          ...(cleanText(item.answer, 12000) ? { answer: cleanText(item.answer, 12000) } : {}),
+          ...(cleanText(item.model, 120) ? { model: cleanText(item.model, 120) } : {}),
+          ...(cleanText(item.responseId, 160) ? { responseId: cleanText(item.responseId, 160) } : {}),
+          ...(cleanText(item.error, 800) ? { error: cleanText(item.error, 800) } : {}),
+          ...(sources.length ? { sources } : {}),
+          ...(usage ? { usage } : {})
         }];
       }).slice(-50)
     : [];
