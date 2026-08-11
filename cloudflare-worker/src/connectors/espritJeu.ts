@@ -16,12 +16,13 @@ export const espritJeu: ConnectorDefinition = {
   requestHeaders: honestHeaders,
   responseMustContainAny: [/one[\s-]*piece/i],
   followDiscoveredProductPages: true,
-  maxDiscoveredProductPages: 20,
+  maxDiscoveredProductPages: 50,
   requiresDirectProductPageForAlerts: true,
   notes: [
     "Catégorie publique dédiée au One Piece Card Game avec prix et disponibilité visibles sans authentification.",
     "Les fiches directes confirment la référence, la langue, le prix et l'état stock/précommande avant toute alerte.",
-    "Candidature Affilae en attente : un flux partenaire pourra remplacer ou compléter la Discovery HTML lorsqu'il sera disponible.",
+    "ONE PIECE ALL exploite la Discovery complète de la catégorie (jusqu'à la limite de sûreté de 50 fiches) afin de mémoriser les anciennes références et détecter leurs restocks.",
+    "Le partenariat Affilae est validé mais n'est pas requis pour la surveillance personnelle tant que la source publique reste exploitable.",
     "HTTP 403/429/5xx = source dégradée, jamais rupture."
   ]
 };
