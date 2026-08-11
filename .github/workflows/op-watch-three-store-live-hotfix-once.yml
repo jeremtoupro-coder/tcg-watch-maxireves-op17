@@ -1,4 +1,4 @@
-name: OP Watch Philibert Same-Worker Probe One-Shot
+name: OP Watch Three-Store LIVE Proof One-Shot
 
 on:
   push:
@@ -10,99 +10,99 @@ permissions:
   contents: read
 
 jobs:
-  deploy-and-probe:
+  prove:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: cloudflare-worker
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+      PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
-      - name: Hard gate
+      - name: Hard proof gate
         working-directory: .
         shell: bash
         run: |
           set -euo pipefail
           [ "$GITHUB_REF" = "refs/heads/main" ]
-          [ "${{ github.event.head_commit.message }}" = "ops: deploy private Philibert same-worker probe" ]
+          [ "${{ github.event.head_commit.message }}" = "ops: prove three-store live health via cockpit" ]
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: cloudflare-worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - name: Validate exact main
-        run: npm run typecheck && npm test
-      - name: Derive private token
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Derive private runtime token
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$DISCORD_WEBHOOK_URL"
           token="$(npm run --silent derive-preview-audit-token)"
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Generate and deploy exact LIVE config
-        run: |
-          npm run generate-production-config
-          node -e "const c=require('./wrangler.production-live.generated.json'); if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||c.vars.SCHEDULER_MODE!=='live'||c.vars.RUNTIME_TEST_MODE==='true'||JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])) process.exit(1)"
-          npx wrangler deploy --config wrangler.production-live.generated.json
-        env:
-          PRODUCTION_PHASE: live
-      - name: Restore private and Discord secrets
-        shell: bash
-        run: |
-          printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-live.generated.json
-          printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-live.generated.json
-      - name: Wait for LIVE readiness
+      - name: Require LIVE readiness
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in {1..15}; do
-            curl -fsS --max-time 20 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready" > /tmp/ready.json || true
-            if node -e "const x=require('/tmp/ready.json'); process.exit(x.status==='ready'&&x.mode==='live'?0:1)" 2>/dev/null; then cat /tmp/ready.json; exit 0; fi
-            sleep 4
-          done
-          exit 1
-      - name: Probe Philibert RSS and direct OP17 from exact production Worker
-        shell: bash
-        run: |
-          set -euo pipefail
-          rss='https://www.philibertnet.com/modules/feeder/rss.php?id_category=15860'
-          product='https://www.philibertnet.com/fr/one-piece-le-jeu-de-cartes/179736-one-piece-le-jeu-de-cartes-op17-les-guerriers-les-plus-puissants-au-monde-booster-double-pack-2100001380267.html'
-          curl -fsS --max-time 40 -G \
-            -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
-            --data-urlencode 'store=philibert' --data-urlencode "url=$rss" \
-            "$PRODUCTION_URL/merchant-probe" > /tmp/rss.json
-          curl -fsS --max-time 40 -G \
-            -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
-            --data-urlencode 'store=philibert' --data-urlencode "url=$product" \
-            "$PRODUCTION_URL/merchant-probe" > /tmp/product.json
+          curl -fsS --max-time 30 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/runtime-ready" > /tmp/ready.json
           node - <<'NODE'
-          const rss=require('/tmp/rss.json');
-          const product=require('/tmp/product.json');
-          console.log(JSON.stringify({rss,product},null,2));
-          if(!('status' in rss)||!('status' in product)) process.exit(2);
+          const x=require('/tmp/ready.json');
+          console.log(JSON.stringify(x,null,2));
+          if(x.status!=='ready'||x.mode!=='live'||x.monitoringEnabled!==true||x.stateWritesEnabled!==true||x.discordMode!=='live'||x.schedulerMode!=='live') process.exit(1);
           NODE
-      - name: Verify Cloudflare LIVE state still intact
+      - name: Force fresh real Discovery for Oupi Philibert Otakuland
+        shell: bash
+        run: |
+          set -euo pipefail
+          for store in oupi philibert otakuland; do
+            echo "=== $store ==="
+            curl -fsS --max-time 180 \
+              -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST --data "{\"action\":\"runStoreNow\",\"store\":\"$store\"}" \
+              "$PRODUCTION_URL/cockpit/api/control" > "/tmp/$store.json"
+            STORE="$store" node - <<'NODE'
+          const store=process.env.STORE;
+          const x=require(`/tmp/${store}.json`);
+          const row=(x.cycle?.stores||[]).find(s=>s.store===store);
+          console.log(JSON.stringify({store,ok:x.ok,status:row?.status,durationMs:row?.durationMs,merchantDurationMs:row?.merchantDurationMs,error:row?.error},null,2));
+          if(!x.ok||row?.status!=='completed') process.exit(2);
+          NODE
+          done
+      - name: Require all three green in production cockpit
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 60 -H "Authorization: Bearer $PREVIEW_AUDIT_TOKEN" "$PRODUCTION_URL/cockpit/api/status" > /tmp/status.json
+          node - <<'NODE'
+          const s=require('/tmp/status.json');
+          if(s.runtime?.live!==true) throw new Error('runtime not live');
+          const wanted=['oupi','philibert','otakuland'];
+          const rows=(s.stores||[]).filter(x=>wanted.includes(x.key)).map(x=>({key:x.key,level:x.level,label:x.label,runtimeStatus:x.runtimeStatus,candidates:x.candidates,lastCheck:x.lastCheck,detail:x.detail}));
+          console.log(JSON.stringify({runtime:s.runtime,totals:s.totals,stores:rows},null,2));
+          if(rows.length!==3||rows.some(x=>x.level!=='green'||x.runtimeStatus!=='completed')) process.exit(3);
+          NODE
+      - name: Verify Cloudflare LIVE state independently
         shell: bash
         run: |
           set -euo pipefail
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/tcg-watch-one-piece"
+          base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PRODUCTION_WORKER_NAME"
           curl -fsS -H "$auth" "$base/settings" > /tmp/settings.json
           curl -fsS -H "$auth" "$base/schedules" > /tmp/schedules.json
           node - <<'NODE'
-          const settings=require('/tmp/settings.json'); const schedules=require('/tmp/schedules.json');
-          const b=settings.result?.bindings||[]; const p=Object.fromEntries(b.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text])); const n=new Set(b.map(x=>x.name));
-          const rows=Array.isArray(schedules.result)?schedules.result:(schedules.result?.schedules||[]); const crons=rows.map(x=>x.cron||x.schedule).filter(Boolean);
+          const settings=require('/tmp/settings.json');
+          const schedules=require('/tmp/schedules.json');
+          const b=settings.result?.bindings||[];
+          const p=Object.fromEntries(b.filter(x=>x.type==='plain_text').map(x=>[x.name,x.text]));
+          const n=new Set(b.map(x=>x.name));
+          const rows=Array.isArray(schedules.result)?schedules.result:(schedules.result?.schedules||[]);
+          const crons=rows.map(x=>x.cron||x.schedule).filter(Boolean);
           const proof={monitoring:p.MONITORING_ENABLED,write:p.WRITE_STATE,discord:p.DISCORD_MODE,scheduler:p.SCHEDULER_MODE,runtimeTest:p.RUNTIME_TEST_MODE,storeDO:n.has('STORE_MONITORS'),calendarDO:n.has('CALENDAR_COORDINATOR'),discordSecret:n.has('DISCORD_WEBHOOK_URL'),crons};
           console.log(JSON.stringify(proof,null,2));
-          if(proof.monitoring!=='true'||proof.write!=='true'||proof.discord!=='live'||proof.scheduler!=='live'||proof.runtimeTest==='true'||!proof.storeDO||!proof.calendarDO||!proof.discordSecret||!crons.includes('* * * * *')) process.exit(3);
+          if(proof.monitoring!=='true'||proof.write!=='true'||proof.discord!=='live'||proof.scheduler!=='live'||proof.runtimeTest==='true'||!proof.storeDO||!proof.calendarDO||!proof.discordSecret||!crons.includes('* * * * *')) process.exit(4);
           NODE
