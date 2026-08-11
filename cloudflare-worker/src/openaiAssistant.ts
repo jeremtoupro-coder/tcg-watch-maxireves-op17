@@ -88,7 +88,7 @@ export function extractOpenAiAssistantResult(payload: OpenAiResponsePayload): Op
       for (const annotation of content.annotations ?? []) {
         if (annotation.type !== "url_citation") continue;
         const source = safeSource(annotation);
-        if (source) sources.set(source.url, source);
+        if (source && !sources.has(source.url)) sources.set(source.url, source);
       }
     }
   }
