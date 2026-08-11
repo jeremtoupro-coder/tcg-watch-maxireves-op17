@@ -14,17 +14,19 @@ const OP17: OfficialProduct = {
 };
 
 const categoryUrl = "https://www.espritjeu.com/cartes-et-jcc/one-piece-le-jeu-de-cartes.html";
+const categoryPage2Url = `${categoryUrl}?numPage=2`;
 const op09Url = "https://www.espritjeu.com/one-piece-display-op09-francais.html";
 const op17Url = "https://www.espritjeu.com/one-piece-display-op17-francais.html";
 
-function installEspritFixture(options: { op09Available: () => boolean; includeOp17?: boolean }): void {
+function installEspritFixture(options: { op09Available: () => boolean; includeOp17?: boolean; calls?: string[] }): void {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === categoryUrl) {
+    options.calls?.push(url);
+    if (url === categoryUrl || url === categoryPage2Url) {
       return new Response(`
         <html><body><h1>One Piece Card Game</h1>
-          <a href="${op09Url}">One Piece Display OP09 Français</a>
-          ${options.includeOp17 === false ? "" : `<a href="${op17Url}">One Piece Display OP17 Français</a>`}
+          <div><a href="${op09Url}">One Piece Display OP09 Français</a><span>${options.op09Available() ? "En stock" : "Rupture de stock"}</span></div>
+          ${options.includeOp17 === false ? "" : `<div><a href="${op17Url}">One Piece Display OP17 Français</a><span>En stock</span></div>`}
         </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
     }
     if (url === op09Url) {
@@ -55,7 +57,8 @@ function monitoringEnv() {
 describe("double circuit en cycle marchand réel", () => {
   it("baseline l'ancien catalogue puis remonte OP09 sans doubler OP17", async () => {
     let op09Available = false;
-    installEspritFixture({ op09Available: () => op09Available });
+    const calls: string[] = [];
+    installEspritFixture({ op09Available: () => op09Available, calls });
 
     const stateStore = new MemoryStateStore({ writable: true });
     const env = monitoringEnv();
@@ -70,7 +73,12 @@ describe("double circuit en cycle marchand réel", () => {
     expect(baseline.analysis?.onePieceAll.scanned).toBe(true);
     expect(baseline.analysis?.onePieceAll.candidates).toBe(2);
     expect(baseline.allEvaluation?.alertMatches).toEqual([]);
+    expect(calls).toContain(categoryUrl);
+    expect(calls).toContain(categoryPage2Url);
+    expect(calls).toContain(op17Url);
+    expect(calls).not.toContain(op09Url);
 
+    calls.length = 0;
     op09Available = true;
     const restock = await runMonitoringCycle(env, {
       officialProducts: [OP17],
@@ -78,6 +86,7 @@ describe("double circuit en cycle marchand réel", () => {
       scheduledTime: Date.UTC(2026, 7, 11, 18, 15, 0)
     });
 
+    expect(calls).toContain(op09Url);
     expect(restock.allEvaluation?.alertMatches).toHaveLength(1);
     expect(restock.allEvaluation?.alertMatches[0].matchedProductIds).toEqual(["OP-09"]);
     expect(restock.allEvaluation?.alertMatches[0].change.type).toBe("back_in_stock");
@@ -86,7 +95,8 @@ describe("double circuit en cycle marchand réel", () => {
 
   it("continue ONE PIECE ALL même lorsqu'aucune sortie Bandai n'est active", async () => {
     let op09Available = false;
-    installEspritFixture({ op09Available: () => op09Available, includeOp17: false });
+    const calls: string[] = [];
+    installEspritFixture({ op09Available: () => op09Available, includeOp17: false, calls });
     const stateStore = new MemoryStateStore({ writable: true });
     const env = monitoringEnv();
 
@@ -99,13 +109,16 @@ describe("double circuit en cycle marchand réel", () => {
     expect(baseline.analysis?.newReleases.scanned).toBe(false);
     expect(baseline.analysis?.onePieceAll.scanned).toBe(true);
     expect(baseline.allEvaluation?.alertMatches).toEqual([]);
+    expect(calls).not.toContain(op09Url);
 
+    calls.length = 0;
     op09Available = true;
     const restock = await runMonitoringCycle(env, {
       officialProducts: [],
       stateStore,
       scheduledTime: Date.UTC(2026, 10, 11, 18, 15, 0)
     });
+    expect(calls).toContain(op09Url);
     expect(restock.allEvaluation?.alertMatches).toHaveLength(1);
     expect(restock.allEvaluation?.alertMatches[0].matchedProductIds).toEqual(["OP-09"]);
     expect(restock.allEvaluation?.alertMatches[0].change.type).toBe("back_in_stock");
