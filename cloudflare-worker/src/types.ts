@@ -216,6 +216,8 @@ export interface Env {
   DISCORD_MODE?: "dry-run" | "live";
   DISCORD_WEBHOOK_URL?: string;
   PREVIEW_AUDIT_TOKEN?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
   AUTHORIZED_FEED_PLAYIN_URL?: string;
   AUTHORIZED_FEED_CULTURA_URL?: string;
   AUTHORIZED_FEED_MICROMANIA_URL?: string;

@@ -72,7 +72,8 @@ export default {
     const headers = new Headers(asset.headers);
     headers.delete("content-length");
 
-    if (url.pathname === "/cockpit/" || url.pathname === "/cockpit/index.html") {
+    const cockpit = url.pathname === "/cockpit/" || url.pathname === "/cockpit/index.html";
+    if (cockpit) {
       html = html.replace(
         "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));",
         "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));"
@@ -80,8 +81,11 @@ export default {
       headers.set("cache-control", "no-store");
     }
 
+    const scripts = cockpit
+      ? '<script src="/catalog.js" defer></script><script src="/cockpit-assistant.js"></script>'
+      : '<script src="/catalog.js" defer></script>';
     return new Response(
-      html.replace("</body>", '<script src="/catalog.js" defer></script></body>'),
+      html.replace("</body>", `${scripts}</body>`),
       { status: asset.status, statusText: asset.statusText, headers }
     );
   }

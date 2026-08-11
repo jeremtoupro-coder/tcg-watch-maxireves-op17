@@ -3,11 +3,17 @@ import { configuredStoreStatus } from "./storeAudit";
 import {
   COCKPIT_LANGUAGES,
   normalizeRuntimeControlConfig,
+  type CockpitAssistantRequest,
   type CockpitManualProduct,
   type RuntimeControlConfig
 } from "./controlPlane";
 import { dispatchRuntimeHeartbeat } from "./heartbeat";
 import { runDistributedMonitoringCycle, type RuntimeEnv } from "./durableMonitoring";
+import {
+  DEFAULT_OPENAI_MODEL,
+  requestOpenAiAssistant,
+  type AssistantRuntimeSnapshot
+} from "./openaiAssistant";
 import type { LanguageStatus, StoreKey } from "./types";
 
 const ADMIN_PASSWORD_SHA256 = "1ed7f0d774b4b9b878c9579c32db88d6983dcbf6936f1e12995d3fffe33c0670";
@@ -102,12 +108,17 @@ async function readControlConfig(env: RuntimeEnv): Promise<RuntimeControlConfig>
   })));
 }
 
-async function writeControlConfig(env: RuntimeEnv, config: RuntimeControlConfig): Promise<RuntimeControlConfig> {
+async function writeControlConfig(
+  env: RuntimeEnv,
+  config: RuntimeControlConfig,
+  invalidateStores = true
+): Promise<RuntimeControlConfig> {
   const saved = await readJson<RuntimeControlConfig>(await calendarStub(env).fetch(new Request("https://calendar.internal/control", {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(config)
   })));
+  if (!invalidateStores) return saved;
   await Promise.all(CONNECTORS.map(async (connector) => {
     try {
       await storeStub(env, connector.key).fetch(new Request("https://store.internal/invalidate", { method: "POST" }));
@@ -227,7 +238,7 @@ function classifyStore(
   };
 }
 
-async function buildStatus(env: RuntimeEnv): Promise<unknown> {
+async function buildStatus(env: RuntimeEnv) {
   const now = Date.now();
   const [control, calendar, healthRows] = await Promise.all([
     readControlConfig(env),
@@ -313,7 +324,40 @@ async function buildStatus(env: RuntimeEnv): Promise<unknown> {
       acceptedLanguages: calendar.acceptedLanguages ?? control.languages,
       controlUpdatedAt: calendar.controlUpdatedAt ?? control.updatedAt
     },
+    assistant: {
+      configured: Boolean(env.OPENAI_API_KEY?.trim()),
+      model: env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL,
+      webSearch: true,
+      writeAccess: false,
+      storage: "local-history + OpenAI store=false"
+    },
     control
+  };
+}
+
+function assistantSnapshot(status: Awaited<ReturnType<typeof buildStatus>>): AssistantRuntimeSnapshot {
+  return {
+    checkedAt: status.checkedAt,
+    runtime: status.runtime,
+    totals: status.totals,
+    stores: status.stores.map((store) => ({
+      key: store.key,
+      name: store.name,
+      configuredStatus: store.configuredStatus,
+      sourceKind: store.sourceKind,
+      candidates: store.candidates,
+      lastCheck: store.lastCheck,
+      runtimeStatus: store.runtimeStatus,
+      level: store.level,
+      label: store.label,
+      detail: store.detail
+    })),
+    calendar: status.calendar,
+    control: {
+      languages: status.control.languages,
+      manualProducts: status.control.manualProducts,
+      productOverrides: status.control.productOverrides
+    }
   };
 }
 
@@ -344,11 +388,78 @@ function cleanProductInput(raw: unknown): CockpitManualProduct {
   };
 }
 
+async function runAssistant(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!env.OPENAI_API_KEY?.trim()) {
+    return json(request, { error: "Assistant OpenAI non configuré : OPENAI_API_KEY manque sur le Worker." }, 503);
+  }
+  const body = await request.json() as { text?: unknown };
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, 4000) : "";
+  if (text.length < 3) return json(request, { error: "Demande trop courte." }, 400);
+
+  const createdAt = new Date();
+  const requestId = crypto.randomUUID();
+  const current = await readControlConfig(env);
+  const pending: CockpitAssistantRequest = {
+    id: requestId,
+    createdAt: createdAt.toISOString(),
+    text,
+    status: "pending"
+  };
+  const withPending = normalizeRuntimeControlConfig({
+    ...current,
+    updatedAt: createdAt.toISOString(),
+    assistantRequests: [...current.assistantRequests, pending].slice(-50)
+  }, createdAt);
+  await writeControlConfig(env, withPending, false);
+
+  try {
+    const status = await buildStatus(env);
+    const result = await requestOpenAiAssistant(env, text, assistantSnapshot(status), current.assistantRequests);
+    const completedAt = new Date();
+    const latest = await readControlConfig(env);
+    const completed: CockpitAssistantRequest = {
+      ...pending,
+      status: "done",
+      completedAt: completedAt.toISOString(),
+      answer: result.answer,
+      model: result.model,
+      responseId: result.responseId,
+      sources: result.sources,
+      ...(result.usage ? { usage: result.usage } : {})
+    };
+    const next = normalizeRuntimeControlConfig({
+      ...latest,
+      updatedAt: completedAt.toISOString(),
+      assistantRequests: latest.assistantRequests.map((item) => item.id === requestId && item.status === "pending" ? completed : item)
+    }, completedAt);
+    await writeControlConfig(env, next, false);
+    return json(request, { ok: true, request: completed });
+  } catch (error) {
+    const completedAt = new Date();
+    const message = error instanceof Error ? error.message : String(error);
+    const latest = await readControlConfig(env);
+    const failed: CockpitAssistantRequest = {
+      ...pending,
+      status: "error",
+      completedAt: completedAt.toISOString(),
+      error: message.slice(0, 800)
+    };
+    const next = normalizeRuntimeControlConfig({
+      ...latest,
+      updatedAt: completedAt.toISOString(),
+      assistantRequests: latest.assistantRequests.map((item) => item.id === requestId && item.status === "pending" ? failed : item)
+    }, completedAt);
+    await writeControlConfig(env, next, false);
+    return json(request, { error: message, request: failed }, 502);
+  }
+}
+
 async function mutateControl(request: Request, env: RuntimeEnv): Promise<Response> {
   const body = await request.json() as { action?: string; [key: string]: unknown };
   const current = await readControlConfig(env);
   let next: RuntimeControlConfig = structuredClone(current);
   const now = new Date();
+  let invalidateStores = true;
 
   switch (body.action) {
     case "setLanguages": {
@@ -382,7 +493,7 @@ async function mutateControl(request: Request, env: RuntimeEnv): Promise<Respons
       break;
     }
     case "queueAssistantRequest": {
-      const text = typeof body.text === "string" ? body.text.trim().slice(0, 2000) : "";
+      const text = typeof body.text === "string" ? body.text.trim().slice(0, 4000) : "";
       if (text.length < 5) throw new Error("Demande trop courte.");
       next.assistantRequests = [...next.assistantRequests, {
         id: crypto.randomUUID(),
@@ -390,13 +501,15 @@ async function mutateControl(request: Request, env: RuntimeEnv): Promise<Respons
         text,
         status: "pending" as const
       }].slice(-50);
+      invalidateStores = false;
       break;
     }
     case "cancelAssistantRequest": {
       const id = typeof body.id === "string" ? body.id : "";
       next.assistantRequests = next.assistantRequests.map((item) =>
-        item.id === id ? { ...item, status: "cancelled" as const } : item
+        item.id === id && item.status === "pending" ? { ...item, status: "cancelled" as const } : item
       );
+      invalidateStores = false;
       break;
     }
     case "heartbeatNow": {
@@ -425,7 +538,7 @@ async function mutateControl(request: Request, env: RuntimeEnv): Promise<Respons
 
   next.updatedAt = now.toISOString();
   next = normalizeRuntimeControlConfig(next, now);
-  const saved = await writeControlConfig(env, next);
+  const saved = await writeControlConfig(env, next, invalidateStores);
   return json(request, { ok: true, control: saved });
 }
 
@@ -442,6 +555,9 @@ export async function handleCockpitApi(request: Request, env: RuntimeEnv): Promi
     }
     if (pathname === "/cockpit/api/control" && request.method === "POST") {
       return await mutateControl(request, env);
+    }
+    if (pathname === "/cockpit/api/assistant" && request.method === "POST") {
+      return await runAssistant(request, env);
     }
     return json(request, { error: "Route cockpit inconnue." }, 404);
   } catch (error) {

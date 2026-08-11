@@ -127,6 +127,15 @@ jobs:
         run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-standby.generated.json
       - name: Install Discord webhook secret without enabling Discord
         run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-standby.generated.json
+      - name: Install OpenAI API key if configured
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "::add-mask::$OPENAI_API_KEY"
+            printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --config wrangler.production-standby.generated.json
+          fi
       - name: Install configured authorized feed secrets
         shell: bash
         env:
