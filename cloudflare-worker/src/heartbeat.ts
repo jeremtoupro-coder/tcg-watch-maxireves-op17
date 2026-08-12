@@ -55,6 +55,26 @@ async function dispatchHeartbeatPayload(
   return { attempted, sent, errors };
 }
 
+export function buildRuntimeHeartbeatSignalPayload(scheduledTime: number): DiscordPayload {
+  const checkedAt = new Date(scheduledTime).toISOString();
+  return {
+    username: "OP Watch",
+    embeds: [{
+      title: "💓 OP Watch LIVE — heartbeat reçu",
+      url: "https://op-watch-tcg-fr.pages.dev/cockpit/",
+      description: "Le scheduler de production a bien déclenché le heartbeat 10h/22h. Ce message est volontairement envoyé AVANT le cycle marchand afin qu'un scan lent ou bloqué ne puisse plus supprimer le heartbeat.",
+      fields: [
+        { name: "🟢 Runtime", value: "LIVE", inline: true },
+        { name: "⏰ Scheduler", value: "ACTIF", inline: true },
+        { name: "🔎 Contrôle marchand", value: "LANCÉ APRÈS CE HEARTBEAT", inline: true },
+        { name: "🕒 Déclenchement", value: parisDate(checkedAt), inline: false }
+      ],
+      footer: { text: "OP Watch • heartbeat production 10h/22h • pré-cycle" },
+      timestamp: checkedAt
+    }]
+  };
+}
+
 export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): DiscordPayload {
   const checkedAt = new Date(cycle.scheduledTime).toISOString();
   const incidents = cycle.stores.filter((store) =>
@@ -74,7 +94,7 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
     embeds: [{
       title,
       url: "https://op-watch-tcg-fr.pages.dev/",
-      description: "Heartbeat automatique de production — envoyé à 10h00 et 22h00 (heure de Paris) après un cycle réel du moteur.",
+      description: "Heartbeat détaillé de production après un cycle réel du moteur.",
       fields: [
         { name: "🟢 Runtime", value: "LIVE", inline: true },
         { name: "⏱️ Cycle", value: cycle.discovery ? "Discovery + Fast Watch" : "Fast Watch", inline: true },
@@ -84,7 +104,7 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
         { name: "🕒 Contrôle", value: parisDate(checkedAt), inline: true },
         { name: "Détail", value: incidentText, inline: false }
       ],
-      footer: { text: "OP Watch • heartbeat production 10h/22h" },
+      footer: { text: "OP Watch • heartbeat détaillé" },
       timestamp: checkedAt
     }]
   };
@@ -95,19 +115,28 @@ export function buildRuntimeHeartbeatFailurePayload(scheduledTime: number, error
   return {
     username: "OP Watch",
     embeds: [{
-      title: "🚨 OP Watch heartbeat — cycle de contrôle en échec",
+      title: "🚨 OP Watch — cycle de contrôle en échec",
       url: "https://op-watch-tcg-fr.pages.dev/cockpit/",
-      description: "Le heartbeat est bien parti à l’heure prévue, mais le moteur n’a pas pu terminer le cycle de supervision. Ce message remplace volontairement un heartbeat silencieusement manquant.",
+      description: "Le heartbeat pré-cycle a déjà été tenté à l'heure prévue, mais le moteur n'a pas pu terminer le cycle de supervision.",
       fields: [
         { name: "🟢 Runtime", value: "LIVE", inline: true },
         { name: "⏱️ Cycle", value: "ÉCHEC AVANT FIN DU CONTRÔLE", inline: true },
         { name: "🕒 Contrôle", value: parisDate(checkedAt), inline: true },
         { name: "Erreur", value: safeError(error) || "Erreur inconnue", inline: false }
       ],
-      footer: { text: "OP Watch • heartbeat production 10h/22h • fail-safe" },
+      footer: { text: "OP Watch • contrôle production • fail-safe" },
       timestamp: checkedAt
     }]
   };
+}
+
+export async function dispatchRuntimeHeartbeatSignal(
+  scheduledTime: number,
+  env: RuntimeEnv,
+  force = false
+): Promise<{ attempted: number; sent: number; errors: string[] }> {
+  if (!force && !isHeartbeatTick(scheduledTime)) return { attempted: 0, sent: 0, errors: [] };
+  return dispatchHeartbeatPayload(buildRuntimeHeartbeatSignalPayload(scheduledTime), env);
 }
 
 export async function dispatchRuntimeHeartbeat(
