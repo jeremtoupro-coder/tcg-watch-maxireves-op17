@@ -38,7 +38,8 @@ const generated: WranglerConfig = {
     bindings: [
       { name: "STORE_MONITORS", class_name: "StoreMonitorDurableObject" },
       { name: "CALENDAR_COORDINATOR", class_name: "CalendarCoordinatorDurableObject" },
-      { name: "WEB_SCOUT", class_name: "WebScoutDurableObject" }
+      { name: "WEB_SCOUT", class_name: "WebScoutDurableObject" },
+      { name: "COCKPIT_AUTH", class_name: "CockpitAuthDurableObject" }
     ]
   },
   migrations: [
@@ -49,6 +50,10 @@ const generated: WranglerConfig = {
     {
       tag: "op-watch-web-scout-do-v1",
       new_sqlite_classes: ["WebScoutDurableObject"]
+    },
+    {
+      tag: "op-watch-cockpit-auth-do-v1",
+      new_sqlite_classes: ["CockpitAuthDurableObject"]
     }
   ],
   triggers: {
@@ -62,5 +67,5 @@ const output = `wrangler.production-${phase}.generated.json`;
 await writeFile(output, `${JSON.stringify(generated, null, 2)}\n`, "utf8");
 console.log(
   `Production config generated: phase=${phase}, monitoring=${vars.MONITORING_ENABLED}, ` +
-  `discord=${vars.DISCORD_MODE}, cron=${phase === "live" ? "1m" : "disabled"}, webScout=hourly`
+  `discord=${vars.DISCORD_MODE}, cron=${phase === "live" ? "1m" : "disabled"}, webScout=hourly, cockpitAuth=email-session`
 );
