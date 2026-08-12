@@ -7,7 +7,12 @@ import {
   type RuntimeEnv
 } from "./durableMonitoring";
 import { CONNECTORS } from "./connectors";
-import { dispatchRuntimeHeartbeat, dispatchRuntimeHeartbeatFailure, isHeartbeatTick } from "./heartbeat";
+import {
+  dispatchRuntimeHeartbeat,
+  dispatchRuntimeHeartbeatFailure,
+  dispatchRuntimeHeartbeatSignal,
+  isHeartbeatTick
+} from "./heartbeat";
 import { handleCockpitApi } from "./cockpitApi";
 import { detectAvailability, detectLanguage, matchReferences } from "./matching";
 import { WebScoutDurableObject, isWebScoutTick } from "./webScout";
@@ -299,24 +304,43 @@ export default {
     const runtimeEnv = env as WebScoutRuntimeEnv;
     if (runtimeEnv.SCHEDULER_MODE !== "live") return;
     ctx.waitUntil((async () => {
+      const heartbeatTick = isHeartbeatTick(controller.scheduledTime);
+
+      // Le heartbeat de présence part AVANT tout accès au calendrier ou aux boutiques.
+      // Ainsi, un cycle marchand lent, bloqué ou tué par la plateforme ne peut plus le supprimer.
+      if (heartbeatTick) {
+        try {
+          const delivery = await dispatchRuntimeHeartbeatSignal(controller.scheduledTime, runtimeEnv);
+          if (delivery.sent !== 1) {
+            console.error("Scheduled pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
+          }
+        } catch (heartbeatError) {
+          console.error(
+            "Scheduled pre-cycle heartbeat crashed:",
+            heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError)
+          );
+        }
+      }
+
       try {
-        const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
+        await runDistributedMonitoringCycle(runtimeEnv, {
           mode: "live",
           scheduledTime: controller.scheduledTime
         });
-        const delivery = await dispatchRuntimeHeartbeat(cycle, runtimeEnv);
-        if (isHeartbeatTick(controller.scheduledTime) && delivery.sent !== 1) {
-          console.error("Scheduled heartbeat delivery failed:", JSON.stringify(delivery));
-        }
       } catch (error) {
         console.error("Scheduled monitoring cycle failed:", error instanceof Error ? error.message : String(error));
-        try {
-          const delivery = await dispatchRuntimeHeartbeatFailure(controller.scheduledTime, runtimeEnv, error);
-          if (isHeartbeatTick(controller.scheduledTime) && delivery.sent !== 1) {
-            console.error("Scheduled fail-safe heartbeat delivery failed:", JSON.stringify(delivery));
+        if (heartbeatTick) {
+          try {
+            const delivery = await dispatchRuntimeHeartbeatFailure(controller.scheduledTime, runtimeEnv, error);
+            if (delivery.sent !== 1) {
+              console.error("Scheduled fail-safe cycle alert delivery failed:", JSON.stringify(delivery));
+            }
+          } catch (heartbeatError) {
+            console.error(
+              "Scheduled fail-safe cycle alert crashed:",
+              heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError)
+            );
           }
-        } catch (heartbeatError) {
-          console.error("Scheduled fail-safe heartbeat crashed:", heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError));
         }
       }
 
