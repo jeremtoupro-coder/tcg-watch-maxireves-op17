@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRuntimeHeartbeatPayload, isHeartbeatTick } from "../src/heartbeat";
+import { buildRuntimeHeartbeatFailurePayload, buildRuntimeHeartbeatPayload, isHeartbeatTick } from "../src/heartbeat";
 import type { DurableCycleResult } from "../src/durableMonitoring";
 
 function cycle(overrides: Partial<DurableCycleResult> = {}): DurableCycleResult {
@@ -51,5 +51,12 @@ describe("heartbeat 10h/22h Europe/Paris", () => {
     }));
     expect(payload.embeds[0].title).toContain("1 incident");
     expect(payload.embeds[0].fields.find((field) => field.name === "Détail")?.value).toContain("amazon");
+  });
+
+  it("construit un heartbeat rouge si le cycle global plante avant sa fin", () => {
+    const payload = buildRuntimeHeartbeatFailurePayload(Date.UTC(2026, 7, 12, 8, 0, 0), new Error("Bandai calendar timeout"));
+    expect(payload.embeds[0].title).toContain("cycle de contrôle en échec");
+    expect(payload.embeds[0].description).toContain("heartbeat silencieusement manquant");
+    expect(payload.embeds[0].fields.find((field) => field.name === "Erreur")?.value).toContain("Bandai calendar timeout");
   });
 });
