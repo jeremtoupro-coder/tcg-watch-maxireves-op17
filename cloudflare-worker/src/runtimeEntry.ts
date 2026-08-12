@@ -7,7 +7,7 @@ import {
   type RuntimeEnv
 } from "./durableMonitoring";
 import { CONNECTORS } from "./connectors";
-import { dispatchRuntimeHeartbeat } from "./heartbeat";
+import { dispatchRuntimeHeartbeat, dispatchRuntimeHeartbeatFailure, isHeartbeatTick } from "./heartbeat";
 import { handleCockpitApi } from "./cockpitApi";
 import { detectAvailability, detectLanguage, matchReferences } from "./matching";
 import { WebScoutDurableObject, isWebScoutTick } from "./webScout";
@@ -262,7 +262,12 @@ async function productionHeartbeatNow(request: Request, env: ProductionProbeEnv)
       }
     });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+    const delivery = await dispatchRuntimeHeartbeatFailure(Date.now(), env, error, true).catch((deliveryError) => ({
+      attempted: 0,
+      sent: 0,
+      errors: [deliveryError instanceof Error ? deliveryError.message : String(deliveryError)]
+    }));
+    return json({ error: error instanceof Error ? error.message : String(error), delivery }, 503);
   }
 }
 
@@ -294,11 +299,27 @@ export default {
     const runtimeEnv = env as WebScoutRuntimeEnv;
     if (runtimeEnv.SCHEDULER_MODE !== "live") return;
     ctx.waitUntil((async () => {
-      const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
-        mode: "live",
-        scheduledTime: controller.scheduledTime
-      });
-      await dispatchRuntimeHeartbeat(cycle, runtimeEnv);
+      try {
+        const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
+          mode: "live",
+          scheduledTime: controller.scheduledTime
+        });
+        const delivery = await dispatchRuntimeHeartbeat(cycle, runtimeEnv);
+        if (isHeartbeatTick(controller.scheduledTime) && delivery.sent !== 1) {
+          console.error("Scheduled heartbeat delivery failed:", JSON.stringify(delivery));
+        }
+      } catch (error) {
+        console.error("Scheduled monitoring cycle failed:", error instanceof Error ? error.message : String(error));
+        try {
+          const delivery = await dispatchRuntimeHeartbeatFailure(controller.scheduledTime, runtimeEnv, error);
+          if (isHeartbeatTick(controller.scheduledTime) && delivery.sent !== 1) {
+            console.error("Scheduled fail-safe heartbeat delivery failed:", JSON.stringify(delivery));
+          }
+        } catch (heartbeatError) {
+          console.error("Scheduled fail-safe heartbeat crashed:", heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError));
+        }
+      }
+
       await runHourlyWebScout(runtimeEnv, controller.scheduledTime);
     })());
   }
