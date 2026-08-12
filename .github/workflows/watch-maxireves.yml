@@ -107,6 +107,16 @@ jobs:
           token="$(npm run --silent derive-preview-audit-token)"
           echo "::add-mask::$token"
           echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Derive cockpit auth pepper
+        shell: bash
+        run: |
+          pepper="$(node -e "const {createHmac}=require('node:crypto'); const key=(process.env.CLOUDFLARE_API_TOKEN||'').trim(); if(key.length<20) process.exit(1); process.stdout.write(createHmac('sha256', key).update('op-watch-cockpit-auth-pepper-v1').digest('hex'))")"
+          if [ ${#pepper} -lt 32 ]; then
+            echo "::error title=Pepper cockpit invalide::Impossible de dériver le secret d'authentification."
+            exit 1
+          fi
+          echo "::add-mask::$pepper"
+          echo "COCKPIT_AUTH_PEPPER=$pepper" >> "$GITHUB_ENV"
 
       # Phase 1 : déployer le code et les Durable Objects totalement inertes.
       - name: Generate standby config
@@ -125,6 +135,8 @@ jobs:
         run: npx wrangler deploy --config wrangler.production-standby.generated.json
       - name: Install private readiness token
         run: printf '%s' "$PREVIEW_AUDIT_TOKEN" | npx wrangler secret put PREVIEW_AUDIT_TOKEN --config wrangler.production-standby.generated.json
+      - name: Install cockpit auth pepper
+        run: printf '%s' "$COCKPIT_AUTH_PEPPER" | npx wrangler secret put COCKPIT_AUTH_PEPPER --config wrangler.production-standby.generated.json
       - name: Install Discord webhook secret without enabling Discord
         run: printf '%s' "$DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL --config wrangler.production-standby.generated.json
       - name: Install OpenAI API key if configured
