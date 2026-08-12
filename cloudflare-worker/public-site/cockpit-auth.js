@@ -61,7 +61,16 @@
     const headers = { ...(options.headers || {}) };
     if (options.body && !headers['content-type']) headers['content-type'] = 'application/json';
     const response = await fetch(path, { ...options, headers, cache: 'no-store', credentials: 'same-origin' });
-    const data = await response.json().catch(() => ({ error: 'Réponse invalide' }));
+    const raw = await response.text();
+    let data = {};
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        const detail = raw.replace(/\s+/g, ' ').trim().slice(0, 180);
+        throw new Error(`HTTP ${response.status} — réponse non JSON du service${detail ? ` : ${detail}` : ''}`);
+      }
+    }
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   }
