@@ -3,6 +3,8 @@ import type { DurableCycleResult, RuntimeEnv } from "./durableMonitoring";
 import type { DiscordPayload } from "./types";
 
 export const HEARTBEAT_PARIS_HOURS = new Set([10, 22]);
+const HEARTBEAT_DISCORD_MAX_ATTEMPTS = 2;
+const HEARTBEAT_RETRY_DELAY_MS = 1_500;
 
 export function isHeartbeatTick(scheduledTime: number): boolean {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -22,6 +24,35 @@ function parisDate(iso: string): string {
     timeStyle: "medium",
     timeZone: "Europe/Paris"
   }).format(new Date(iso));
+}
+
+function safeError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 900);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function dispatchHeartbeatPayload(
+  payload: DiscordPayload,
+  env: RuntimeEnv
+): Promise<{ attempted: number; sent: number; errors: string[] }> {
+  const maxAttempts = env.DISCORD_MODE === "live" ? HEARTBEAT_DISCORD_MAX_ATTEMPTS : 1;
+  let attempted = 0;
+  let sent = 0;
+  const errors: string[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = await dispatchDiscordPayloads([payload], env);
+    attempted += result.attempted;
+    sent += result.sent;
+    errors.push(...result.errors.map((error) => `tentative ${attempt}: ${error}`));
+    if (result.sent > 0) break;
+    if (attempt < maxAttempts) await delay(HEARTBEAT_RETRY_DELAY_MS);
+  }
+
+  return { attempted, sent, errors };
 }
 
 export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): DiscordPayload {
@@ -59,12 +90,41 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
   };
 }
 
+export function buildRuntimeHeartbeatFailurePayload(scheduledTime: number, error: unknown): DiscordPayload {
+  const checkedAt = new Date(scheduledTime).toISOString();
+  return {
+    username: "OP Watch",
+    embeds: [{
+      title: "🚨 OP Watch heartbeat — cycle de contrôle en échec",
+      url: "https://op-watch-tcg-fr.pages.dev/cockpit/",
+      description: "Le heartbeat est bien parti à l’heure prévue, mais le moteur n’a pas pu terminer le cycle de supervision. Ce message remplace volontairement un heartbeat silencieusement manquant.",
+      fields: [
+        { name: "🟢 Runtime", value: "LIVE", inline: true },
+        { name: "⏱️ Cycle", value: "ÉCHEC AVANT FIN DU CONTRÔLE", inline: true },
+        { name: "🕒 Contrôle", value: parisDate(checkedAt), inline: true },
+        { name: "Erreur", value: safeError(error) || "Erreur inconnue", inline: false }
+      ],
+      footer: { text: "OP Watch • heartbeat production 10h/22h • fail-safe" },
+      timestamp: checkedAt
+    }]
+  };
+}
+
 export async function dispatchRuntimeHeartbeat(
   cycle: DurableCycleResult,
   env: RuntimeEnv,
   force = false
 ): Promise<{ attempted: number; sent: number; errors: string[] }> {
   if (!force && !isHeartbeatTick(cycle.scheduledTime)) return { attempted: 0, sent: 0, errors: [] };
-  const result = await dispatchDiscordPayloads([buildRuntimeHeartbeatPayload(cycle)], env);
-  return { attempted: result.attempted, sent: result.sent, errors: result.errors };
+  return dispatchHeartbeatPayload(buildRuntimeHeartbeatPayload(cycle), env);
+}
+
+export async function dispatchRuntimeHeartbeatFailure(
+  scheduledTime: number,
+  env: RuntimeEnv,
+  error: unknown,
+  force = false
+): Promise<{ attempted: number; sent: number; errors: string[] }> {
+  if (!force && !isHeartbeatTick(scheduledTime)) return { attempted: 0, sent: 0, errors: [] };
+  return dispatchHeartbeatPayload(buildRuntimeHeartbeatFailurePayload(scheduledTime, error), env);
 }
