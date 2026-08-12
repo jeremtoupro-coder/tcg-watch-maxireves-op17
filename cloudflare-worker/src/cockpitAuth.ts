@@ -6,16 +6,20 @@ const RESET_TTL_MS = 20 * 60_000;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_FAILURES = 8;
 const RESET_MIN_INTERVAL_MS = 5 * 60_000;
-const PBKDF2_ITERATIONS = 210_000;
+const PASSWORD_SCHEME = "hmac-sha256-v1" as const;
+const PASSWORD_CONTEXT = "op-watch-cockpit-password-v1";
+const LEGACY_PBKDF2_ITERATIONS = 210_000;
 
 export interface CockpitAuthEnv {
   RESEND_API_KEY?: string;
+  COCKPIT_AUTH_PEPPER?: string;
 }
 
 interface PasswordRecord {
+  scheme?: typeof PASSWORD_SCHEME;
   salt: string;
   hash: string;
-  iterations: number;
+  iterations?: number;
   updatedAt: string;
 }
 
@@ -87,7 +91,27 @@ function constantTimeEqual(left: string, right: string): boolean {
   return mismatch === 0;
 }
 
-async function derivePasswordHash(password: string, salt: string, iterations: number): Promise<string> {
+function authPepper(env: CockpitAuthEnv): string {
+  const pepper = env.COCKPIT_AUTH_PEPPER?.trim() || "";
+  if (pepper.length < 32) throw new Error("Secret de protection du mot de passe cockpit absent.");
+  return pepper;
+}
+
+async function derivePepperedPasswordHash(password: string, salt: string, pepper: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(pepper),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const payload = encoder.encode(`${PASSWORD_CONTEXT}\n${salt}\n${password}`);
+  const signature = await crypto.subtle.sign("HMAC", key, payload);
+  return bytesToHex(new Uint8Array(signature));
+}
+
+async function deriveLegacyPasswordHash(password: string, salt: string, iterations: number): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
@@ -107,14 +131,14 @@ async function derivePasswordHash(password: string, salt: string, iterations: nu
   return bytesToHex(new Uint8Array(bits));
 }
 
-async function passwordRecord(password: string): Promise<PasswordRecord> {
+async function passwordRecord(password: string, env: CockpitAuthEnv): Promise<PasswordRecord> {
   const saltBytes = new Uint8Array(18);
   crypto.getRandomValues(saltBytes);
   const salt = bytesToBase64Url(saltBytes);
   return {
+    scheme: PASSWORD_SCHEME,
     salt,
-    hash: await derivePasswordHash(password, salt, PBKDF2_ITERATIONS),
-    iterations: PBKDF2_ITERATIONS,
+    hash: await derivePepperedPasswordHash(password, salt, authPepper(env)),
     updatedAt: new Date().toISOString()
   };
 }
@@ -156,13 +180,40 @@ export class CockpitAuthDurableObject {
   private async verifyPassword(password: string): Promise<boolean> {
     const current = await this.state.storage.get<PasswordRecord>("auth:password");
     if (!current) return constantTimeEqual(await sha256(password), LEGACY_PASSWORD_SHA256);
-    const derived = await derivePasswordHash(password, current.salt, current.iterations);
-    return constantTimeEqual(derived, current.hash);
+
+    try {
+      if (current.scheme === PASSWORD_SCHEME) {
+        const derived = await derivePepperedPasswordHash(password, current.salt, authPepper(this.env));
+        return constantTimeEqual(derived, current.hash);
+      }
+      if (typeof current.iterations === "number" && current.iterations > 0) {
+        const iterations = Math.min(current.iterations, LEGACY_PBKDF2_ITERATIONS);
+        const derived = await deriveLegacyPasswordHash(password, current.salt, iterations);
+        return constantTimeEqual(derived, current.hash);
+      }
+    } catch (error) {
+      console.error("Cockpit password verification failed", error);
+    }
+    return false;
   }
 
   private async clearSessions(): Promise<void> {
     const sessions = await this.state.storage.list({ prefix: "session:" });
-    if (sessions.size) await this.state.storage.delete([...sessions.keys()]);
+    const keys = [...sessions.keys()];
+    for (let index = 0; index < keys.length; index += 128) {
+      await this.state.storage.delete(keys.slice(index, index + 128));
+    }
+  }
+
+  private async health(): Promise<Response> {
+    const pepper = authPepper(this.env);
+    const salt = "opwatch-auth-health-v1";
+    const first = await derivePepperedPasswordHash("health-check-only", salt, pepper);
+    const second = await derivePepperedPasswordHash("health-check-only", salt, pepper);
+    if (!constantTimeEqual(first, second)) {
+      return json({ error: "Moteur de protection du mot de passe incohérent." }, 500);
+    }
+    return json({ ok: true, hashing: PASSWORD_SCHEME });
   }
 
   private async login(input: { email?: unknown; password?: unknown; ipKey?: unknown }): Promise<Response> {
@@ -245,9 +296,11 @@ export class CockpitAuthDurableObject {
     if (!active || Date.parse(active.expiresAt) <= Date.now() || !constantTimeEqual(active.tokenHash, await sha256(token))) {
       return json({ error: "Ce lien de réinitialisation est invalide ou expiré." }, 400);
     }
-    await this.state.storage.put("auth:password", await passwordRecord(password));
-    await this.state.storage.delete("reset:active");
+
+    const nextPassword = await passwordRecord(password, this.env);
     await this.clearSessions();
+    await this.state.storage.put("auth:password", nextPassword);
+    await this.state.storage.delete("reset:active");
     return json({ ok: true });
   }
 
@@ -255,12 +308,18 @@ export class CockpitAuthDurableObject {
     if (request.method !== "POST") return json({ error: "Méthode non autorisée." }, 405);
     const pathname = new URL(request.url).pathname;
     const input = await request.json().catch(() => ({})) as Record<string, unknown>;
-    if (pathname === "/login") return this.login(input);
-    if (pathname === "/session") return this.session(input);
-    if (pathname === "/logout") return this.logout(input);
-    if (pathname === "/forgot") return this.forgot(input);
-    if (pathname === "/reset") return this.reset(input);
-    return json({ error: "Route auth inconnue." }, 404);
+    try {
+      if (pathname === "/login") return await this.login(input);
+      if (pathname === "/session") return await this.session(input);
+      if (pathname === "/logout") return await this.logout(input);
+      if (pathname === "/forgot") return await this.forgot(input);
+      if (pathname === "/reset") return await this.reset(input);
+      if (pathname === "/health") return await this.health();
+      return json({ error: "Route auth inconnue." }, 404);
+    } catch (error) {
+      console.error(`Cockpit auth route failed: ${pathname}`, error);
+      return json({ error: "Le service d’authentification a rencontré une erreur interne. Réessaie dans un instant." }, 500);
+    }
   }
 }
 

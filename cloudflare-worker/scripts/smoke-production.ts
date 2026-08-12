@@ -32,6 +32,11 @@ async function jsonGet(path: string, authenticated = false): Promise<Record<stri
   throw lastError ?? new Error(`${path}: aucune réponse exploitable.`);
 }
 
+const authHealth = await jsonGet("/cockpit/api/auth/health", true);
+if (authHealth.ok !== true || authHealth.hashing !== "hmac-sha256-v1") {
+  throw new Error(`Cockpit auth health invalide: ${JSON.stringify(authHealth)}`);
+}
+
 if (phase === "standby") {
   const root = await jsonGet("/");
   if (root.runtime?.monitoringEnabled !== false || root.runtime?.stateWritesEnabled !== false) {
@@ -40,7 +45,7 @@ if (phase === "standby") {
   if (root.runtime?.discordMode !== "dry-run") {
     throw new Error("Standby invalide : Discord n'est pas dry-run.");
   }
-  console.log(JSON.stringify({ ok: true, phase, monitoring: false, stateWrites: false, discord: "dry-run", cron: false }));
+  console.log(JSON.stringify({ ok: true, phase, monitoring: false, stateWrites: false, discord: "dry-run", cron: false, cockpitAuth: "PASS" }));
 } else {
   const ready = await jsonGet("/runtime-ready", true);
   if (
@@ -56,5 +61,5 @@ if (phase === "standby") {
   ) {
     throw new Error(`Readiness ${phase} invalide: ${JSON.stringify(ready)}`);
   }
-  console.log(JSON.stringify({ ok: true, phase, readiness: "PASS", stores: ready.stores.length }));
+  console.log(JSON.stringify({ ok: true, phase, readiness: "PASS", stores: ready.stores.length, cockpitAuth: "PASS" }));
 }

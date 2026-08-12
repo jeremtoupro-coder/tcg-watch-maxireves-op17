@@ -14,6 +14,7 @@ type RuntimeWithScoutEnv = RuntimeEnv & {
   WEB_SCOUT?: DurableObjectNamespace;
   COCKPIT_AUTH?: DurableObjectNamespace;
   RESEND_API_KEY?: string;
+  COCKPIT_AUTH_PEPPER?: string;
 };
 
 const SESSION_COOKIE = "opwatch_cockpit_session";
@@ -64,13 +65,31 @@ async function sha256(value: string): Promise<string> {
 }
 
 async function authDo(env: RuntimeWithScoutEnv, pathname: string, input: Record<string, unknown>): Promise<{ status: number; data: Record<string, unknown> }> {
-  const response = await authStub(env).fetch(new Request(`https://cockpit-auth.internal${pathname}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input)
-  }));
-  const data = await response.json().catch(() => ({ error: "Réponse auth invalide." })) as Record<string, unknown>;
-  return { status: response.status, data };
+  try {
+    const response = await authStub(env).fetch(new Request(`https://cockpit-auth.internal${pathname}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input)
+    }));
+    const raw = await response.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      console.error(`Cockpit auth DO returned non-JSON for ${pathname}: HTTP ${response.status}`);
+      return { status: 502, data: { error: "Le service d’authentification a renvoyé une réponse inexploitable." } };
+    }
+    return { status: response.status, data };
+  } catch (error) {
+    console.error(`Cockpit auth DO request failed for ${pathname}`, error);
+    return { status: 502, data: { error: "Le service d’authentification est temporairement indisponible." } };
+  }
+}
+
+function hasReadinessAuthorization(request: Request, env: RuntimeWithScoutEnv): boolean {
+  const expected = env.PREVIEW_AUDIT_TOKEN?.trim();
+  if (!expected) return false;
+  return request.headers.get("authorization") === `Bearer ${expected}`;
 }
 
 async function handleAuthApi(request: Request, env: RuntimeWithScoutEnv): Promise<Response> {
@@ -78,11 +97,18 @@ async function handleAuthApi(request: Request, env: RuntimeWithScoutEnv): Promis
   if (request.method === "OPTIONS") {
     const headers = authHeaders(request);
     headers.set("access-control-allow-methods", "GET,POST,OPTIONS");
-    headers.set("access-control-allow-headers", "content-type");
+    headers.set("access-control-allow-headers", "content-type,authorization");
     return new Response(null, { status: 204, headers });
   }
   if (!env.COCKPIT_AUTH) return authJson(request, { error: "Authentification cockpit non déployée." }, 503);
 
+  if (pathname === "/cockpit/api/auth/health" && request.method === "GET") {
+    if (!hasReadinessAuthorization(request, env)) {
+      return authJson(request, { error: "Non autorisé." }, 401);
+    }
+    const result = await authDo(env, "/health", {});
+    return authJson(request, result.data, result.status);
+  }
   if (pathname === "/cockpit/api/auth/session" && request.method === "GET") {
     const result = await authDo(env, "/session", { token: cookieValue(request, SESSION_COOKIE) });
     return authJson(request, result.data, result.status);
