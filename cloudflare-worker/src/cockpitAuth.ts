@@ -1,4 +1,5 @@
 const ALLOWED_EMAIL = "jrm.touitou@gmail.com";
+const RESEND_RECIPIENT_EMAIL = "jrmtouitou@gmail.com";
 const LEGACY_PASSWORD_SHA256 = "1ed7f0d774b4b9b878c9579c32db88d6983dcbf6936f1e12995d3fffe33c0670";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
 const RESET_TTL_MS = 20 * 60_000;
@@ -135,7 +136,9 @@ async function sendResetEmail(env: CockpitAuthEnv, token: string): Promise<void>
     },
     body: JSON.stringify({
       from: "OP Watch <onboarding@resend.dev>",
-      to: [ALLOWED_EMAIL],
+      // resend.dev only accepts the exact e-mail attached to the Resend account.
+      // Gmail ignores dots, so this lands in the same mailbox as ALLOWED_EMAIL.
+      to: [RESEND_RECIPIENT_EMAIL],
       subject: "Réinitialiser le mot de passe OP Watch",
       text: `Une demande de réinitialisation du mot de passe OP Watch vient d’être effectuée.\n\nOuvre ce lien dans les 20 minutes :\n${resetUrl}\n\nSi tu n’es pas à l’origine de cette demande, ignore cet e-mail.`,
       html: `<div style="font-family:Arial,sans-serif;line-height:1.55;color:#122033"><h2>OP Watch</h2><p>Une demande de réinitialisation du mot de passe du cockpit vient d’être effectuée.</p><p><a href="${resetUrl}" style="display:inline-block;padding:12px 16px;border-radius:10px;background:#ff8a2a;color:#111;text-decoration:none;font-weight:700">Choisir un nouveau mot de passe</a></p><p>Ce lien expire dans 20 minutes et ne peut être utilisé qu’une seule fois.</p><p style="color:#64748b;font-size:13px">Si tu n’es pas à l’origine de cette demande, ignore cet e-mail.</p></div>`
@@ -221,7 +224,12 @@ export class CockpitAuthDurableObject {
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + RESET_TTL_MS).toISOString()
     };
-    await sendResetEmail(this.env, token);
+    try {
+      await sendResetEmail(this.env, token);
+    } catch (error) {
+      console.error("Cockpit password reset email failed", error);
+      return json({ error: "Envoi du mail de réinitialisation impossible pour le moment." }, 502);
+    }
     await this.state.storage.put("reset:active", reset);
     await this.state.storage.put("reset:last-sent-at", now);
     return json({ ok: true });
