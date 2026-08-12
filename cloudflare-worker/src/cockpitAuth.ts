@@ -94,9 +94,12 @@ async function derivePasswordHash(password: string, salt: string, iterations: nu
     false,
     ["deriveBits"]
   );
+  const decodedSalt = base64UrlToBytes(salt);
+  const saltBuffer = new ArrayBuffer(decodedSalt.byteLength);
+  new Uint8Array(saltBuffer).set(decodedSalt);
   const bits = await crypto.subtle.deriveBits({
     name: "PBKDF2",
-    salt: base64UrlToBytes(salt),
+    salt: saltBuffer,
     iterations,
     hash: "SHA-256"
   }, key, 256);
