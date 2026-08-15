@@ -19,7 +19,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: op-watch-test-${{ github.ref }}
+  # Les Workers Preview/runtime-test ont des noms globaux partagés. Deux PR
+  # simultanées ne doivent jamais se redéployer mutuellement pendant un smoke.
+  group: op-watch-test-shared-cloudflare-runtime
   cancel-in-progress: false
 
 jobs:

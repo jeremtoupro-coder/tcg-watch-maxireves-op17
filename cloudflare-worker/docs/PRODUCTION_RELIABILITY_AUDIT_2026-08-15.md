@@ -188,4 +188,6 @@ Après validation explicite :
 - la cause est la configuration historique du projet Direct Upload : sa branche de production était encore `op-watch-v1-test`, tandis que le workflow publiait désormais `main`. Le domaine principal servait donc encore l'ancien HTML avec `sessionStorage` et `x-op-watch-admin-password` ;
 - le workflow Pages aligne désormais explicitement `production_branch=main` via l'API Cloudflare avant l'upload, vérifie la réponse API, puis contrôle le domaine principal pendant deux minutes.
 
+La CI de promotion sérialise également les déploiements vers les Workers Preview/runtime-test partagés et chaque requête de cadence doit confirmer le `RUNTIME_TEST_RUN_ID` attendu. Une propagation entre deux générations ne peut donc plus effacer l'état isolé en cours de mesure ni transformer artificiellement un Fast Watch en seconde Discovery.
+
 Le premier échec Pages n'a pas été requalifié en simple délai de propagation : l'alias `main` servait le nouveau cockpit tandis que le domaine principal servait de façon reproductible l'ancien document avec `cache-control: no-store`.

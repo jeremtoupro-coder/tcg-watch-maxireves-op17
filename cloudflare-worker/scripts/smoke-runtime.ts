@@ -7,7 +7,10 @@ import {
 
 const baseUrl = process.env.RUNTIME_TEST_URL?.replace(/\/$/, "");
 const token = process.env.PREVIEW_AUDIT_TOKEN?.trim();
-if (!baseUrl || !token) throw new Error("RUNTIME_TEST_URL et PREVIEW_AUDIT_TOKEN sont obligatoires.");
+const expectedRunId = process.env.RUNTIME_TEST_RUN_ID?.trim();
+if (!baseUrl || !token || !expectedRunId) {
+  throw new Error("RUNTIME_TEST_URL, PREVIEW_AUDIT_TOKEN et RUNTIME_TEST_RUN_ID sont obligatoires.");
+}
 
 function compactDiagnostic(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().slice(0, 500);
@@ -31,6 +34,7 @@ async function waitForRuntime(): Promise<void> {
   for (let attempt = 1; attempt <= 30; attempt += 1) {
     const url = new URL(`${baseUrl}/runtime-test`);
     url.searchParams.set("probe", "auth");
+    url.searchParams.set("run", expectedRunId);
     url.searchParams.set("nonce", `${Date.now()}-${attempt}`);
     try {
       const response = await fetch(url, {
@@ -43,6 +47,7 @@ async function waitForRuntime(): Promise<void> {
         schedulerMode?: string;
         discordMode?: string;
         productionStateWrites?: boolean;
+        runtimeTestRunId?: string;
       } | undefined;
       try {
         body = JSON.parse(raw) as typeof body;
@@ -55,7 +60,8 @@ async function waitForRuntime(): Promise<void> {
         body.mode === "test" &&
         body.schedulerMode === "disabled" &&
         body.discordMode === "dry-run" &&
-        body.productionStateWrites === false;
+        body.productionStateWrites === false &&
+        body.runtimeTestRunId === expectedRunId;
 
       if (ready) {
         consecutive += 1;
@@ -82,6 +88,7 @@ async function waitForRuntime(): Promise<void> {
 async function runCycle(time: number, discovery: boolean): Promise<DurableCycleResult> {
   const url = new URL(`${baseUrl}/runtime-test`);
   url.searchParams.set("time", String(time));
+  url.searchParams.set("run", expectedRunId);
   if (discovery) url.searchParams.set("discovery", "true");
 
   let lastError: Error | undefined;
@@ -90,7 +97,7 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
       headers: { authorization: `Bearer ${token}` }
     });
     const raw = await response.text();
-    let payload: (DurableCycleResult & { error?: string }) | undefined;
+    let payload: (DurableCycleResult & { error?: string; runtimeTestRunId?: string }) | undefined;
     try {
       payload = JSON.parse(raw) as DurableCycleResult & { error?: string };
     } catch {
@@ -104,6 +111,18 @@ async function runCycle(time: number, discovery: boolean): Promise<DurableCycleR
       );
       if (response.status >= 500 && attempt < 4) {
         console.warn(`[smoke-runtime] réponse plateforme transitoire ${attempt}/4: HTTP ${response.status}`);
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        continue;
+      }
+      throw lastError;
+    }
+
+    if (payload.runtimeTestRunId !== expectedRunId) {
+      lastError = new Error(
+        `Génération runtime remplacée: attendue ${expectedRunId}, reçue ${payload.runtimeTestRunId ?? "absente"}.`
+      );
+      if (attempt < 4) {
+        console.warn(`[smoke-runtime] génération incohérente ${attempt}/4; propagation en cours.`);
         await new Promise((resolve) => setTimeout(resolve, 4_000));
         continue;
       }
