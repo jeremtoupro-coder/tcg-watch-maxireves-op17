@@ -70,7 +70,7 @@ Web Scout compte désormais les résultats bloqués dans ses rejets sans leur fa
 - tick reçu, cycle automatique terminé, Discovery, Fast Watch, Web Scout, heartbeat automatique et heartbeat manuel persistés séparément ;
 - alarme Calendar Coordinator après trois minutes sans tick ;
 - watchdog GitHub toutes les cinq minutes, indépendant du scheduler Cloudflare, avec une alerte au maximum par heure ;
-- smoke final de production exigeant deux ticks distincts et un cycle automatique terminé, avec une fenêtre de 16 minutes compatible avec le délai documenté de propagation des triggers ;
+- smoke final de production exigeant deux ticks distincts et un cycle automatique terminé, avec une fenêtre de 20 minutes : jusqu'à 15 minutes de propagation documentée, puis deux frontières de minute et une marge ;
 - test PR sur Worker isolé avec vrai cron, Discord dry-run puis suppression vérifiée du trigger ;
 - Web Scout remis au même orchestrateur Durable Object que le monitoring, mais dans une exécution et un état séparés : le Scheduled Handler Free n'effectue ainsi qu'un seul hand-off et ne peut plus dépasser ses 10 ms à `:07` en orchestrant lui-même plusieurs tâches ;
 - health boutique vert seulement après une vraie lecture Fast Watch récente ; Discovery récente sans fiche promue reste orange ;
@@ -107,7 +107,7 @@ Deux protections ont été ajoutées à la suite de ce contrôle :
 
 ## Audit des 24 boutiques en preview isolée
 
-Audit du 15 août : 24 connecteurs appelés, 269 produits observés, 164 en français, 173 éligibles à la source et 125 commercialement éligibles avant les derniers durcissements. « Source accessible » ne signifie pas « capable d'alerter ».
+Audit final isolé du 15 août (`2026-08-15T14:23:07Z`) : 24 connecteurs appelés, 244 produits observés, 156 en français et 124 commercialement éligibles. Le statut de source est de 17 saines, 1 dégradée et 6 en attente. « Source accessible » ne signifie pas « capable d'alerter ».
 
 | Boutique | Observation isolée | Capacité commerciale actuelle |
 |---|---|---|
@@ -123,34 +123,36 @@ Audit du 15 août : 24 connecteurs appelés, 269 produits observés, 164 en fran
 | Cultura | feed absent | en attente de flux partenaire |
 | Micromania | feed absent | en attente de flux partenaire ; aucun contournement anti-bot |
 | Fnac | feed absent | en attente de flux partenaire |
-| E.Leclerc | 6 produits, 2 FR lors de l'audit initial | vendeur désormais strict et fail-closed ; nouvel audit requis |
+| E.Leclerc | 6 produits, 2 FR, mais aucun vendeur E.Leclerc confirmé | source saine ; aucune alerte tant que le vendeur n'est pas prouvé |
 | Carrefour | feed absent | en attente de flux partenaire |
 | King Jouet | feed absent | en attente de flux partenaire |
-| JouéClub | feed configuré de 27,7 Mo, 4 candidats au dernier preview, aucun validateur HTTP | feed limité à Discovery puis fiches directes qualifiées en Fast Watch |
-| Amazon FR | 28 produits, 9 FR, aucun vendeur Amazon validé | limitée, fail-closed vendeur |
+| JouéClub | feed configuré de 27,7 Mo, 4 candidats, 1 FR/commercial | feed limité à Discovery puis fiches directes qualifiées en Fast Watch |
+| Amazon FR | HTTP 503 au dernier passage, aucun candidat | dégradée, fail-closed ; jamais interprétée comme rupture |
 | Mystic-Ambre | 6 produits, 3 FR/commerciaux | exploitable |
 | Ludiworld | zéro candidat | discovery-only, alertes commerciales désactivées |
 | VegaStore | une fiche OP17 FR commerciale | exploitable mais couverture étroite |
 | Otakuland | 28 produits, 24 FR, 12 commerciaux sur le domaine actuel | exploitable selon l'audit ; ancienne description merchandising obsolète |
 | Esprit Jeu | 24 produits, zéro FR commercial | source accessible, non démontrée commerciale |
-| La Grande Récré | feed configuré de 5,3 Mo ; premier passage rejeté comme enregistrement CSV anormalement long, fallback non-FR | état de guillemets du parseur durci ; nouvel audit réel requis |
-| BCD Jeux | feed configuré de 15,5 Mo ; premier passage rejeté comme enregistrement CSV anormalement long, fallback vide | état de guillemets du parseur durci ; nouvel audit réel requis |
+| La Grande Récré | feed de 5,3 Mo lu sans erreur, zéro candidat One Piece courant | source saine ; aucune offre actuelle démontrée |
+| BCD Jeux | feed de 15,5 Mo lu sans erreur, zéro candidat One Piece courant | source saine ; aucune offre actuelle démontrée |
 
-Les six secrets partenaires absents confirmés sont Playin, Cultura, Micromania, Fnac, Carrefour et King Jouet. JouéClub, La Grande Récré et BCD Jeux possèdent un secret configuré. Le test cadence a démontré que leurs catalogues dépassaient l'ancienne borne de 5 Mo. La branche les lit en streaming, ne conserve que les lignes One Piece et borne le transfert à 40 Mo, un enregistrement à 750 Ko et les candidats à 2 000. Un feed public sain sert à la Discovery et les fiches directes actives prennent ensuite le relais minute ; un échec ne déclenche jamais un martèlement du fallback public.
+Les six secrets partenaires absents confirmés sont Playin, Cultura, Micromania, Fnac, Carrefour et King Jouet. JouéClub, La Grande Récré et BCD Jeux possèdent un secret configuré. Le test cadence a démontré que leurs catalogues dépassaient l'ancienne borne de 5 Mo. La branche les lit en streaming, ne conserve que les lignes One Piece et borne le transfert à 40 Mo, un enregistrement à 750 Ko et les candidats à 2 000. Les trois feeds réels ont été parsés sans erreur au passage final. Un feed public sain sert une seule fois à la Discovery et les fiches directes actives prennent ensuite le relais minute ; un échec ne déclenche jamais un martèlement du fallback public.
 
 ## Performance et quotas
 
-Un premier test isolé après activation du streaming, mais avant séparation feed/fiche directe, a mesuré :
+Le test isolé final, avec une Discovery puis quatorze Fast Watch, a mesuré :
 
 - 271 requêtes Durable Objects sur 15 minutes ;
 - projection de 26 016 requêtes DO/jour ;
-- 262 572 ms DO cumulées sur 15 minutes ;
-- projection de 3 226,5 GB-s/jour ;
-- marge de 75,2 % sous le repère de 13 000 GB-s/jour utilisé par le test ;
-- 415 505 025 octets de feeds téléchargés en 15 cycles, tous sans `ETag`/`Last-Modified` : preuve que la revalidation conditionnelle seule ne suffisait pas ;
+- 139 131 ms DO cumulées sur 15 minutes ;
+- projection de 1 709,6 GB-s/jour ;
+- marge de 86,85 % sous le repère de 13 000 GB-s/jour utilisé par le test ;
+- 48 587 031 octets de feeds téléchargés : exactement une réponse complète par feed pendant la Discovery, aucune répétition durant les quatorze Fast Watch et aucun fallback partenaire ;
 - Web Scout cible 744 recherches pour un mois de 31 jours.
 
-Ces projections sont un budget de test, pas une facture. Le `usage_model` déployé est `standard`; la télémétrie montre cependant un plafond effectif de 10 ms sur les anciennes invocations cron, identique au plafond Workers Free documenté. Le volume de 415 Mo a déclenché la séparation Discovery feed / Fast Watch fiche directe. Le test échoue désormais si un catalogue complet est retéléchargé plusieurs fois dans l'échantillon. Un nouveau passage doit actualiser les chiffres après ce correctif.
+Ces projections sont un budget de test, pas une facture. Le `usage_model` déployé est `standard`; la télémétrie montre cependant un plafond effectif de 10 ms sur les anciennes invocations cron, identique au plafond Workers Free documenté. Le test échoue si un catalogue complet est retéléchargé plusieurs fois dans l'échantillon.
+
+Le premier passage CI du SHA `74ee7367` a aussi montré pourquoi un smoke Cron de 16 minutes était insuffisant : aucun nouveau tick n'était encore livré après réenregistrement, alors que Cloudflare annonce jusqu'à 15 minutes de propagation et que le critère exige ensuite deux minutes distinctes. Le trigger isolé a néanmoins été retiré et sa suppression API confirmée. Le délai de test et celui de l'activation production sont portés à 20 minutes ; seule une nouvelle CI verte pourra valider ce point.
 
 ## Validation exigée avant promotion
 

@@ -55,7 +55,7 @@ jobs:
     if: inputs.action == 'activate-live'
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: cloudflare-worker
