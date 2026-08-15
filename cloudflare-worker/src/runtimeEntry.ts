@@ -379,9 +379,13 @@ export default {
 
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     const runtimeEnv = env as WebScoutRuntimeEnv;
-    if (runtimeEnv.SCHEDULER_MODE !== "live") return;
+    const isolatedSchedulerTest = runtimeEnv.SCHEDULER_MODE === "test" &&
+      runtimeEnv.RUNTIME_TEST_MODE === "true" &&
+      runtimeEnv.DISCORD_MODE === "dry-run" &&
+      Boolean(runtimeEnv.RUNTIME_TEST_RUN_ID?.trim());
+    if (runtimeEnv.SCHEDULER_MODE !== "live" && !isolatedSchedulerTest) return;
     const scheduledTime = controller.scheduledTime;
-    const heartbeatTick = isHeartbeatTick(scheduledTime);
+    const heartbeatTick = !isolatedSchedulerTest && isHeartbeatTick(scheduledTime);
     const discovery = isDiscoveryTick(scheduledTime);
 
     // Cette écriture très courte prouve que Cloudflare a réellement livré le
@@ -423,7 +427,7 @@ export default {
       await safeSchedulerMark(runtimeEnv, { kind: "monitoring_started", scheduledTime, discovery });
       try {
         const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
-          mode: "live",
+          mode: isolatedSchedulerTest ? "test" : "live",
           scheduledTime
         });
         const completedStores = cycle.stores.filter((store) => store.status === "completed").length;
@@ -462,7 +466,7 @@ export default {
       }
     })());
 
-    if (isWebScoutTick(scheduledTime)) {
+    if (!isolatedSchedulerTest && isWebScoutTick(scheduledTime)) {
       ctx.waitUntil((async () => {
         const started = performance.now();
         await safeSchedulerMark(runtimeEnv, { kind: "web_scout_started", scheduledTime });

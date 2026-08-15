@@ -17,6 +17,10 @@ function readEnvString(env: Env, key?: string): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function safeSourceLabel(value: string): string {
+  try { return new URL(value).hostname || "feed partenaire"; } catch { return "feed partenaire"; }
+}
+
 export function configuredAuthorizedFeedUrl(connector: ConnectorDefinition, env: Env): string | undefined {
   return readEnvString(env, connector.authorizedFeedEnv);
 }
@@ -196,7 +200,12 @@ async function auditPublicStore(
  * un angle mort : on retombe sur la stratégie publique existante pour ce cycle.
  * Les marchands protégés par anti-bot restent strictement fail-closed.
  */
-export async function auditStore(connector: ConnectorDefinition, env: Env, watchProducts: OfficialProduct[] = []): Promise<StoreAudit> {
+export async function auditStore(
+  connector: ConnectorDefinition,
+  env: Env,
+  watchProducts: OfficialProduct[] = [],
+  options: { allowPublicFallback?: boolean } = {}
+): Promise<StoreAudit> {
   const feedUrl = configuredAuthorizedFeedUrl(connector, env);
   if (feedUrl) {
     const feedAudit = await auditAuthorizedFeed(connector, feedUrl);
@@ -205,12 +214,26 @@ export async function auditStore(connector: ConnectorDefinition, env: Env, watch
       return withOperationalStatus(feedAudit, connector, env, "authorized_feed");
     }
 
+    // Le fallback HTML sert de filet Discovery au quart d'heure. Il ne doit
+    // jamais être martelé toutes les minutes lorsqu'un feed configuré tombe :
+    // le Fast Watch reste alors explicitement dégradé jusqu'au retour du feed.
+    if (options.allowPublicFallback === false) {
+      return withOperationalStatus(feedAudit, connector, env, "authorized_feed");
+    }
+
     const fallback = await auditPublicStore(connector, env, watchProducts);
+    const feedErrors = feedAudit.sources
+      .flatMap((source) => source.error ? [`${safeSourceLabel(source.sourceUrl)}: ${source.error}`] : [])
+      .slice(0, 8);
     return {
       ...fallback,
+      warnings: [
+        ...(fallback.warnings ?? []),
+        ...feedErrors.map((error) => `Flux partenaire indisponible : ${error}`)
+      ],
       notes: [
         ...fallback.notes,
-        "Flux produit partenaire configuré mais indisponible sur ce cycle : fallback public utilisé."
+        `Flux produit partenaire configuré mais indisponible sur ce cycle : fallback public utilisé${feedErrors.length ? ` (${feedErrors.join(" | ")})` : "."}`
       ]
     };
   }

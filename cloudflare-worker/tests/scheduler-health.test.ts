@@ -74,6 +74,8 @@ describe("santé observée du scheduler", () => {
     });
 
     expect(health.receivedCount).toBe(1);
+    expect(health.monitoringCompletedCount).toBe(1);
+    expect(health.recentAutomaticMonitoring).toHaveLength(1);
     expect(health.automaticMonitoring).toMatchObject({ status: "completed", completedStores: 17 });
     expect(health.lastFastWatch?.status).toBe("completed");
     expect(health.lastDiscovery?.status).toBe("completed");

@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: op-watch-test-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -121,6 +121,9 @@ jobs:
           AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
           AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
           AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
+          AUTHORIZED_FEED_JOUECLUB_URL: ${{ secrets.AUTHORIZED_FEED_JOUECLUB_URL }}
+          AUTHORIZED_FEED_LA_GRANDE_RECRE_URL: ${{ secrets.AUTHORIZED_FEED_LA_GRANDE_RECRE_URL }}
+          AUTHORIZED_FEED_BCD_JEUX_URL: ${{ secrets.AUTHORIZED_FEED_BCD_JEUX_URL }}
         run: |
           for name in \
             AUTHORIZED_FEED_PLAYIN_URL \
@@ -128,7 +131,10 @@ jobs:
             AUTHORIZED_FEED_MICROMANIA_URL \
             AUTHORIZED_FEED_FNAC_URL \
             AUTHORIZED_FEED_CARREFOUR_URL \
-            AUTHORIZED_FEED_KING_JOUET_URL; do
+            AUTHORIZED_FEED_KING_JOUET_URL \
+            AUTHORIZED_FEED_JOUECLUB_URL \
+            AUTHORIZED_FEED_LA_GRANDE_RECRE_URL \
+            AUTHORIZED_FEED_BCD_JEUX_URL; do
             value="${!name}"
             if [ -n "$value" ]; then
               echo "::add-mask::$value"
@@ -221,6 +227,9 @@ jobs:
           AUTHORIZED_FEED_FNAC_URL: ${{ secrets.AUTHORIZED_FEED_FNAC_URL }}
           AUTHORIZED_FEED_CARREFOUR_URL: ${{ secrets.AUTHORIZED_FEED_CARREFOUR_URL }}
           AUTHORIZED_FEED_KING_JOUET_URL: ${{ secrets.AUTHORIZED_FEED_KING_JOUET_URL }}
+          AUTHORIZED_FEED_JOUECLUB_URL: ${{ secrets.AUTHORIZED_FEED_JOUECLUB_URL }}
+          AUTHORIZED_FEED_LA_GRANDE_RECRE_URL: ${{ secrets.AUTHORIZED_FEED_LA_GRANDE_RECRE_URL }}
+          AUTHORIZED_FEED_BCD_JEUX_URL: ${{ secrets.AUTHORIZED_FEED_BCD_JEUX_URL }}
         run: |
           for name in \
             AUTHORIZED_FEED_PLAYIN_URL \
@@ -228,7 +237,10 @@ jobs:
             AUTHORIZED_FEED_MICROMANIA_URL \
             AUTHORIZED_FEED_FNAC_URL \
             AUTHORIZED_FEED_CARREFOUR_URL \
-            AUTHORIZED_FEED_KING_JOUET_URL; do
+            AUTHORIZED_FEED_KING_JOUET_URL \
+            AUTHORIZED_FEED_JOUECLUB_URL \
+            AUTHORIZED_FEED_LA_GRANDE_RECRE_URL \
+            AUTHORIZED_FEED_BCD_JEUX_URL; do
             value="${!name}"
             if [ -n "$value" ]; then
               echo "::add-mask::$value"
@@ -239,11 +251,46 @@ jobs:
         run: sleep 5
       - name: Run one Discovery plus fourteen Fast Watch cycles
         run: npm run smoke-runtime
-      - name: Upload isolated cadence budget evidence
+
+      - name: Generate isolated automatic scheduler config
+        run: npm run generate-runtime-test-config
+        env:
+          RUNTIME_TEST_SCHEDULER_MODE: "true"
+      - name: Assert isolated scheduler safety
+        run: >-
+          node -e "const c=require('./wrangler.runtime-test.generated.json');
+          const b=c.durable_objects?.bindings||[];
+          if(c.name!=='tcg-watch-one-piece-runtime-test'||c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||
+          c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='test'||c.vars.CRON_CONFIGURED!=='true'||
+          c.vars.RUNTIME_TEST_MODE!=='true'||c.vars.RUNTIME_TEST_RUN_ID!==process.env.RUNTIME_TEST_RUN_ID||
+          c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
+          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==2) process.exit(1)"
+      - name: Deploy isolated automatic scheduler test
+        run: npx wrangler deploy --config wrangler.runtime-test.generated.json
+      - name: Observe two real successive Scheduled Events
+        run: npm run smoke-scheduler
+
+      - name: Restore isolated runtime with cron disabled
+        if: always()
+        run: |
+          npm run generate-runtime-test-config
+          node -e "const c=require('./wrangler.runtime-test.generated.json'); if(c.vars.SCHEDULER_MODE!=='disabled'||c.vars.CRON_CONFIGURED!=='false'||c.triggers?.crons?.length) process.exit(1)"
+          npx wrangler deploy --config wrangler.runtime-test.generated.json
+      - name: Verify isolated cron was removed
+        if: always()
+        shell: bash
+        run: |
+          response="$(curl -fsS \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/tcg-watch-one-piece-runtime-test/schedules")"
+          jq -e '.success == true and (.result.schedules | length) == 0' <<<"$response"
+      - name: Upload isolated runtime evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: op-watch-runtime-cadence-${{ github.run_id }}
-          path: cloudflare-worker/runtime-cadence-report.json
+          path: |
+            cloudflare-worker/runtime-cadence-report.json
+            cloudflare-worker/scheduler-test-report.json
           if-no-files-found: warn
           retention-days: 14

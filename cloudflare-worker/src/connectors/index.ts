@@ -9,34 +9,55 @@ import { oupi } from "./oupi";
 import { parkage } from "./parkage";
 import { philibert } from "./philibert";
 import { pixelheart } from "./pixelheart";
-import { ROLLOUT_CONNECTORS } from "./rollout";
+import {
+  amazonFr,
+  carrefour,
+  cultura,
+  fnac,
+  joueclub as baseJoueclub,
+  kingJouet,
+  ludiworld,
+  ludisphere,
+  micromania,
+  mysticAmbre,
+  playin,
+  ultrajeux,
+  vegastore
+} from "./rollout";
 import type { ConnectorDefinition, StoreKey } from "../types";
 
-const rolloutConnectors = ROLLOUT_CONNECTORS.map((connector) => {
-  if (connector.key === "parkage") return parkage;
-  if (connector.key === "leclerc") return leclerc;
-  if (connector.key === "philibert") return philibert;
-  if (connector.key === "otakuland") return otakuland;
-  if (connector.key === "joueclub") {
-    return {
-      ...connector,
-      authorizedFeedEnv: "AUTHORIZED_FEED_JOUECLUB_URL",
-      notes: [
-        ...connector.notes,
-        "Flux produits Affilae/Shopping Feed autorisé disponible : il est prioritaire lorsqu'il est configuré.",
-        "Sans flux configuré, la catégorie publique JouéClub reste le fallback opérationnel."
-      ]
-    };
-  }
-  return connector;
-});
+const joueclub: ConnectorDefinition = {
+  ...baseJoueclub,
+  authorizedFeedEnv: "AUTHORIZED_FEED_JOUECLUB_URL",
+  notes: [
+    ...baseJoueclub.notes,
+    "Flux produits Affilae/Shopping Feed autorisé disponible : il est prioritaire lorsqu'il est configuré.",
+    "Sans flux configuré, la catégorie publique JouéClub reste le fallback opérationnel."
+  ]
+};
 
 export const CONNECTORS: ConnectorDefinition[] = [
   maxireves,
   oupi,
   pixelheart,
   fantasySphere,
-  ...rolloutConnectors,
+  ludisphere,
+  parkage,
+  ultrajeux,
+  playin,
+  philibert,
+  cultura,
+  micromania,
+  fnac,
+  leclerc,
+  carrefour,
+  kingJouet,
+  joueclub,
+  amazonFr,
+  mysticAmbre,
+  ludiworld,
+  vegastore,
+  otakuland,
   espritJeu,
   laGrandeRecre,
   bcdJeux

@@ -1,64 +1,48 @@
-# OP Watch V1 — moteur TypeScript
+# OP Watch — runtime Cloudflare
 
-Ce dossier contient le moteur de la V1 TEST. Le calendrier officiel français détermine dynamiquement les références actives ; il n'existe plus de liste commerciale statique concurrente.
+Ce dossier contient le Worker TypeScript réellement utilisé par OP Watch. Le runtime de production s'appuie sur quatre Durable Objects : Calendar Coordinator, Store Monitor, Web Scout et Cockpit Auth.
 
-## Flux de traitement
+## Circuits
 
-1. Charger toutes les pages du catalogue officiel `fr.onepiece-cardgame.com`.
-2. Rejeter toute page d'erreur ou de challenge, même en HTTP 200.
-3. Extraire les références OP, EB, PRB, ST, DP et TS ayant une date exacte.
-4. Garder les produits dans la fenêtre J-120/J+30.
-5. Exécuter Discovery toutes les 15 minutes et mémoriser les fiches directes reconnues.
-6. Relire uniquement ces fiches en Fast Watch entre deux découvertes.
-7. Exiger format ciblé, stock déterminé et français confirmé.
-8. Comparer avec l'état persistant, construire au plus une alerte par produit et par cycle, puis valider l'état seulement après livraison Discord.
+1. **Calendrier officiel** : toute référence Bandai OP/EB/PRB/ST/DP/TS publiée est active immédiatement, jusqu'à un mois calendaire après sa sortie. Une date mois/année utilise provisoirement le premier jour du mois. Les anciens champs J-120/J+30 restent lisibles pour compatibilité mais ne pilotent plus l'activation.
+2. **Discovery** : catégories, feeds et fiches connues sont explorés toutes les 15 minutes. Les mêmes lectures alimentent Nouvelles sorties et ONE PIECE ALL.
+3. **Fast Watch** : une source structurée authoritative ou une fiche directe déjà qualifiée est relue toutes les minutes.
+4. **ONE PIECE ALL** : état séparé des sorties actives ; seules une nouvelle fiche déjà disponible et un `back_in_stock` historique peuvent alerter. Les références encore actives sont baselinées dans ALL mais exclues de ses alertes.
+5. **Web Scout** : une recherche Brave par heure, à la minute `:07`, avec validation du marchand et raisons de rejet persistées.
+6. **Discord** : baseline silencieuse, fingerprint, claim et receipt. Un échec de livraison laisse la transition éligible au cycle suivant.
 
-Une erreur réseau, un challenge, une fiche ambiguë ou un vendeur marketplace non confirmé ne peut jamais devenir une rupture, une disparition ou une alerte commerciale.
+## Scheduler et watchdogs
 
-## Sécurité de la Preview
+Le cron marchand est `* * * * *`. Chaque événement reçu et chaque circuit terminé sont persistés séparément : Fast Watch, Discovery, Web Scout et heartbeats 10h/22h Paris.
 
-Le workflow de test génère une configuration dédiée :
+Deux sécurités ne dépendent pas du bon déroulement du cycle marchand :
 
-- Worker : `tcg-watch-one-piece-preview` ;
-- `MONITORING_ENABLED=false` ;
-- `WRITE_STATE=false` ;
-- `DISCORD_MODE=dry-run` ;
-- aucun binding KV ;
-- aucun cron ;
-- `/audit` et `/evaluate` protégées par un secret isolé et stable, dérivé par HMAC du credential de déploiement sans exposer ce credential au Worker ;
-- aucune URL de flux autorisé dans les réponses ou les logs.
+- une alarme du Calendar Coordinator vérifie l'absence de tick après trois minutes et peut assurer une cadence de secours ;
+- un workflow GitHub indépendant interroge la santé observée toutes les cinq minutes et limite ses alertes à une par heure.
 
-Routes publiques :
+Le smoke final d'activation refuse la production si deux nouveaux Scheduled Events et un cycle automatique terminé ne sont pas réellement observés.
 
-```text
-GET /
-GET /health
-GET /config
-GET /opwatch/v1/calendar
-```
+## Cockpit
 
-Routes authentifiées de test :
+L'authentification unique est email + mot de passe + cookie de session géré par Cockpit Auth. L'ancien header `x-op-watch-admin-password` et le mot de passe `sessionStorage` ne sont plus utilisés.
 
-```text
-GET /audit?store=<id>
-GET /evaluate?store=<id>
-```
+Les corps JSON cockpit sont bufferisés une seule fois, avec une limite de 64 Kio, dans Pages puis dans le Worker. Les single-flights Calendar et Web Scout partagent un snapshot immuable, jamais une même `Response` mono-lecture.
 
-Toutes les autres méthodes sont refusées.
+Le health d'une boutique distingue :
 
-## État et anti-doublon
+- réveil du Durable Object ;
+- lecture marchande réellement réussie ;
+- dernière Discovery ;
+- dernier Fast Watch ;
+- candidats observés, qualifiés et rejetés ;
+- tentatives/livraisons Discord ;
+- raisons de filtrage et incidents de feed.
 
-- `product:v3:*` : identité commerciale stable, indépendante d'une réécriture d'URL ;
-- `baseline:config-v3:<store>` : première collecte silencieuse ;
-- `delivery-claim:*` et `delivery-receipt:*` : anti-doublon de livraison ;
-- `discovery:v1:<store>` : fiches directes actives découvertes ;
-- `official-calendar:fr:v1` : cache officiel de 15 minutes.
+Une boutique n'est verte qu'après une vraie lecture Fast Watch récente. Une Discovery saine sans fiche promue au polling minute reste orange.
 
-Un état inchangé n'est pas réécrit. En cas d'échec Discord, la transition produit n'est pas validée et redevient immédiatement éligible au cycle suivant.
+## Connecteurs
 
-## Boutiques et flux autorisés
-
-Les 21 connecteurs sont définis dans `src/connectors`. Les six origines protégées ne sont jamais interrogées sans flux autorisé :
+Les 24 connecteurs sont assemblés explicitement dans `src/connectors/index.ts`. Six routes sont fail-closed sans flux partenaire :
 
 ```text
 AUTHORIZED_FEED_PLAYIN_URL
@@ -69,7 +53,7 @@ AUTHORIZED_FEED_CARREFOUR_URL
 AUTHORIZED_FEED_KING_JOUET_URL
 ```
 
-Le parseur accepte CSV, TSV, JSON et XML. Les URL de flux doivent être HTTPS, ne peuvent pas cibler une adresse locale/privée et sont remplacées par `authorized-feed:<store>` dans les diagnostics.
+JouéClub, La Grande Récré et BCD Jeux peuvent utiliser un feed autorisé avec fallback public uniquement pendant Discovery. Un feed défaillant ne déclenche jamais un martèlement HTML à la minute.
 
 ## Commandes
 
@@ -77,14 +61,13 @@ Le parseur accepte CSV, TSV, JSON et XML. Les URL de flux doivent être HTTPS, n
 npm ci
 npm run typecheck
 npm test
-npm audit
 npx wrangler deploy --dry-run
 ```
 
-`npm run smoke-preview` et `npm run audit-preview` sont réservées au workflow après déploiement. Elles nécessitent `PREVIEW_URL` et `PREVIEW_AUDIT_TOKEN`.
+Les scripts `smoke-preview`, `audit-preview`, `smoke-runtime` et `smoke-scheduler` sont réservés aux environnements isolés GitHub Actions.
 
-## Production
+## Déploiements
 
-Le moteur Node peut être appelé par un ordonnanceur externe. Aucun cron Cloudflare n'est utilisé. La version de branche du workflow `watch-maxireves.yml` offre un fallback GitHub toutes les cinq minutes et un événement `op-watch-fast-watch`, mais le job entier reste bloqué tant que `OP_WATCH_PRODUCTION_ENABLED != true`. Le workflow de production actuellement présent sur `main` a en plus été désactivé manuellement dans GitHub Actions le 2026-08-09 ; il doit le rester.
-
-Cette branche ne doit pas activer cette variable, installer un webhook LIVE, fusionner `main` ou déclencher le workflow de production.
+- Worker LIVE : workflow `OP Watch - Production Activation (manual only)`, uniquement depuis `main`, avec confirmation explicite.
+- Pages/cockpit : workflow `OP Watch Cockpit Pages (manual)`, même garde-fou.
+- Pull Request : preview et runtime-test séparés, Discord dry-run, aucun état de production.

@@ -82,6 +82,13 @@ export interface ProductCandidate {
   seller?: string;
   availability: Availability;
   language: LanguageStatus;
+  /**
+   * Niveau de confiance de la preuve de langue. Les parseurs historiques ne
+   * renseignaient qu'un statut catégoriel ; dans ce cas le runtime considère
+   * une langue explicitement détectée comme certaine et une langue inconnue
+   * comme non qualifiée.
+   */
+  languageConfidence?: number;
   priceText?: string;
   imageUrl?: string;
   commercialEligible?: boolean;
@@ -162,6 +169,8 @@ export interface StoreAudit {
   sources: SourceAudit[];
   candidates: ProductCandidate[];
   notes: string[];
+  /** Incidents secondaires masqués par un fallback sain (par ex. feed partenaire indisponible). */
+  warnings?: string[];
   configuredStatus?: StoreConfiguredStatus;
   runtimeStatus?: StoreRuntimeStatus;
   sourceKind?: "public_html" | "public_structured_feed" | "authorized_feed" | "none";

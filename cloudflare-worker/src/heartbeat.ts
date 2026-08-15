@@ -101,6 +101,7 @@ export function buildRuntimeHeartbeatPayload(cycle: DurableCycleResult): Discord
         { name: "✅ Boutiques OK", value: String(completed), inline: true },
         { name: "🟠 En attente partenaire", value: String(cycle.pendingAuthorizedFeedStores.length), inline: true },
         { name: "⚠️ Incidents", value: String(incidents.length), inline: true },
+        { name: "⏳ Temps réel", value: `${cycle.wallDurationMs} ms`, inline: true },
         { name: "🕒 Contrôle", value: parisDate(checkedAt), inline: true },
         { name: "Détail", value: incidentText, inline: false }
       ],

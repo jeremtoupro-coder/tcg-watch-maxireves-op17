@@ -130,6 +130,75 @@ describe("surveillance planifiée", () => {
     expect(calls).toEqual(["https://maxireves.fr/produit/display-op17-fr/"]);
   });
 
+  it("ne double pas la même fiche entre Discovery et Fast Watch", async () => {
+    const productUrl = "https://maxireves.fr/produit/display-op17-fr/";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(url === productUrl
+        ? `<html><body><h1>Display OP-17 Français</h1><p>En stock — 119,90 €</p></body></html>`
+        : `<html><body><h1>One Piece TCG</h1><a href="${productUrl}">Display OP-17 Français</a></body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
+    }));
+    const stateStore = new MemoryStateStore({ writable: true });
+    const env = {
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run" as const,
+      ACTIVE_STORES: "maxireves"
+    };
+
+    const discovery = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+    expect(discovery.evaluation?.alertMatches).toEqual([]);
+
+    const fast = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 16, 0)
+    });
+    expect(fast.evaluation?.changes).toEqual([]);
+    expect(fast.evaluation?.alertMatches).toEqual([]);
+    expect(fast.evaluation?.discordDispatch.attempted).toBe(0);
+  });
+
+  it("trace les raisons de filtrage au lieu d'expliquer le silence par zéro candidat", async () => {
+    const productUrl = "https://maxireves.fr/produit/display-op17/";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(url === productUrl
+        ? `<html><body><h1>Display OP-17</h1><p>En stock — 119,90 €</p></body></html>`
+        : `<html><body><h1>One Piece TCG</h1><a href="${productUrl}">Display OP-17</a></body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
+    }));
+
+    const result = await runMonitoringCycle({
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run",
+      ACTIVE_STORES: "maxireves"
+    }, {
+      officialProducts: [OP17],
+      stateStore: new MemoryStateStore({ writable: true }),
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+
+    expect(result.analysis?.newReleases.observedCandidates).toBe(1);
+    expect(result.analysis?.newReleases.candidates).toBe(0);
+    expect(result.analysis?.newReleases.rejectionReasons).toMatchObject({
+      langue_non_acceptee: 1,
+      confiance_langue_insuffisante: 1
+    });
+  });
+
   it("retire du Fast Watch une URL devenue absente après une découverte saine", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

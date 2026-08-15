@@ -40,6 +40,23 @@ describe("rollout 24 boutiques", () => {
     expect(CONNECTORS.every((connector) => (connector.responseMustContainAny?.length ?? 0) > 0)).toBe(true);
   });
 
+  it("ne contient aucune source hardcodée dupliquée ou non HTTPS", () => {
+    const sourceRows = CONNECTORS.flatMap((connector) => connector.sources.map((source) => ({
+      store: connector.key,
+      source: new URL(source).toString()
+    })));
+    const duplicates = sourceRows.filter((row, index) =>
+      sourceRows.findIndex((candidate) => candidate.source === row.source) !== index
+    );
+
+    expect(duplicates).toEqual([]);
+    expect(sourceRows.every((row) => new URL(row.source).protocol === "https:")).toBe(true);
+
+    const fantasy = CONNECTORS.find((connector) => connector.key === "fantasy-sphere")!;
+    expect(fantasy.sources.filter((source) => /op18/i.test(source))).toHaveLength(5);
+    expect(new Set(fantasy.sources).size).toBe(fantasy.sources.length);
+  });
+
   it("refuse une carte marketplace tant que la fiche directe n'est pas relue", async () => {
     const category = "https://market.test/category";
     const product = "https://market.test/op17/a123/w-4";

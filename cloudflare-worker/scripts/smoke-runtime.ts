@@ -172,11 +172,16 @@ for (let index = 0; index < CADENCE_SAMPLE_CYCLES; index += 1) {
   cycles.push(cycle);
   console.log(
     `cycle=${index + 1}/${CADENCE_SAMPLE_CYCLES} discovery=${cycle.discovery} ` +
-    `stores=${cycle.stores.length} durableMs=${cycle.durableDurationMs} doRequests=${cycle.durableRequestCount}`
+    `stores=${cycle.stores.length} wallMs=${cycle.wallDurationMs} durableMs=${cycle.durableDurationMs} doRequests=${cycle.durableRequestCount}`
   );
 }
 
 const budget = projectCadenceBudget(cycles);
+const incidentCycles = cycles.flatMap((cycle, index) => cycle.stores
+  .filter((store) => store.status !== "completed")
+  .map((store) => ({ cycle: index + 1, store: store.store, status: store.status, error: store.error }))
+);
+const incidentStores = [...new Set(incidentCycles.map((entry) => entry.store))].sort();
 const report = {
   generatedAt: new Date().toISOString(),
   environment: "isolated-runtime-test",
@@ -187,6 +192,7 @@ const report = {
     index: index + 1,
     scheduledTime: new Date(cycle.scheduledTime).toISOString(),
     discovery: cycle.discovery,
+    wallDurationMs: cycle.wallDurationMs,
     durableDurationMs: cycle.durableDurationMs,
     durableRequestCount: cycle.durableRequestCount,
     pendingAuthorizedFeedStores: cycle.pendingAuthorizedFeedStores,
@@ -202,7 +208,17 @@ const report = {
     }))
   })),
   budget,
-  verdict: budget.pass ? "PASS" : "FAIL"
+  operational: {
+    pass: incidentCycles.length === 0,
+    incidentStores,
+    incidentCycles
+  },
+  budgetVerdict: budget.pass ? "PASS" : "FAIL",
+  verdict: budget.pass && incidentCycles.length === 0
+    ? "PASS"
+    : budget.pass
+      ? "PASS_BUDGET_WITH_STORE_INCIDENTS"
+      : "FAIL"
 };
 
 await writeFile("runtime-cadence-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");

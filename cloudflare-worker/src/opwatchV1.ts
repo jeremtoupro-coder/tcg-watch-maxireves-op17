@@ -375,35 +375,85 @@ export function enrichCandidateIdentity(candidate: ProductCandidate): ProductCan
   };
 }
 
-export function candidateForActiveProducts(
+export type ActiveCandidateRejectionReason =
+  | "reference_active_absente_ou_ambigue"
+  | "format_non_cible"
+  | "langue_non_acceptee"
+  | "confiance_langue_insuffisante"
+  | "disponibilite_inconnue"
+  | "validation_commerciale_ou_vendeur_absente"
+  | "accessoire_ou_carte_unitaire";
+
+export interface ActiveCandidateQualification {
+  candidate?: ProductCandidate;
+  reasons: ActiveCandidateRejectionReason[];
+}
+
+export function candidateLanguageConfidence(candidate: ProductCandidate): number {
+  if (Number.isFinite(candidate.languageConfidence)) {
+    return Math.max(0, Math.min(100, candidate.languageConfidence as number));
+  }
+  return candidate.language === "Langue non précisée" ? 45 : 100;
+}
+
+/**
+ * Qualifie une observation et conserve les motifs de rejet destinés au
+ * cockpit. Le wrapper historique `candidateForActiveProducts` reste disponible
+ * pour ne pas dupliquer les règles dans les appelants existants.
+ */
+export function qualifyCandidateForActiveProducts(
   candidate: ProductCandidate,
   activeProducts: OfficialProduct[],
-  acceptedLanguages: LanguageStatus[] = ["Français confirmé"]
-): ProductCandidate | undefined {
+  acceptedLanguages: LanguageStatus[] = ["Français confirmé"],
+  minimumLanguageConfidence = 90
+): ActiveCandidateQualification {
   const enriched = enrichCandidateIdentity(candidate);
   const activeIds = new Set(activeProducts.map((product) => product.id));
   const activeReferences = enriched.matchedReferences.filter((reference) => activeIds.has(reference));
-
-  if (activeReferences.length !== 1) return undefined;
   const matchedProduct = activeProducts.find((product) => product.id === activeReferences[0]);
-  if (!enriched.format) return undefined;
-  if (enriched.format === "other" && matchedProduct?.family !== "OTHER") return undefined;
-  if (!acceptedLanguages.includes(enriched.language)) return undefined;
-  if (enriched.availability === "unknown") return undefined;
-  if (enriched.commercialEligible === false) return undefined;
-  if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) return undefined;
+  const reasons: ActiveCandidateRejectionReason[] = [];
+  const format = enriched.format;
+
+  if (activeReferences.length !== 1) reasons.push("reference_active_absente_ou_ambigue");
+  if (!format || (format === "other" && matchedProduct?.family !== "OTHER")) reasons.push("format_non_cible");
+  if (!acceptedLanguages.includes(enriched.language)) reasons.push("langue_non_acceptee");
+  if (candidateLanguageConfidence(enriched) < minimumLanguageConfidence) reasons.push("confiance_langue_insuffisante");
+  if (enriched.availability === "unknown") reasons.push("disponibilite_inconnue");
+  if (enriched.commercialEligible === false) reasons.push("validation_commerciale_ou_vendeur_absente");
+  if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) {
+    reasons.push("accessoire_ou_carte_unitaire");
+  }
+  if (reasons.length > 0 || activeReferences.length !== 1 || !format) return { reasons };
 
   return {
-    ...enriched,
-    matchedReferences: activeReferences,
-    identityKey: listingIdentity(
-      enriched.store,
-      activeReferences[0],
-      enriched.format,
-      enriched.externalId || enriched.title,
-      enriched.language
-    )
+    reasons,
+    candidate: {
+      ...enriched,
+      languageConfidence: candidateLanguageConfidence(enriched),
+      matchedReferences: activeReferences,
+      identityKey: listingIdentity(
+        enriched.store,
+        activeReferences[0],
+        format,
+        enriched.externalId || enriched.title,
+        enriched.language
+      )
+    }
   };
+}
+
+export function candidateForActiveProducts(
+  candidate: ProductCandidate,
+  activeProducts: OfficialProduct[],
+  acceptedLanguages: LanguageStatus[] = ["Français confirmé"],
+  minimumLanguageConfidence = 90
+): ProductCandidate | undefined {
+  return qualifyCandidateForActiveProducts(
+    candidate,
+    activeProducts,
+    acceptedLanguages,
+    minimumLanguageConfidence
+  ).candidate;
 }
 
 export function buildActiveWatchConfig(products: OfficialProduct[], acceptedLanguages: LanguageStatus[] = ["Français confirmé"]): WatchConfig {

@@ -52,6 +52,73 @@ async function cloudflare(path: string, init?: RequestInit): Promise<ProbeResult
   }
 }
 
+async function workersAnalytics(fromIso: string, toIso: string): Promise<ProbeResult> {
+  try {
+    const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        query: `query OpWatchWorkersAnalytics($accountTag: string, $from: string, $to: string, $scriptName: string) {
+          viewer {
+            accounts(filter: { accountTag: $accountTag }) {
+              workersInvocationsAdaptive(limit: 5000, filter: {
+                scriptName: $scriptName,
+                datetime_geq: $from,
+                datetime_leq: $to
+              }) {
+                sum { requests errors subrequests }
+                quantiles { cpuTimeP50 cpuTimeP99 }
+                dimensions { datetime scriptName status }
+              }
+            }
+          }
+        }`,
+        variables: { accountTag: accountId, from: fromIso, to: toIso, scriptName: workerName }
+      })
+    });
+    const data = await readJson(response);
+    const graphErrors = (data as { errors?: unknown[] } | undefined)?.errors;
+    return { ok: response.ok && (!graphErrors || graphErrors.length === 0), status: response.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, error: safeError(error) };
+  }
+}
+
+function analyticsSummary(value: ProbeResult): unknown {
+  const body = value.data as {
+    data?: { viewer?: { accounts?: Array<{ workersInvocationsAdaptive?: Array<{
+      sum?: { requests?: number; errors?: number; subrequests?: number };
+      quantiles?: { cpuTimeP50?: number; cpuTimeP99?: number };
+      dimensions?: { datetime?: string; status?: string };
+    }> }> } };
+    errors?: unknown;
+  } | undefined;
+  const rows = body?.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive ?? [];
+  const dates = rows.map((row) => row.dimensions?.datetime).filter((value): value is string => Boolean(value)).sort();
+  const statuses: Record<string, number> = {};
+  for (const row of rows) {
+    const status = row.dimensions?.status ?? "unknown";
+    statuses[status] = (statuses[status] ?? 0) + (row.sum?.requests ?? 0);
+  }
+  return {
+    ok: value.ok,
+    status: value.status,
+    ...(value.error ? { error: value.error } : {}),
+    ...(body?.errors ? { errors: body.errors } : {}),
+    rows: rows.length,
+    firstInvocationAt: dates[0],
+    lastInvocationAt: dates.at(-1),
+    requests: rows.reduce((sum, row) => sum + (row.sum?.requests ?? 0), 0),
+    errors: rows.reduce((sum, row) => sum + (row.sum?.errors ?? 0), 0),
+    subrequests: rows.reduce((sum, row) => sum + (row.sum?.subrequests ?? 0), 0),
+    maxCpuTimeP99: Math.max(0, ...rows.map((row) => row.quantiles?.cpuTimeP99 ?? 0)),
+    statuses
+  };
+}
+
 async function worker(path: string, authenticated = false): Promise<ProbeResult> {
   try {
     const token = authenticated ? derivePreviewAuditToken(apiToken) : "";
@@ -179,6 +246,7 @@ const telemetry = serviceKey
       })
     })
   : { ok: false, status: 0, error: "Aucune clé de service reconnue dans Workers Observability." } satisfies ProbeResult;
+const analytics = await workersAnalytics(new Date(from).toISOString(), new Date(now).toISOString());
 
 const accountEnvelope = envelopeResult(account) as { result?: Record<string, unknown> };
 const accountResult = accountEnvelope.result;
@@ -205,7 +273,8 @@ const report = {
       serviceKey,
       relevant: keys.filter((entry) => /service|script|trigger|event|outcome|status|cpu|wall|duration|timestamp|datetime|message|error|exception/i.test(entry.key ?? ""))
     },
-    query: telemetrySummary(telemetry)
+    query: telemetrySummary(telemetry),
+    workersAnalytics: analyticsSummary(analytics)
   }
 };
 
@@ -217,6 +286,6 @@ console.log(JSON.stringify({
   runtimeReady: { ok: readiness.ok, status: readiness.status },
   webScoutHealth: { ok: webScoutHealth.ok, status: webScoutHealth.status },
   observabilityKeys: { ok: telemetryKeys.ok, status: telemetryKeys.status, serviceKey },
-  observabilityQuery: { ok: telemetry.ok, status: telemetry.status }
+  observabilityQuery: { ok: telemetry.ok, status: telemetry.status },
+  workersAnalytics: analyticsSummary(analytics)
 }));
-

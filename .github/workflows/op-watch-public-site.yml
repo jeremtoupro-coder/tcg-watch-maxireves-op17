@@ -1,54 +1,53 @@
-name: OP Watch Public Landing
+name: OP Watch Cockpit Pages (manual)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "cloudflare-worker/public-site/**"
-      - ".github/workflows/op-watch-public-site.yml"
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Action"
+        required: true
+        default: "validate-only"
+        type: choice
+        options:
+          - validate-only
+          - deploy-pages
+      confirmation:
+        description: "Pour déployer Pages, saisir exactement : DEPLOYER OP WATCH PAGES"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
   group: op-watch-public-site
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy neutral public landing
+  validate:
+    name: Validate cockpit without deployment
     runs-on: ubuntu-latest
     timeout-minutes: 12
     defaults:
       run:
         working-directory: cloudflare-worker
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      PAGES_PROJECT: op-watch-tcg-fr
     steps:
       - name: Checkout exact revision
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: cloudflare-worker/package-lock.json
-
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
-
-      - name: Verify Cloudflare credentials
-        shell: bash
+      - name: Validate code and body proxy tests
         run: |
-          test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-
-      - name: Validate cockpit JavaScript before deploy
+          npm run typecheck
+          npm test -- tests/pages-body-proxy.test.js tests/cockpit-watch-modes-ui.test.ts
+      - name: Validate cockpit JavaScript
         shell: bash
         run: |
           python3 - <<'PY'
@@ -61,61 +60,80 @@ jobs:
           Path('/tmp/op-watch-cockpit.js').write_text(scripts[0])
           PY
           node --check /tmp/op-watch-cockpit.js
+          node --check public-site/_worker.js
           node --check public-site/cockpit-assistant.js
           node --check public-site/cockpit-web-scout.js
           node --check public-site/cockpit-auth.js
 
-      - name: Deploy public landing
+  deploy:
+    name: Deploy cockpit Pages after explicit approval
+    if: inputs.action == 'deploy-pages'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAGES_PROJECT: op-watch-tcg-fr
+    steps:
+      - name: Hard deployment gate
+        working-directory: .
+        shell: bash
+        env:
+          REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error title=Branche interdite::Le déploiement Pages n'est autorisé que depuis main."
+            exit 1
+          fi
+          if [ "$REQUESTED_CONFIRMATION" != "DEPLOYER OP WATCH PAGES" ]; then
+            echo "::error title=Confirmation invalide::La phrase de confirmation exacte est requise."
+            exit 1
+          fi
+      - name: Checkout exact production revision
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify Cloudflare credentials
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Deploy production Pages branch
         run: >-
           npx wrangler pages deploy public-site
           --project-name="$PAGES_PROJECT"
-          --branch=op-watch-v1-test
+          --branch=main
           --commit-hash="$GITHUB_SHA"
-          --commit-message="OP Watch public landing"
-
-      - name: Verify interactive public service and cockpit
+          --commit-message="OP Watch cockpit reliability"
+      - name: Verify production cockpit and anonymous protection
         shell: bash
         run: |
           url="https://${PAGES_PROJECT}.pages.dev/"
           for attempt in {1..20}; do
             body="$(curl -fsSL --max-time 20 "$url" || true)"
-            calendar="$(curl -fsSL --max-time 20 "${url}api/calendar" || true)"
             cockpit="$(curl -fsSL --max-time 20 "${url}cockpit/" || true)"
-            assistant="$(curl -fsSL --max-time 20 "${url}cockpit-assistant.js" || true)"
-            webscout="$(curl -fsSL --max-time 20 "${url}cockpit-web-scout.js" || true)"
             authui="$(curl -fsSL --max-time 20 "${url}cockpit-auth.js" || true)"
             anon="$(curl -sS -o /tmp/cockpit-anon.json -w '%{http_code}' --max-time 15 "${url}cockpit/api/status" || true)"
             if grep -q "OP WATCH" <<<"$body" && \
-               grep -q "Utiliser OP Watch" <<<"$body" && \
-               grep -q "Créer une veille" <<<"$body" && \
-               grep -q "Affiliation &amp; transparence\|Affiliation & transparence" <<<"$body" && \
-               grep -q '"activeProducts"' <<<"$calendar" && \
                grep -q "OP Watch Cockpit" <<<"$cockpit" && \
-               grep -Fq "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));" <<<"$cockpit" && \
-               grep -q 'cockpit-assistant.js' <<<"$cockpit" && \
-               grep -q 'cockpit-web-scout.js' <<<"$cockpit" && \
                grep -q 'cockpit-auth.js' <<<"$cockpit" && \
-               ! grep -q 'opwatch-cockpit-password\|x-op-watch-admin-password' <<<"$cockpit" && \
-               grep -q 'Envoyer à ChatGPT' <<<"$assistant" && \
-               grep -q 'Web Scout' <<<"$webscout" && \
+               ! grep -q 'opwatch-cockpit-password\|x-op-watch-admin-password\|sessionStorage' <<<"$cockpit" && \
                grep -q 'Mot de passe oublié' <<<"$authui" && \
-               grep -q 'jrm.touitou@gmail.com' <<<"$authui" && \
                [ "$anon" = "401" ]; then
-              printf '%s' "$cockpit" > /tmp/deployed-cockpit.html
-              python3 - <<'PY'
-          import re
-          from pathlib import Path
-          html=Path('/tmp/deployed-cockpit.html').read_text()
-          scripts=re.findall(r'<script>(.*?)</script>', html, flags=re.S)
-          if len(scripts)!=1: raise SystemExit(1)
-          Path('/tmp/deployed-cockpit.js').write_text(scripts[0])
-          PY
-              node --check /tmp/deployed-cockpit.js
-              echo "PUBLIC_URL=$url" >> "$GITHUB_ENV"
-              echo "Public service and cockpit ready: $url"
+              echo "Production Pages and cockpit ready: $url"
               exit 0
             fi
             sleep 3
           done
-          echo "Public service/cockpit did not become reachable with expected content at $url" >&2
+          echo "Production Pages/cockpit did not become reachable with expected content at $url" >&2
           exit 1

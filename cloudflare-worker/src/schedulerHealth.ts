@@ -53,7 +53,9 @@ export interface SchedulerHealth {
   version: 1;
   armedAt?: string;
   receivedCount: number;
+  monitoringCompletedCount: number;
   recentScheduledEvents: Array<{ scheduledAt: string; receivedAt: string }>;
+  recentAutomaticMonitoring: SchedulerRunObservation[];
   lastScheduledEvent?: { scheduledAt: string; receivedAt: string };
   automaticMonitoring?: SchedulerRunObservation;
   lastFastWatch?: SchedulerRunObservation;
@@ -84,7 +86,7 @@ export interface SchedulerObservedState {
 
 interface SchedulerHealthEnv extends Env {
   CALENDAR_COORDINATOR?: DurableObjectNamespace;
-  SCHEDULER_MODE?: "disabled" | "live";
+  SCHEDULER_MODE?: "disabled" | "live" | "test";
   CRON_CONFIGURED?: string;
 }
 
@@ -92,7 +94,9 @@ function initialHealth(): SchedulerHealth {
   return {
     version: 1,
     receivedCount: 0,
+    monitoringCompletedCount: 0,
     recentScheduledEvents: [],
+    recentAutomaticMonitoring: [],
     consecutiveMonitoringFailures: 0,
     watchdog: { status: "unarmed" }
   };
@@ -141,6 +145,11 @@ export function applySchedulerMarker(
   marker: SchedulerMarker
 ): SchedulerHealth {
   const next = structuredClone(current ?? initialHealth());
+  // Compatibilité avec l'état v1 déjà déployé avant l'ajout des compteurs.
+  next.receivedCount ??= 0;
+  next.monitoringCompletedCount ??= 0;
+  next.recentScheduledEvents ??= [];
+  next.recentAutomaticMonitoring ??= [];
   const observedMs = safeTime(marker.observedTime);
   const observedAt = new Date(observedMs).toISOString();
   const scheduledAt = new Date(safeTime(marker.scheduledTime, observedMs)).toISOString();
@@ -171,6 +180,9 @@ export function applySchedulerMarker(
       next.automaticMonitoring = completed;
       next.lastFastWatch = completed;
       if (marker.discovery) next.lastDiscovery = completed;
+      next.monitoringCompletedCount += 1;
+      next.recentAutomaticMonitoring = [...next.recentAutomaticMonitoring, completed]
+        .slice(-SCHEDULER_EVENT_HISTORY_LIMIT);
       next.consecutiveMonitoringFailures = 0;
       break;
     }
@@ -179,6 +191,8 @@ export function applySchedulerMarker(
       next.automaticMonitoring = failed;
       next.lastFastWatch = failed;
       if (marker.discovery) next.lastDiscovery = failed;
+      next.recentAutomaticMonitoring = [...next.recentAutomaticMonitoring, failed]
+        .slice(-SCHEDULER_EVENT_HISTORY_LIMIT);
       next.consecutiveMonitoringFailures += 1;
       break;
     }

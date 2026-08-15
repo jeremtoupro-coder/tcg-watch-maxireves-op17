@@ -15,7 +15,7 @@ import type { ConnectorDefinition, Env, StoreKey } from "./types";
 type HealthRuntimeEnv = Env & {
   STORE_MONITORS?: DurableObjectNamespace;
   CALENDAR_COORDINATOR?: DurableObjectNamespace;
-  SCHEDULER_MODE?: "disabled" | "live";
+  SCHEDULER_MODE?: "disabled" | "live" | "test";
   RUNTIME_TEST_MODE?: string;
 };
 

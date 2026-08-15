@@ -84,6 +84,37 @@ describe("séparation des deux veilles", () => {
     expect(buildDiscordPayload(second.alertMatches[0]).embeds[0].title).toContain("ONE PIECE ALL");
   });
 
+  it("prend le relais après la fenêtre Nouvelles sorties sans faux new_listing", async () => {
+    const root = new MemoryStateStore({ writable: true });
+    const allState = scopedStateStore(root, "one-piece-all");
+    const op17 = candidateForAllOnePiece(candidate("OP-17", "available"))!;
+
+    const whileActive = await evaluateCandidates([op17], {
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run"
+    }, {
+      config: buildAllOnePieceWatchConfig([op17], ["OP-17"]),
+      stateStore: allState,
+      baselineStores: ["esprit-jeu"],
+      now: "2026-09-30T12:00:00.000Z",
+      claimSettleMs: 0
+    });
+    expect(whileActive.alertMatches).toEqual([]);
+
+    const afterWindow = await evaluateCandidates([op17], {
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run"
+    }, {
+      config: buildAllOnePieceWatchConfig([op17], []),
+      stateStore: allState,
+      baselineStores: ["esprit-jeu"],
+      now: "2026-10-01T12:00:00.000Z",
+      claimSettleMs: 0
+    });
+    expect(afterWindow.changes).toEqual([]);
+    expect(afterWindow.alertMatches).toEqual([]);
+  });
+
   it("rend une règle historique sans scope comme une alerte Nouvelles sorties", () => {
     const current = {
       key: "product:v3:test",

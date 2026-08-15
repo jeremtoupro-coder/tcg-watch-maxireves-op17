@@ -120,9 +120,40 @@ describe("E.Leclerc marketplace alerts", () => {
     expect(seller?.value).toBe("Boutique Partenaire");
   });
 
-  it("n'exige plus un vendeur E.Leclerc dans la définition du connecteur", () => {
+  it("exige explicitement un vendeur E.Leclerc dans la définition du connecteur", () => {
     const connector = CONNECTORS.find((item) => item.key === "leclerc")!;
-    expect(connector.requiredSellerPatterns).toBeUndefined();
-    expect(connector.requiredSellerLabel).toBeUndefined();
+    expect(connector.requiredSellerPatterns).toHaveLength(2);
+    expect(connector.requiredSellerLabel).toBe("E.Leclerc");
+  });
+
+  it("reste fail-closed sur une fiche sans preuve vendeur", async () => {
+    const base = CONNECTORS.find((item) => item.key === "leclerc")!;
+    const source = "https://www.e.leclerc/fp/display-one-piece-op17-123";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+      <html><head><title>One Piece Card Game</title></head><body>
+        <h1>Display One Piece OP17 Français</h1>
+        <p>En stock — 119,90 €</p>
+      </body></html>
+    `, { status: 200 })));
+
+    const audit = await auditStore({ ...base, sources: [source] }, {} as Env);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].commercialEligible).toBe(false);
+    expect(audit.candidates[0].commercialEligibilityReason).toMatch(/E\.Leclerc non confirmé/i);
+  });
+
+  it("accepte seulement la preuve vendeur officielle sur la fiche directe", async () => {
+    const base = CONNECTORS.find((item) => item.key === "leclerc")!;
+    const source = "https://www.e.leclerc/fp/display-one-piece-op17-123";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+      <html><head><title>One Piece Card Game</title></head><body>
+        <h1>Display One Piece OP17 Français</h1>
+        <p>En stock — 119,90 €</p><p>Vendu et expédié par E.Leclerc</p>
+      </body></html>
+    `, { status: 200 })));
+
+    const audit = await auditStore({ ...base, sources: [source] }, {} as Env);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].commercialEligible).toBe(true);
   });
 });

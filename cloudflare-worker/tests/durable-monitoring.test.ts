@@ -127,6 +127,30 @@ describe("Fast Watch Durable Objects à budget borné", () => {
     }, "test")).toThrow(/scheduler/i);
   });
 
+  it("autorise uniquement le cron isolé explicite avec Discord dry-run", () => {
+    expect(() => assertRuntimeReadiness({
+      ...runtimeBindings(),
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run",
+      SCHEDULER_MODE: "test",
+      CRON_CONFIGURED: "true",
+      RUNTIME_TEST_MODE: "true",
+      RUNTIME_TEST_RUN_ID: "isolated-123"
+    }, "test")).not.toThrow();
+
+    expect(() => assertRuntimeReadiness({
+      ...runtimeBindings(),
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run",
+      SCHEDULER_MODE: "test",
+      CRON_CONFIGURED: "false",
+      RUNTIME_TEST_MODE: "true",
+      RUNTIME_TEST_RUN_ID: "isolated-123"
+    }, "test")).toThrow(/CRON_CONFIGURED/);
+  });
+
   it("refuse le LIVE si les 24 boutiques et le webhook officiel ne sont pas tous validés", () => {
     expect(() => assertRuntimeReadiness({
       ...runtimeBindings(),

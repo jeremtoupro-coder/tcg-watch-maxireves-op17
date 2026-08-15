@@ -1,4 +1,5 @@
 import {
+  candidateLanguageConfidence,
   canonicalProductCode,
   enrichCandidateIdentity,
   listingIdentity
@@ -25,6 +26,18 @@ const ACCESSORY_PATTERNS = [
   /\bcarte\s+unit[eé]\b/i
 ];
 
+export type AllCandidateRejectionReason =
+  | "reference_one_piece_absente_ou_ambigue"
+  | "langue_non_acceptee"
+  | "confiance_langue_insuffisante"
+  | "disponibilite_inconnue"
+  | "accessoire_ou_carte_unitaire";
+
+export interface AllCandidateQualification {
+  candidate?: ProductCandidate;
+  reasons: AllCandidateRejectionReason[];
+}
+
 function canonicalAllReference(reference: string): string | undefined {
   const canonical = canonicalProductCode(reference);
   if (!canonical) return undefined;
@@ -41,35 +54,57 @@ function canonicalAllReference(reference: string): string | undefined {
  * alerts.ts exige ensuite explicitement l'éligibilité commerciale, ce qui
  * conserve la validation de fiche directe avant Discord.
  */
-export function candidateForAllOnePiece(
+export function qualifyCandidateForAllOnePiece(
   candidate: ProductCandidate,
-  acceptedLanguages: LanguageStatus[] = ["Français confirmé"]
-): ProductCandidate | undefined {
+  acceptedLanguages: LanguageStatus[] = ["Français confirmé"],
+  minimumLanguageConfidence = 90
+): AllCandidateQualification {
   const enriched = enrichCandidateIdentity(candidate);
   const references = [...new Set(enriched.matchedReferences.flatMap((reference) => {
     const canonical = canonicalAllReference(reference);
     return canonical ? [canonical] : [];
   }))];
 
-  if (references.length !== 1) return undefined;
-  if (!acceptedLanguages.includes(enriched.language)) return undefined;
-  if (enriched.availability === "unknown") return undefined;
-  if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) return undefined;
+  const reasons: AllCandidateRejectionReason[] = [];
+  if (references.length !== 1) reasons.push("reference_one_piece_absente_ou_ambigue");
+  if (!acceptedLanguages.includes(enriched.language)) reasons.push("langue_non_acceptee");
+  if (candidateLanguageConfidence(enriched) < minimumLanguageConfidence) reasons.push("confiance_langue_insuffisante");
+  if (enriched.availability === "unknown") reasons.push("disponibilite_inconnue");
+  if (ACCESSORY_PATTERNS.some((pattern) => pattern.test(`${enriched.title} ${enriched.excerpt}`))) {
+    reasons.push("accessoire_ou_carte_unitaire");
+  }
+  if (reasons.length > 0 || references.length !== 1) return { reasons };
 
   const reference = references[0];
   const format = enriched.format ?? "other";
   return {
-    ...enriched,
-    matchedReferences: [reference],
-    format,
-    identityKey: listingIdentity(
-      enriched.store,
-      reference,
+    reasons,
+    candidate: {
+      ...enriched,
+      languageConfidence: candidateLanguageConfidence(enriched),
+      matchedReferences: [reference],
       format,
-      enriched.externalId || enriched.title,
-      enriched.language
-    )
+      identityKey: listingIdentity(
+        enriched.store,
+        reference,
+        format,
+        enriched.externalId || enriched.title,
+        enriched.language
+      )
+    }
   };
+}
+
+export function candidateForAllOnePiece(
+  candidate: ProductCandidate,
+  acceptedLanguages: LanguageStatus[] = ["Français confirmé"],
+  minimumLanguageConfidence = 90
+): ProductCandidate | undefined {
+  return qualifyCandidateForAllOnePiece(
+    candidate,
+    acceptedLanguages,
+    minimumLanguageConfidence
+  ).candidate;
 }
 
 /**

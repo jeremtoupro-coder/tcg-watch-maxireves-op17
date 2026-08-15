@@ -1,6 +1,11 @@
 import { CONNECTORS } from "./connectors";
 import { configuredStoreStatus } from "./storeAudit";
-import { isDiscoveryTick, parseActiveStores, runMonitoringCycle } from "./monitor";
+import {
+  isDiscoveryTick,
+  parseActiveStores,
+  runMonitoringCycle,
+  type MonitoringCircuitAnalysis
+} from "./monitor";
 import { candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
 import { handleSchedulerHealthRequest, handleSchedulerWatchdogAlarm } from "./schedulerHealth";
@@ -24,7 +29,7 @@ export interface RuntimeEnv extends Env {
   STORE_MONITORS?: DurableObjectNamespace;
   CALENDAR_COORDINATOR?: DurableObjectNamespace;
   WEB_SCOUT?: DurableObjectNamespace;
-  SCHEDULER_MODE?: "disabled" | "live";
+  SCHEDULER_MODE?: "disabled" | "live" | "test";
   CRON_CONFIGURED?: string;
   RUNTIME_TEST_MODE?: string;
   RUNTIME_TEST_RUN_ID?: string;
@@ -55,6 +60,17 @@ export interface StoreRuntimeHealth {
   durationMs: number;
   merchantDurationMs: number;
   candidates: number;
+  merchantSources: number;
+  successfulMerchantSources: number;
+  lastMerchantCheckAt?: string;
+  lastDiscoveryAt?: string;
+  lastFastWatchAt?: string;
+  deferredFastWatch: boolean;
+  analysis?: {
+    newReleases: MonitoringCircuitAnalysis;
+    onePieceAll: MonitoringCircuitAnalysis;
+  };
+  warnings?: string[];
   sourceKind?: string;
   error?: string;
   backoffUntil?: string;
@@ -68,6 +84,8 @@ export interface DurableCycleResult {
   calendarDurationMs: number;
   storeDurationMs: number;
   durableDurationMs: number;
+  /** Temps mural réellement attendu par le Scheduled Event (les durées DO sommées servent au budget). */
+  wallDurationMs: number;
   durableRequestCount: number;
   stores: DurableCycleStoreResult[];
   pendingAuthorizedFeedStores: StoreKey[];
@@ -151,7 +169,12 @@ export function assertRuntimeReadiness(env: RuntimeEnv, mode: "test" | "live"): 
 
   if (mode === "test") {
     if (env.RUNTIME_TEST_MODE !== "true") throw new Error("RUNTIME_TEST_MODE doit être activé pour le test isolé.");
-    if (env.SCHEDULER_MODE !== "disabled") throw new Error("Le scheduler doit rester désactivé pendant le test isolé.");
+    if (env.SCHEDULER_MODE !== "disabled" && env.SCHEDULER_MODE !== "test") {
+      throw new Error("Le scheduler du test isolé doit être désactivé ou explicitement en mode test.");
+    }
+    if (env.SCHEDULER_MODE === "test" && env.CRON_CONFIGURED !== "true") {
+      throw new Error("Le scheduler isolé en mode test exige CRON_CONFIGURED=true.");
+    }
     if (env.DISCORD_MODE !== "dry-run") throw new Error("Discord doit rester en dry-run pendant le test isolé.");
     runtimePrefix(env, mode);
     return;
@@ -272,7 +295,12 @@ async function pruneFastWatchCache(
   if (!audit) return;
 
   const entries = audit.candidates.flatMap((candidate) => {
-    const qualified = candidateForActiveProducts(candidate, officialProducts, acceptedLanguages);
+    const qualified = candidateForActiveProducts(
+      candidate,
+      officialProducts,
+      acceptedLanguages,
+      opWatchV1Config.language.minimumAlertConfidence
+    );
     return qualified ? [{ url: qualified.url, references: [...qualified.matchedReferences].sort() }] : [];
   });
   const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
@@ -311,6 +339,7 @@ export class StoreMonitorDurableObject {
     let activeStore: StoreKey | undefined;
     let activeScheduledTime = Date.now();
     let activeDiscovery = false;
+    let previousHealth: StoreRuntimeHealth | undefined;
     this.running = true;
     try {
       const input = await request.json() as {
@@ -335,6 +364,7 @@ export class StoreMonitorDurableObject {
 
       const connector = CONNECTORS.find((entry) => entry.key === store)!;
       if (connector.maxConcurrency === undefined) connector.maxConcurrency = 2;
+      previousHealth = await this.state.storage.get<StoreRuntimeHealth>("runtime:health");
 
       const stateStore = asStateStore(new DurableObjectStateStore(this.state.storage, this.env.WRITE_STATE === "true"));
       const backoffRaw = await stateStore.getMetadata("runtime:backoff-until");
@@ -349,6 +379,13 @@ export class StoreMonitorDurableObject {
           durationMs,
           merchantDurationMs: 0,
           candidates: 0,
+          merchantSources: 0,
+          successfulMerchantSources: 0,
+          ...(previousHealth?.lastMerchantCheckAt ? { lastMerchantCheckAt: previousHealth.lastMerchantCheckAt } : {}),
+          ...(previousHealth?.lastDiscoveryAt ? { lastDiscoveryAt: previousHealth.lastDiscoveryAt } : {}),
+          ...(previousHealth?.lastFastWatchAt ? { lastFastWatchAt: previousHealth.lastFastWatchAt } : {}),
+          deferredFastWatch: previousHealth?.deferredFastWatch ?? false,
+          ...(previousHealth?.analysis ? { analysis: previousHealth.analysis } : {}),
           backoffUntil: new Date(backoffUntil).toISOString(),
           discovery: false
         };
@@ -391,16 +428,45 @@ export class StoreMonitorDurableObject {
       const durationMs = Math.round(performance.now() - started);
       const merchantDurationMs = sourceDurationMs(result);
       const audit = result.audits?.find((entry) => entry.store === store);
+      const merchantSources = audit?.sources.length ?? 0;
+      const successfulMerchantSources = audit?.sources.filter((source) => !source.error).length ?? 0;
+      const successfulMerchantCheck = successfulMerchantSources > 0;
+      const checkedAt = new Date(scheduledTime as number).toISOString();
+      const deferredFastWatch = result.deferredFastWatchStores?.includes(store) === true;
       const error = result.degradedStores?.find((entry) => entry.store === store)?.errors.join(" | ");
       const health: StoreRuntimeHealth = {
         store,
         status: degraded ? "degraded" : "completed",
-        checkedAt: new Date(scheduledTime as number).toISOString(),
+        checkedAt,
         completedAt: new Date().toISOString(),
         durationMs,
         merchantDurationMs,
         candidates: audit?.candidates.length ?? 0,
-        sourceKind: audit?.sourceKind,
+        merchantSources,
+        successfulMerchantSources,
+        ...(successfulMerchantCheck
+          ? { lastMerchantCheckAt: checkedAt }
+          : previousHealth?.lastMerchantCheckAt
+            ? { lastMerchantCheckAt: previousHealth.lastMerchantCheckAt }
+            : {}),
+        ...(input.forceDiscovery === true && successfulMerchantCheck
+          ? { lastDiscoveryAt: checkedAt }
+          : previousHealth?.lastDiscoveryAt
+            ? { lastDiscoveryAt: previousHealth.lastDiscoveryAt }
+            : {}),
+        ...(input.forceDiscovery !== true && successfulMerchantCheck
+          ? { lastFastWatchAt: checkedAt }
+          : previousHealth?.lastFastWatchAt
+            ? { lastFastWatchAt: previousHealth.lastFastWatchAt }
+            : {}),
+        deferredFastWatch,
+        ...(audit && result.analysis
+          ? { analysis: result.analysis }
+          : previousHealth?.analysis
+            ? { analysis: previousHealth.analysis }
+            : {}),
+        ...(audit?.warnings?.length ? { warnings: audit.warnings.slice(0, 8) } : {}),
+        sourceKind: audit?.sourceKind ?? previousHealth?.sourceKind,
         ...(error ? { error } : {}),
         discovery: input.forceDiscovery === true
       };
@@ -418,6 +484,13 @@ export class StoreMonitorDurableObject {
           durationMs,
           merchantDurationMs: 0,
           candidates: 0,
+          merchantSources: 0,
+          successfulMerchantSources: 0,
+          ...(previousHealth?.lastMerchantCheckAt ? { lastMerchantCheckAt: previousHealth.lastMerchantCheckAt } : {}),
+          ...(previousHealth?.lastDiscoveryAt ? { lastDiscoveryAt: previousHealth.lastDiscoveryAt } : {}),
+          ...(previousHealth?.lastFastWatchAt ? { lastFastWatchAt: previousHealth.lastFastWatchAt } : {}),
+          deferredFastWatch: previousHealth?.deferredFastWatch ?? false,
+          ...(previousHealth?.analysis ? { analysis: previousHealth.analysis } : {}),
           error: message,
           discovery: activeDiscovery
         } satisfies StoreRuntimeHealth);
@@ -621,6 +694,7 @@ export async function runDistributedMonitoringCycle(
     mode: "test" | "live";
   }
 ): Promise<DurableCycleResult> {
+  const wallStarted = performance.now();
   assertRuntimeReadiness(env, options.mode);
   const scheduledTime = options.scheduledTime ?? Date.now();
   const prefix = runtimePrefix(env, options.mode);
@@ -654,6 +728,7 @@ export async function runDistributedMonitoringCycle(
     calendarDurationMs: Math.max(0, calendar.durationMs),
     storeDurationMs,
     durableDurationMs: Math.max(0, calendar.durationMs) + storeDurationMs,
+    wallDurationMs: Math.round(performance.now() - wallStarted),
     durableRequestCount: 1 + stores.length,
     stores,
     pendingAuthorizedFeedStores: selection.pendingAuthorizedFeedStores,
