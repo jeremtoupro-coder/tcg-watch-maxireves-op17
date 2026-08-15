@@ -99,10 +99,44 @@ function analyticsSummary(value: ProbeResult): unknown {
   const rows = body?.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive ?? [];
   const dates = rows.map((row) => row.dimensions?.datetime).filter((value): value is string => Boolean(value)).sort();
   const statuses: Record<string, number> = {};
+  const byStatus: Record<string, {
+    requests: number;
+    errors: number;
+    subrequests: number;
+    firstInvocationAt?: string;
+    lastInvocationAt?: string;
+    maxCpuTimeP99: number;
+  }> = {};
   for (const row of rows) {
     const status = row.dimensions?.status ?? "unknown";
     statuses[status] = (statuses[status] ?? 0) + (row.sum?.requests ?? 0);
+    const datetime = row.dimensions?.datetime;
+    const current = byStatus[status] ?? {
+      requests: 0,
+      errors: 0,
+      subrequests: 0,
+      maxCpuTimeP99: 0
+    };
+    current.requests += row.sum?.requests ?? 0;
+    current.errors += row.sum?.errors ?? 0;
+    current.subrequests += row.sum?.subrequests ?? 0;
+    current.maxCpuTimeP99 = Math.max(current.maxCpuTimeP99, row.quantiles?.cpuTimeP99 ?? 0);
+    if (datetime && (!current.firstInvocationAt || datetime < current.firstInvocationAt)) current.firstInvocationAt = datetime;
+    if (datetime && (!current.lastInvocationAt || datetime > current.lastInvocationAt)) current.lastInvocationAt = datetime;
+    byStatus[status] = current;
   }
+  const exceededResourcesTimeline = rows
+    .filter((row) => row.dimensions?.status === "exceededResources")
+    .sort((left, right) => (left.dimensions?.datetime ?? "").localeCompare(right.dimensions?.datetime ?? ""))
+    .slice(-120)
+    .map((row) => ({
+      datetime: row.dimensions?.datetime,
+      requests: row.sum?.requests ?? 0,
+      errors: row.sum?.errors ?? 0,
+      subrequests: row.sum?.subrequests ?? 0,
+      cpuTimeP50: row.quantiles?.cpuTimeP50 ?? 0,
+      cpuTimeP99: row.quantiles?.cpuTimeP99 ?? 0
+    }));
   return {
     ok: value.ok,
     status: value.status,
@@ -115,7 +149,9 @@ function analyticsSummary(value: ProbeResult): unknown {
     errors: rows.reduce((sum, row) => sum + (row.sum?.errors ?? 0), 0),
     subrequests: rows.reduce((sum, row) => sum + (row.sum?.subrequests ?? 0), 0),
     maxCpuTimeP99: Math.max(0, ...rows.map((row) => row.quantiles?.cpuTimeP99 ?? 0)),
-    statuses
+    statuses,
+    byStatus,
+    exceededResourcesTimeline
   };
 }
 
