@@ -1,0 +1,66 @@
+name: OP Watch Production Diagnostics (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op-watch-production-diagnostics
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    name: Inspect production without mutation
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PRODUCTION_WORKER_NAME: tcg-watch-one-piece
+      PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify read-only diagnostic credentials
+        shell: bash
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Secret manquant::$name n'est pas configuré."
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Read trigger, deployment, runtime and historical telemetry
+        run: node --import tsx scripts/diagnose-production-readonly.ts
+      - name: Observe live invocations for three scheduled minutes
+        continue-on-error: true
+        shell: bash
+        run: timeout 190s npx wrangler tail "$PRODUCTION_WORKER_NAME" --format json > production-tail.ndjson
+      - name: Summarize live tail without request secrets
+        if: always()
+        run: node --import tsx scripts/summarize-production-tail.ts
+      - name: Upload sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: op-watch-production-diagnostics-${{ github.run_id }}
+          path: |
+            cloudflare-worker/production-diagnostics.json
+            cloudflare-worker/production-tail-summary.json
+          if-no-files-found: warn
+          retention-days: 7

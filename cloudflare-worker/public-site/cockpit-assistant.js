@@ -59,7 +59,6 @@
 
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    event.stopImmediatePropagation();
     const text = textArea?.value.trim() || '';
     if (!text) return;
     if (!assistantState()?.configured) {
@@ -87,7 +86,7 @@
         button.textContent = 'Envoyer à ChatGPT';
       }
     }
-  }, true);
+  });
 
   if (typeof state !== 'undefined' && state) renderRequests();
 })();

@@ -21,7 +21,7 @@ export const bcdJeux: ConnectorDefinition = {
   authorizedFeedEnv: "AUTHORIZED_FEED_BCD_JEUX_URL",
   notes: [
     "Catégorie publique One Piece TCG dédiée avec boosters, displays et Starter Decks.",
-    "Flux produit Affilae/BeezUP autorisé disponible : il est prioritaire lorsqu'il est configuré.",
+    "Flux produit Affilae/BeezUP autorisé disponible : Discovery prioritaire, puis fiches directes qualifiées en Fast Watch.",
     "Sans flux configuré, la veille publique reste active comme fallback opérationnel.",
     "Les fiches directes exposent explicitement édition FR/EN, prix et état En stock/Rupture/Précommande lorsque le fallback HTML est utilisé.",
     "HTTP 403/429/5xx = source dégradée, jamais rupture."

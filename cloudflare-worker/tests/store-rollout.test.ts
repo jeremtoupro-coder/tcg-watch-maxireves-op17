@@ -40,6 +40,23 @@ describe("rollout 24 boutiques", () => {
     expect(CONNECTORS.every((connector) => (connector.responseMustContainAny?.length ?? 0) > 0)).toBe(true);
   });
 
+  it("ne contient aucune source hardcodée dupliquée ou non HTTPS", () => {
+    const sourceRows = CONNECTORS.flatMap((connector) => connector.sources.map((source) => ({
+      store: connector.key,
+      source: new URL(source).toString()
+    })));
+    const duplicates = sourceRows.filter((row, index) =>
+      sourceRows.findIndex((candidate) => candidate.source === row.source) !== index
+    );
+
+    expect(duplicates).toEqual([]);
+    expect(sourceRows.every((row) => new URL(row.source).protocol === "https:")).toBe(true);
+
+    const fantasy = CONNECTORS.find((connector) => connector.key === "fantasy-sphere")!;
+    expect(fantasy.sources.filter((source) => /op18/i.test(source))).toHaveLength(5);
+    expect(new Set(fantasy.sources).size).toBe(fantasy.sources.length);
+  });
+
   it("refuse une carte marketplace tant que la fiche directe n'est pas relue", async () => {
     const category = "https://market.test/category";
     const product = "https://market.test/op17/a123/w-4";
@@ -202,5 +219,66 @@ describe("rollout 24 boutiques", () => {
     expect(audit.sources[0].productLinksSeen).toBe(1);
     expect(audit.candidates).toHaveLength(1);
     expect(audit.candidates[0].url).toBe(canonical);
+  });
+
+  it("borne chaque audit boutique à 50 sous-requêtes sur le niveau Free", async () => {
+    const categories = ["https://shop.test/one-piece-a", "https://shop.test/one-piece-b"];
+    const links = Array.from({ length: 60 }, (_, index) =>
+      `https://shop.test/produit-${1000 + index}-display-op17-fr.html`
+    );
+    const connector: ConnectorDefinition = {
+      key: "test-shop",
+      name: "Test Shop",
+      sources: categories,
+      productUrlPatterns: [/\/produit-\d+-[^?#]+\.html/i],
+      followDiscoveredProductPages: true,
+      maxDiscoveredProductPages: 50,
+      maxConcurrency: 6,
+      responseMustContainAny: [/one[\s-]*piece/i],
+      notes: []
+    };
+    const categoryHtml = `<html><body><h1>One Piece Card Game</h1>${links
+      .map((url) => `<a href="${url}">Display OP17 Français</a>`)
+      .join("")}</body></html>`;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      return new Response(categories.includes(url)
+        ? categoryHtml
+        : "<html><body><h1>One Piece Display OP17 Français</h1><p>En stock</p></body></html>",
+      { status: 200 });
+    }));
+
+    const audit = await auditConnector(connector);
+
+    expect(calls).toHaveLength(50);
+    expect(audit.sources).toHaveLength(50);
+    expect(calls.slice(0, 2)).toEqual(categories);
+  });
+
+  it("borne aussi une configuration contenant plus de 50 sources initiales", async () => {
+    const sources = Array.from({ length: 52 }, (_, index) => `https://shop.test/source-${index}`);
+    const connector: ConnectorDefinition = {
+      key: "test-shop",
+      name: "Test Shop",
+      sources,
+      productUrlPatterns: [/\/produit\//i],
+      followDiscoveredProductPages: false,
+      maxConcurrency: 6,
+      responseMustContainAny: [/one[\s-]*piece/i],
+      notes: []
+    };
+    const fetchMock = vi.fn(async () => new Response(
+      "<html><body><h1>One Piece Card Game</h1></body></html>",
+      { status: 200 }
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const audit = await auditConnector(connector);
+
+    expect(fetchMock).toHaveBeenCalledTimes(50);
+    expect(audit.sources).toHaveLength(50);
+    expect(audit.warnings?.[0]).toMatch(/2 sources.*50 sous-requêtes/i);
   });
 });

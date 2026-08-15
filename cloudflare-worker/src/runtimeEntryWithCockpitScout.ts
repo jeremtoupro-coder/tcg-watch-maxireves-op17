@@ -19,6 +19,7 @@ type RuntimeWithScoutEnv = RuntimeEnv & {
 
 const SESSION_COOKIE = "opwatch_cockpit_session";
 const ALLOWED_ORIGIN = "https://op-watch-tcg-fr.pages.dev";
+const MAX_COCKPIT_BODY_BYTES = 64 * 1024;
 
 function authStub(env: RuntimeWithScoutEnv): DurableObjectStub {
   if (!env.COCKPIT_AUTH) throw new Error("COCKPIT_AUTH absent.");
@@ -141,7 +142,7 @@ async function handleAuthApi(request: Request, env: RuntimeWithScoutEnv): Promis
 }
 
 async function withCockpitSession(request: Request, env: RuntimeWithScoutEnv): Promise<Request | Response> {
-  if (!env.COCKPIT_AUTH) return request;
+  if (!env.COCKPIT_AUTH) return authJson(request, { error: "Authentification cockpit non déployée." }, 503);
   const token = cookieValue(request, SESSION_COOKIE);
   const result = await authDo(env, "/session", { token });
   if (result.status !== 200 || result.data.authenticated !== true) {
@@ -150,9 +151,30 @@ async function withCockpitSession(request: Request, env: RuntimeWithScoutEnv): P
   const readinessToken = env.PREVIEW_AUDIT_TOKEN?.trim();
   if (!readinessToken) return authJson(request, { error: "Jeton interne cockpit indisponible." }, 503);
   const headers = new Headers(request.headers);
-  headers.delete("x-op-watch-admin-password");
+  headers.delete("content-length");
   headers.set("authorization", `Bearer ${readinessToken}`);
-  return new Request(request, { headers });
+
+  if (request.method === "GET" || request.method === "HEAD") {
+    return new Request(request.url, { method: request.method, headers, redirect: request.redirect });
+  }
+
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_COCKPIT_BODY_BYTES) {
+    return authJson(request, { error: "Corps cockpit trop volumineux." }, 413);
+  }
+  if (request.bodyUsed) {
+    return authJson(request, { error: "Le corps de la requête cockpit a déjà été consommé." }, 400);
+  }
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_COCKPIT_BODY_BYTES) {
+    return authJson(request, { error: "Corps cockpit trop volumineux." }, 413);
+  }
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body,
+    redirect: request.redirect
+  });
 }
 
 export default {

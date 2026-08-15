@@ -5,17 +5,65 @@ import {
 } from "./connectors";
 import { evaluateCandidates } from "./engine";
 import { loadOfficialCalendar } from "./officialCalendar";
-import { buildActiveWatchConfig, candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
+import {
+  buildActiveWatchConfig,
+  qualifyCandidateForActiveProducts,
+  type ActiveCandidateRejectionReason,
+  type OfficialProduct
+} from "./opwatchV1";
 import { createStateStore, scopedStateStore, type StateStore } from "./state";
 import { auditStore, hasConfiguredAuthorizedFeed } from "./storeAudit";
 import { canonicalProductUrl } from "./connectorUrls";
-import { buildAllOnePieceWatchConfig, candidateForAllOnePiece } from "./watchModes";
-import type { Env, LanguageStatus, StoreAudit, StoreKey, WatchConfig } from "./types";
+import {
+  buildAllOnePieceWatchConfig,
+  qualifyCandidateForAllOnePiece,
+  type AllCandidateRejectionReason
+} from "./watchModes";
+import type { Env, LanguageStatus, ProductCandidate, StoreAudit, StoreKey, WatchConfig } from "./types";
 import opWatchV1Config from "../config/opwatch-v1.json";
 
 const DISCOVERY_INTERVAL_MINUTES = 15;
 const DISCOVERY_INTERVAL_MS = DISCOVERY_INTERVAL_MINUTES * 60_000;
 const DISCOVERY_CACHE_VERSION = 1;
+const MINIMUM_LANGUAGE_CONFIDENCE = opWatchV1Config.language.minimumAlertConfidence;
+
+export interface MonitoringCircuitAnalysis {
+  scanned: boolean;
+  observedCandidates: number;
+  candidates: number;
+  rejectedCandidates: number;
+  rejectionReasons: Record<string, number>;
+  commerciallyIneligibleCandidates: number;
+  alerts: number;
+  discordAttempted: number;
+  discordSent: number;
+  discordErrors: string[];
+  dedupeSuppressed: number;
+}
+
+function rejectionCounts<T extends string>(rows: Array<{ reasons: T[] }>): Record<T, number> {
+  const counts = {} as Record<T, number>;
+  for (const row of rows) {
+    for (const reason of row.reasons) counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function emptyCircuitAnalysis(scanned: boolean): MonitoringCircuitAnalysis {
+  return {
+    scanned,
+    observedCandidates: 0,
+    candidates: 0,
+    rejectedCandidates: 0,
+    rejectionReasons: {},
+    commerciallyIneligibleCandidates: 0,
+    alerts: 0,
+    discordAttempted: 0,
+    discordSent: 0,
+    discordErrors: [],
+    dedupeSuppressed: 0
+  };
+}
 
 interface DiscoveryCacheEntry {
   url: string;
@@ -50,7 +98,7 @@ function discoveryCacheKey(store: StoreKey): string {
 
 function connectorHosts(connector: ReturnType<typeof selectConnectors>[number]): Set<string> {
   return new Set(connector.sources.flatMap((source) => {
-    try { return [new URL(source).hostname]; } catch { return []; }
+    try { return [new URL(source).hostname.toLowerCase().replace(/^www\./, "")]; } catch { return []; }
   }));
 }
 
@@ -62,7 +110,7 @@ function normalizedFastWatchUrl(
     const normalized = canonicalProductUrl(url, connector);
     const parsed = new URL(normalized);
     return parsed.protocol === "https:" &&
-      connectorHosts(connector).has(parsed.hostname) &&
+      connectorHosts(connector).has(parsed.hostname.toLowerCase().replace(/^www\./, "")) &&
       connector.productUrlPatterns.some((pattern) => pattern.test(parsed.toString()))
       ? normalized
       : undefined;
@@ -125,6 +173,9 @@ async function fastWatchConnector(
   if (sources.length === 0) return undefined;
   return {
     ...connector,
+    // Un feed partenaire public sert à découvrir les fiches au quart d'heure.
+    // Le Fast Watch relit ensuite ces fiches, pas le catalogue complet.
+    authorizedFeedEnv: undefined,
     sources,
     followDiscoveredProductPages: false
   };
@@ -138,10 +189,19 @@ async function persistDiscoveryCache(
   acceptedLanguages: LanguageStatus[],
   discoveredAt: string
 ): Promise<void> {
-  if (!stateStore.writable || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
+  if (
+    !stateStore.writable ||
+    connector.authoritativeStructuredFeed ||
+    (connector.authorizedFeedEnv && connector.directPollingDisabledWithoutFeed === true)
+  ) return;
 
   const entries = audit.candidates.flatMap((candidate) => {
-    const qualified = candidateForActiveProducts(candidate, officialProducts, acceptedLanguages);
+    const qualified = qualifyCandidateForActiveProducts(
+      candidate,
+      officialProducts,
+      acceptedLanguages,
+      MINIMUM_LANGUAGE_CONFIDENCE
+    ).candidate;
     if (!qualified) return [];
     const normalized = normalizedFastWatchUrl(qualified.url, connector);
     return normalized ? [{
@@ -183,6 +243,8 @@ export async function runMonitoringCycle(
     forceStore?: StoreKey;
     forceDiscovery?: boolean;
     officialProducts?: OfficialProduct[];
+    /** Catalogue Bandai complet, utilisé pour empêcher ALL de classer une future référence non publiée comme historique. */
+    officialCatalogProductIds?: string[];
     acceptedLanguages?: LanguageStatus[];
     extraSourcesByStore?: Partial<Record<StoreKey, string[]>>;
     stateStore?: StateStore;
@@ -201,8 +263,8 @@ export async function runMonitoringCycle(
   evaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
   allEvaluation?: Awaited<ReturnType<typeof evaluateCandidates>>;
   analysis?: {
-    newReleases: { scanned: boolean; candidates: number; alerts: number };
-    onePieceAll: { scanned: boolean; candidates: number; alerts: number };
+    newReleases: MonitoringCircuitAnalysis;
+    onePieceAll: MonitoringCircuitAnalysis;
   };
 }> {
   if (env.MONITORING_ENABLED !== "true") {
@@ -240,13 +302,19 @@ export async function runMonitoringCycle(
   }
 
   const stateStore = options.stateStore ?? createStateStore(env);
-  const officialProducts = options.officialProducts ?? (await loadOfficialCalendar({
-    sourceUrl: opWatchV1Config.officialCatalogUrl,
-    now: options.now,
-    daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
-    daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
-    stateStore
-  })).activeProducts;
+  let officialProducts = options.officialProducts;
+  let officialCatalogProductIds = options.officialCatalogProductIds;
+  if (!officialProducts) {
+    const calendar = await loadOfficialCalendar({
+      sourceUrl: opWatchV1Config.officialCatalogUrl,
+      now: options.now,
+      daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
+      daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
+      stateStore
+    });
+    officialProducts = calendar.activeProducts;
+    officialCatalogProductIds ??= calendar.catalogProducts.map((product) => product.id);
+  }
   const dynamicConfig = officialProducts.length > 0
     ? buildActiveWatchConfig(officialProducts, acceptedLanguages)
     : emptyReleaseWatchConfig(acceptedLanguages);
@@ -276,7 +344,10 @@ export async function runMonitoringCycle(
     ? eligibleConnectors.map((connector) => ({ original: connector, fast: connector }))
     : await Promise.all(eligibleConnectors.map(async (connector) => ({
         original: connector,
-        fast: connector.authorizedFeedEnv && hasConfiguredAuthorizedFeed(connector, env) && activeIds.size > 0
+        fast: connector.authorizedFeedEnv &&
+          hasConfiguredAuthorizedFeed(connector, env) &&
+          connector.directPollingDisabledWithoutFeed === true &&
+          activeIds.size > 0
           ? connector
           : await fastWatchConnector(connector, stateStore, activeIds)
       })));
@@ -302,13 +373,18 @@ export async function runMonitoringCycle(
       audits: [],
       evaluation,
       analysis: {
-        newReleases: { scanned: officialProducts.length > 0, candidates: 0, alerts: evaluation.alertMatches.length },
-        onePieceAll: { scanned: includeDiscoveryOnly, candidates: 0, alerts: 0 }
+        newReleases: emptyCircuitAnalysis(officialProducts.length > 0),
+        onePieceAll: emptyCircuitAnalysis(includeDiscoveryOnly)
       }
     };
   }
 
-  const audits = await Promise.all(connectors.map((connector) => auditStore(connector, env, officialProducts)));
+  const audits = await Promise.all(connectors.map((connector) => auditStore(
+    connector,
+    env,
+    officialProducts,
+    { allowPublicFallback: includeDiscoveryOnly, stateStore }
+  )));
   const connectorByKey = new Map(connectors.map((connector) => [connector.key, connector]));
   const degradedStores = audits
     .map((audit) => ({
@@ -333,13 +409,22 @@ export async function runMonitoringCycle(
     }
   }
 
-  const candidates = healthyAudits.flatMap((audit) => {
+  const observedReleaseCandidates = healthyAudits.flatMap((audit) => {
     const connector = connectorByKey.get(audit.store);
     if (connector?.commercialAlertsEnabled === false) return [];
-    return audit.candidates
-      .map((candidate) => candidateForActiveProducts(candidate, officialProducts, acceptedLanguages))
-      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    return audit.candidates;
   });
+  const releaseQualifications = observedReleaseCandidates.map((candidate) =>
+    qualifyCandidateForActiveProducts(
+      candidate,
+      officialProducts,
+      acceptedLanguages,
+      MINIMUM_LANGUAGE_CONFIDENCE
+    )
+  );
+  const candidates = releaseQualifications
+    .map((qualification) => qualification.candidate)
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
 
   const baselineStores = healthyStores.filter((store) =>
     connectorByKey.get(store)?.commercialAlertsEnabled !== false
@@ -352,15 +437,26 @@ export async function runMonitoringCycle(
   });
 
   let allEvaluation: Awaited<ReturnType<typeof evaluateCandidates>> | undefined;
+  let allObservedCandidates: ProductCandidate[] = [];
+  let allQualifications: ReturnType<typeof qualifyCandidateForAllOnePiece>[] = [];
   let allCandidatesCount = 0;
   if (includeDiscoveryOnly) {
-    const allCandidates = healthyAudits.flatMap((audit) => {
+    allObservedCandidates = healthyAudits.flatMap((audit) => {
       const connector = connectorByKey.get(audit.store);
       if (connector?.commercialAlertsEnabled === false) return [];
-      return audit.candidates
-        .map((candidate) => candidateForAllOnePiece(candidate, acceptedLanguages))
-        .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+      return audit.candidates;
     });
+    allQualifications = allObservedCandidates.map((candidate) =>
+      qualifyCandidateForAllOnePiece(
+        candidate,
+        acceptedLanguages,
+        MINIMUM_LANGUAGE_CONFIDENCE,
+        officialCatalogProductIds
+      )
+    );
+    const allCandidates = allQualifications
+      .map((qualification) => qualification.candidate)
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
     allCandidatesCount = allCandidates.length;
     const allConfig = buildAllOnePieceWatchConfig(allCandidates, activeIds, acceptedLanguages);
     allEvaluation = await evaluateCandidates(allCandidates, env, {
@@ -369,6 +465,35 @@ export async function runMonitoringCycle(
       stateStore: scopedStateStore(stateStore, "one-piece-all")
     });
   }
+
+  const releaseDedupe = evaluation.deliveryDedupe;
+  const allDedupe = allEvaluation?.deliveryDedupe;
+  const releaseAnalysis: MonitoringCircuitAnalysis = {
+    scanned: officialProducts.length > 0,
+    observedCandidates: observedReleaseCandidates.length,
+    candidates: candidates.length,
+    rejectedCandidates: releaseQualifications.filter((entry) => !entry.candidate).length,
+    rejectionReasons: rejectionCounts<ActiveCandidateRejectionReason>(releaseQualifications),
+    commerciallyIneligibleCandidates: observedReleaseCandidates.filter((candidate) => candidate.commercialEligible === false).length,
+    alerts: evaluation.alertMatches.length,
+    discordAttempted: evaluation.discordDispatch.attempted,
+    discordSent: evaluation.discordDispatch.sent,
+    discordErrors: evaluation.discordDispatch.errors.slice(0, 8),
+    dedupeSuppressed: releaseDedupe.suppressedByClaim + releaseDedupe.suppressedByReceipt
+  };
+  const allAnalysis: MonitoringCircuitAnalysis = {
+    scanned: includeDiscoveryOnly,
+    observedCandidates: allObservedCandidates.length,
+    candidates: allCandidatesCount,
+    rejectedCandidates: allQualifications.filter((entry) => !entry.candidate).length,
+    rejectionReasons: rejectionCounts<AllCandidateRejectionReason>(allQualifications),
+    commerciallyIneligibleCandidates: allQualifications.filter((entry) => entry.candidate?.commercialEligible === false).length,
+    alerts: allEvaluation?.alertMatches.length ?? 0,
+    discordAttempted: allEvaluation?.discordDispatch.attempted ?? 0,
+    discordSent: allEvaluation?.discordDispatch.sent ?? 0,
+    discordErrors: allEvaluation?.discordDispatch.errors.slice(0, 8) ?? [],
+    dedupeSuppressed: (allDedupe?.suppressedByClaim ?? 0) + (allDedupe?.suppressedByReceipt ?? 0)
+  };
 
   return {
     status: "completed",
@@ -382,16 +507,8 @@ export async function runMonitoringCycle(
     evaluation,
     ...(allEvaluation ? { allEvaluation } : {}),
     analysis: {
-      newReleases: {
-        scanned: officialProducts.length > 0,
-        candidates: candidates.length,
-        alerts: evaluation.alertMatches.length
-      },
-      onePieceAll: {
-        scanned: includeDiscoveryOnly,
-        candidates: allCandidatesCount,
-        alerts: allEvaluation?.alertMatches.length ?? 0
-      }
+      newReleases: releaseAnalysis,
+      onePieceAll: allAnalysis
     }
   };
 }

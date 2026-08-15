@@ -14,8 +14,13 @@ export const leclerc: ConnectorDefinition = {
   followDiscoveredProductPages: true,
   maxDiscoveredProductPages: 20,
   requiresDirectProductPageForAlerts: true,
+  requiredSellerPatterns: [
+    /\bvendu(?:e)?(?:\s+et\s+(?:exp[eé]di[eé]|livr[eé])(?:e)?)?\s+par\s*:?[\s-]*e\.?\s*leclerc\b/i,
+    /\bsnc\s+lcommerce\b/i
+  ],
+  requiredSellerLabel: "E.Leclerc",
   notes: [
-    "Marketplace E.Leclerc autorisée : le vendeur est informatif mais n'est plus un motif de rejet.",
-    "OP Watch ne prétend jamais qu'une offre est vendue par E.Leclerc sans preuve."
+    "Marketplace : une fiche directe et une preuve explicite du vendeur E.Leclerc/SNC LCommerce sont obligatoires.",
+    "Toute offre tierce ou sans vendeur vérifiable reste observée mais ne peut pas déclencher Discord."
   ]
 };

@@ -157,6 +157,39 @@ export function parseOfficialCatalogWithMonthFallback(html: string): OfficialCal
   const products = new Map<string, OfficialCalendarProduct>(exactProducts.map((product) => [product.id, product]));
 
   const text = stripHtml(html);
+
+  // Bandai publie parfois un produit commun sous une référence composite,
+  // par exemple [OP15-EB04], avec une seule date après le crochet. Le parseur
+  // code-par-code voit alors OP15 avant EB04 et n'attribue naturellement la
+  // date qu'au dernier code. Ce passage applique explicitement la même date à
+  // tous les codes du groupe officiel, sans élargir le matching marchand.
+  const bracketMatches = [...text.matchAll(/\[([^\]]+)\]/g)];
+  for (let index = 0; index < bracketMatches.length; index += 1) {
+    const bracket = bracketMatches[index];
+    const codes = [...bracket[1].matchAll(/\b(OP|EB|PRB|ST|DP|TS)[-\s]?(\d{1,2})\b/gi)]
+      .map((match) => `${match[1].toUpperCase()}-${match[2].padStart(2, "0")}`);
+    if (codes.length < 2) continue;
+
+    const start = bracket.index ?? 0;
+    const end = bracketMatches[index + 1]?.index ?? Math.min(text.length, start + 900);
+    const segment = text.slice(start, end);
+    const exactReleaseDate = parseExactReleaseField(segment);
+    const releaseDate = exactReleaseDate ?? parseMonthOnlyReleaseField(segment);
+    if (!releaseDate) continue;
+
+    for (const canonical of [...new Set(codes)]) {
+      const incoming: OfficialCalendarProduct = {
+        id: canonical,
+        family: familyFromCode(canonical),
+        label: products.get(canonical)?.label ?? canonical,
+        releaseDate,
+        releaseDatePrecision: exactReleaseDate ? "exact" : "month_assumed_first",
+        aliases: aliasesForProduct(canonical)
+      };
+      products.set(canonical, mergeOfficialCalendarProduct(products.get(canonical), incoming));
+    }
+  }
+
   const codePattern = /\b(OP|EB|PRB|ST|DP|TS)[-\s]?(\d{1,2})\b|\[([A-Z]{2,4})-(\d{1,2})\]/gi;
   const matches = [...text.matchAll(codePattern)];
 

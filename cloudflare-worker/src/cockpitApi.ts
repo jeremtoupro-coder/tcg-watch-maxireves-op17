@@ -8,7 +8,12 @@ import {
   type RuntimeControlConfig
 } from "./controlPlane";
 import { dispatchRuntimeHeartbeat } from "./heartbeat";
-import { runDistributedMonitoringCycle, type RuntimeEnv } from "./durableMonitoring";
+import {
+  runDistributedMonitoringCycle,
+  type RuntimeEnv,
+  type StoreRuntimeHealth
+} from "./durableMonitoring";
+import { markSchedulerHealth, readSchedulerHealth } from "./schedulerHealth";
 import {
   DEFAULT_OPENAI_MODEL,
   requestOpenAiAssistant,
@@ -16,34 +21,18 @@ import {
 } from "./openaiAssistant";
 import type { LanguageStatus, StoreKey } from "./types";
 
-const ADMIN_PASSWORD_SHA256 = "1ed7f0d774b4b9b878c9579c32db88d6983dcbf6936f1e12995d3fffe33c0670";
 const ALLOWED_ORIGIN = "https://op-watch-tcg-fr.pages.dev";
 const ACTIVE_STALE_MS = 3 * 60_000;
 const DISCOVERY_STALE_MS = 20 * 60_000;
 
 type StatusLevel = "green" | "amber" | "red" | "gray";
 
-interface StoreRuntimeHealth {
-  store: StoreKey;
-  status: "completed" | "degraded" | "backoff" | "overlap" | "error";
-  checkedAt: string;
-  completedAt?: string;
-  durationMs: number;
-  merchantDurationMs: number;
-  candidates: number;
-  healthy?: boolean;
-  sourceKind?: string;
-  error?: string;
-  backoffUntil?: string;
-  discovery?: boolean;
-}
-
 function corsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("origin");
   return {
     "access-control-allow-origin": origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN,
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type,x-op-watch-admin-password,authorization",
+    "access-control-allow-headers": "content-type,authorization",
     "access-control-max-age": "600",
     "vary": "Origin"
   };
@@ -70,17 +59,7 @@ function constantTimeEqual(left: string, right: string): boolean {
   return mismatch === 0;
 }
 
-async function sha256(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function authorized(request: Request, env: RuntimeEnv): Promise<boolean> {
-  const password = request.headers.get("x-op-watch-admin-password") ?? "";
-  if (password.length >= 12 && password.length <= 200 && constantTimeEqual(await sha256(password), ADMIN_PASSWORD_SHA256)) {
-    return true;
-  }
   const expected = env.PREVIEW_AUDIT_TOKEN?.trim() ?? "";
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
   return Boolean(expected && bearer) && constantTimeEqual(bearer, expected);
@@ -143,6 +122,10 @@ async function readStoreHealth(env: RuntimeEnv, store: StoreKey): Promise<StoreR
 
 async function readCalendarView(env: RuntimeEnv): Promise<{
   fetchedAt?: string;
+  sourcePages?: number;
+  cache?: "hit" | "miss" | "stale";
+  cacheAgeMs?: number;
+  calendarWarning?: string;
   activeProducts: Array<{ id: string; label: string; releaseDate: string; aliases: string[] }>;
   acceptedLanguages?: LanguageStatus[];
   controlUpdatedAt?: string;
@@ -154,14 +137,52 @@ async function readCalendarView(env: RuntimeEnv): Promise<{
   })));
 }
 
-function healthAgeMs(health: StoreRuntimeHealth | undefined, now: number): number | undefined {
-  if (!health?.checkedAt) return undefined;
-  const parsed = Date.parse(health.checkedAt);
+function timestampAgeMs(value: string | undefined, now: number): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? Math.max(0, now - parsed) : undefined;
 }
 
-function classifyStore(
-  connector: typeof CONNECTORS[number],
+function healthAgeMs(health: StoreRuntimeHealth | undefined, now: number): number | undefined {
+  return timestampAgeMs(health?.checkedAt, now);
+}
+
+const REJECTION_LABELS: Record<string, string> = {
+  reference_active_absente_ou_ambigue: "référence hors calendrier/ambiguë",
+  reference_one_piece_absente_ou_ambigue: "référence One Piece absente/ambiguë",
+  reference_officielle_inconnue: "référence non publiée par Bandai",
+  format_non_cible: "format non ciblé",
+  langue_non_acceptee: "langue FR non confirmée",
+  confiance_langue_insuffisante: "confiance langue < 90",
+  disponibilite_inconnue: "stock non déterminé",
+  validation_commerciale_ou_vendeur_absente: "vendeur/fiche directe non validé",
+  accessoire_ou_carte_unitaire: "accessoire/carte unitaire"
+};
+
+function rejectionDetail(health: StoreRuntimeHealth): string {
+  const reasons = health.analysis?.newReleases.rejectionReasons ?? {};
+  const ranked = Object.entries(reasons)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${count} ${REJECTION_LABELS[reason] ?? reason}`);
+  return ranked.length ? ` Filtres principaux : ${ranked.join(", ")}.` : "";
+}
+
+function warningDetail(health: StoreRuntimeHealth): string {
+  return health.warnings?.length ? ` Avertissement : ${health.warnings[0]}` : "";
+}
+
+function revalidationDetail(health: StoreRuntimeHealth): string {
+  const unchanged = health.sourceChecks?.filter((source) => source.notModified).length ?? 0;
+  const deferred = health.sourceChecks?.filter((source) => source.deferred).length ?? 0;
+  if (deferred > 0) return ` ${deferred} catalogue partenaire sans validateur reporté à la prochaine Discovery.`;
+  return unchanged > 0
+    ? ` ${unchanged} flux partenaire revalidé sans changement (HTTP 304).`
+    : "";
+}
+
+export function classifyStoreHealth(
   configured: ReturnType<typeof configuredStoreStatus>,
   health: StoreRuntimeHealth | undefined,
   now: number
@@ -179,7 +200,7 @@ function classifyStore(
     };
   }
   if (configured === "discovery_only") {
-    const age = healthAgeMs(health, now);
+    const age = timestampAgeMs(health?.lastDiscoveryAt, now);
     if (health && age !== undefined && age <= DISCOVERY_STALE_MS && health.status === "completed") {
       return {
         level: "amber",
@@ -219,39 +240,60 @@ function classifyStore(
       ageMs: age
     };
   }
-  if (connector.key === "amazon-fr" && health.candidates === 0) {
+
+  const fastWatchAge = timestampAgeMs(health.lastFastWatchAt, now);
+  if (fastWatchAge !== undefined && fastWatchAge <= ACTIVE_STALE_MS) {
     return {
-      level: "red",
-      label: "Non opérationnel",
-      detail: "Le moteur tourne mais aucune source Amazon exploitable n'est actuellement qualifiée.",
-      ageMs: age
+      level: "green",
+      label: "Fast Watch observé",
+      detail: `${health.successfulMerchantSources} source${health.successfulMerchantSources > 1 ? "s" : ""} marchande${health.successfulMerchantSources > 1 ? "s" : ""} réellement relue${health.successfulMerchantSources > 1 ? "s" : ""} ; ${health.analysis?.newReleases.candidates ?? 0} offre${(health.analysis?.newReleases.candidates ?? 0) > 1 ? "s" : ""} qualifiée${(health.analysis?.newReleases.candidates ?? 0) > 1 ? "s" : ""}.${revalidationDetail(health)}${rejectionDetail(health)}${warningDetail(health)}`,
+      ageMs: fastWatchAge
+    };
+  }
+
+  const discoveryAge = timestampAgeMs(health.lastDiscoveryAt, now);
+  if (discoveryAge !== undefined && discoveryAge <= DISCOVERY_STALE_MS) {
+    return {
+      level: "amber",
+      label: health.deferredFastWatch ? "Discovery active" : "Fast Watch à confirmer",
+      detail: health.deferredFastWatch
+        ? `La Discovery est réellement observée, mais aucune fiche directe active et qualifiée n'est encore promue au polling minute.${revalidationDetail(health)}${rejectionDetail(health)}${warningDetail(health)}`
+        : `La Discovery est récente, mais aucun contrôle marchand Fast Watch n'a été observé depuis moins de 3 minutes.${revalidationDetail(health)}${rejectionDetail(health)}${warningDetail(health)}`,
+      ageMs: discoveryAge
     };
   }
 
   return {
-    level: "green",
-    label: "Opérationnel",
-    detail: health.candidates > 0
-      ? `${health.candidates} candidat${health.candidates > 1 ? "s" : ""} observé${health.candidates > 1 ? "s" : ""} au dernier cycle.`
-      : "Cycle sain ; aucun candidat cible observé sur ce passage.",
+    level: "red",
+    label: "Aucun contrôle marchand récent",
+    detail: "Le Durable Object s'est réveillé, mais aucune lecture marchande réussie et récente ne prouve que cette boutique peut détecter une offre.",
     ageMs: age
   };
 }
 
 async function buildStatus(env: RuntimeEnv) {
   const now = Date.now();
-  const [control, calendar, healthRows] = await Promise.all([
+  const [control, calendar, healthRows, schedulerState] = await Promise.all([
     readControlConfig(env),
     readCalendarView(env),
     Promise.all(CONNECTORS.map(async (connector) => ({
       connector,
       configured: configuredStoreStatus(connector, env),
       health: await readStoreHealth(env, connector.key)
-    })))
+    }))),
+    readSchedulerHealth(env).catch((error) => ({
+      health: null,
+      observed: {
+        status: "never_seen" as const,
+        observedRecently: false,
+        staleAfterMs: ACTIVE_STALE_MS
+      },
+      error: error instanceof Error ? error.message : String(error)
+    }))
   ]);
 
   const stores = healthRows.map(({ connector, configured, health }) => {
-    const state = classifyStore(connector, configured, health, now);
+    const state = classifyStoreHealth(configured, health, now);
     return {
       key: connector.key,
       name: connector.name,
@@ -259,6 +301,18 @@ async function buildStatus(env: RuntimeEnv) {
       sourceKind: health?.sourceKind ?? (configured === "pending_authorized_feed" ? "authorized_feed_required" : "unknown"),
       candidates: health?.candidates ?? null,
       lastCheck: health?.checkedAt ?? null,
+      lastMerchantCheck: health?.lastMerchantCheckAt ?? null,
+      lastDiscovery: health?.lastDiscoveryAt ?? null,
+      lastFastWatch: health?.lastFastWatchAt ?? null,
+      lastMerchantCheckAgeMs: timestampAgeMs(health?.lastMerchantCheckAt, now) ?? null,
+      lastDiscoveryAgeMs: timestampAgeMs(health?.lastDiscoveryAt, now) ?? null,
+      lastFastWatchAgeMs: timestampAgeMs(health?.lastFastWatchAt, now) ?? null,
+      merchantSources: health?.merchantSources ?? null,
+      successfulMerchantSources: health?.successfulMerchantSources ?? null,
+      deferredFastWatch: health?.deferredFastWatch ?? null,
+      analysis: health?.analysis ?? null,
+      warnings: health?.warnings ?? [],
+      sourceChecks: health?.sourceChecks ?? [],
       durationMs: health?.durationMs ?? null,
       merchantDurationMs: health?.merchantDurationMs ?? null,
       runtimeStatus: health?.status ?? null,
@@ -272,12 +326,14 @@ async function buildStatus(env: RuntimeEnv) {
     red: stores.filter((store) => store.level === "red").length,
     gray: stores.filter((store) => store.level === "gray").length
   };
-  const runtimeLive = env.MONITORING_ENABLED === "true" &&
+  const runtimeConfigured = env.MONITORING_ENABLED === "true" &&
     env.WRITE_STATE === "true" &&
     env.DISCORD_MODE === "live" &&
     env.SCHEDULER_MODE === "live" &&
+    env.CRON_CONFIGURED === "true" &&
     env.RUNTIME_TEST_MODE !== "true" &&
     Boolean(env.STORE_MONITORS && env.CALENDAR_COORDINATOR);
+  const runtimeLive = runtimeConfigured && schedulerState.observed.observedRecently;
 
   const activeById = new Map(calendar.activeProducts.map((product) => [product.id, product]));
   const manualById = new Map(control.manualProducts.map((product) => [product.id, product]));
@@ -307,10 +363,17 @@ async function buildStatus(env: RuntimeEnv) {
     checkedAt: new Date(now).toISOString(),
     runtime: {
       live: runtimeLive,
+      configuredLive: runtimeConfigured,
       monitoring: env.MONITORING_ENABLED === "true",
       stateWrites: env.WRITE_STATE === "true",
       discord: env.DISCORD_MODE === "live" && Boolean(env.DISCORD_WEBHOOK_URL),
-      scheduler: env.SCHEDULER_MODE === "live",
+      scheduler: schedulerState.observed.observedRecently,
+      schedulerConfigured: env.CRON_CONFIGURED === "true",
+      schedulerObserved: schedulerState.observed,
+      schedulerHealth: schedulerState.health,
+      ...(Object.hasOwn(schedulerState, "error")
+        ? { schedulerHealthError: (schedulerState as { error?: string }).error }
+        : {}),
       runtimeTest: env.RUNTIME_TEST_MODE === "true",
       stateBackend: "durable_objects",
       heartbeatParis: ["10:00", "22:00"]
@@ -319,6 +382,10 @@ async function buildStatus(env: RuntimeEnv) {
     stores,
     calendar: {
       fetchedAt: calendar.fetchedAt ?? null,
+      sourcePages: calendar.sourcePages ?? null,
+      cache: calendar.cache ?? null,
+      cacheAgeMs: calendar.cacheAgeMs ?? null,
+      warning: calendar.calendarWarning ?? null,
       activeProducts: calendar.activeProducts,
       controllableProducts,
       acceptedLanguages: calendar.acceptedLanguages ?? control.languages,
@@ -513,13 +580,29 @@ async function mutateControl(request: Request, env: RuntimeEnv): Promise<Respons
       break;
     }
     case "heartbeatNow": {
-      const cycle = await runDistributedMonitoringCycle(env, { mode: "live", scheduledTime: Date.now() });
-      const delivery = await dispatchRuntimeHeartbeat(cycle, env, true);
-      return json(request, { ok: delivery.sent === 1, delivery, cycle: {
-        completedStores: cycle.stores.filter((store) => store.status === "completed").length,
-        pendingStores: cycle.pendingAuthorizedFeedStores,
-        incidents: cycle.stores.filter((store) => store.status !== "completed").map((store) => ({ store: store.store, status: store.status }))
-      } }, delivery.sent === 1 ? 200 : 502);
+      const scheduledTime = Date.now();
+      await markSchedulerHealth(env, { kind: "manual_heartbeat_started", scheduledTime }).catch(() => undefined);
+      try {
+        const cycle = await runDistributedMonitoringCycle(env, { mode: "live", scheduledTime });
+        const delivery = await dispatchRuntimeHeartbeat(cycle, env, true);
+        await markSchedulerHealth(env, {
+          kind: delivery.sent === 1 ? "manual_heartbeat_completed" : "manual_heartbeat_failed",
+          scheduledTime,
+          ...(delivery.sent === 1 ? {} : { error: delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi." })
+        }).catch(() => undefined);
+        return json(request, { ok: delivery.sent === 1, delivery, cycle: {
+          completedStores: cycle.stores.filter((store) => store.status === "completed").length,
+          pendingStores: cycle.pendingAuthorizedFeedStores,
+          incidents: cycle.stores.filter((store) => store.status !== "completed").map((store) => ({ store: store.store, status: store.status }))
+        } }, delivery.sent === 1 ? 200 : 502);
+      } catch (error) {
+        await markSchedulerHealth(env, {
+          kind: "manual_heartbeat_failed",
+          scheduledTime,
+          error: error instanceof Error ? error.message : String(error)
+        }).catch(() => undefined);
+        throw error;
+      }
     }
     case "runStoreNow": {
       const store = typeof body.store === "string" ? body.store : "";

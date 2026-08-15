@@ -159,6 +159,8 @@ describe("OP Watch V1 - qualification produit", () => {
       matchedReferences: ["OP-17"],
       format: "display"
     });
+    expect(candidateForActiveProducts({ ...base, languageConfidence: 89 }, [OP17], ["Français confirmé"], 90)).toBeUndefined();
+    expect(candidateForActiveProducts({ ...base, languageConfidence: 90 }, [OP17], ["Français confirmé"], 90)).toBeDefined();
     expect(candidateForActiveProducts({ ...base, language: "Anglais détecté" }, [OP17])).toBeUndefined();
     expect(candidateForActiveProducts({ ...base, availability: "unknown" }, [OP17])).toBeUndefined();
     expect(candidateForActiveProducts({ ...base, title: "Sleeves OP-17 Français" }, [OP17])).toBeUndefined();

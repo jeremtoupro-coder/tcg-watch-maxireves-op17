@@ -43,6 +43,29 @@ describe("calendrier officiel français", () => {
     expect(parseOfficialCatalog(html)).toEqual([]);
   });
 
+  it("attribue la date Bandai à chaque code d'une référence composite", async () => {
+    const composite = `
+      <html><head><title>PRODUITS | ONE PIECE CARD GAME</title></head><body>
+        <h1>PRODUITS ONE PIECE CARD GAME</h1>
+        <article>BOOSTER -AVENTURE SUR L'ÎLE DE DIEU- [OP15-EB04]
+          Date de sortie 3 avril 2026</article>
+        <nav>1 / 1</nav>
+      </body></html>
+    `;
+    const calendar = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-03-01T12:00:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      fetcher: vi.fn(async () => new Response(composite, { status: 200 })) as typeof fetch
+    });
+
+    expect(calendar.catalogProducts
+      .map((product) => `${product.id}:${product.releaseDate}`)
+      .sort()).toEqual(["EB-04:2026-04-03", "OP-15:2026-04-03"]);
+    expect(calendar.activeProducts.map((product) => product.id).sort()).toEqual(["EB-04", "OP-15"]);
+  });
+
   it("refuse deux dates exactes contradictoires pour une même référence", () => {
     expect(() => parseOfficialCatalog(`
       <article>BOOSTER -TEST- [OP-17] Date de sortie 28 août 2026</article>
@@ -145,6 +168,37 @@ describe("calendrier officiel français", () => {
     expect(first.cache).toBe("miss");
     expect(second.cache).toBe("hit");
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("continue les veilles avec le dernier catalogue vérifié si Bandai tombe", async () => {
+    const store = new MemoryStateStore({ writable: true });
+    const valid = PAGE_1.replace("1 / 2", "1 / 1");
+    const firstFetcher = vi.fn(async () => new Response(valid, { status: 200 })) as typeof fetch;
+    const first = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-08-09T12:00:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      stateStore: store,
+      fetcher: firstFetcher
+    });
+    const failingFetcher = vi.fn(async () => new Response("service unavailable", { status: 503 })) as typeof fetch;
+    const stale = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-08-09T12:16:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      stateStore: store,
+      fetcher: failingFetcher
+    });
+
+    expect(first.cache).toBe("miss");
+    expect(stale.cache).toBe("stale");
+    expect(stale.cacheAgeMs).toBe(16 * 60_000);
+    expect(stale.fetchedAt).toBe(first.fetchedAt);
+    expect(stale.activeProducts.map((product) => product.id)).toEqual(first.activeProducts.map((product) => product.id));
+    expect(stale.warning).toMatch(/Bandai.*HTTP 503/i);
+    expect(failingFetcher).toHaveBeenCalledTimes(2);
   });
 
   it("rejette une page de challenge HTTP 200", () => {

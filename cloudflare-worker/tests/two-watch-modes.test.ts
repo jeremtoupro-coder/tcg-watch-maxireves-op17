@@ -45,6 +45,23 @@ describe("séparation des deux veilles", () => {
     expect(config.products.map((product) => product.id)).toEqual(["OP-09", "OP-17"]);
   });
 
+  it("ne classe pas une future référence marchande non publiée comme historique", () => {
+    const op18 = candidate("OP-18", "available");
+    expect(candidateForAllOnePiece(
+      op18,
+      ["Français confirmé"],
+      90,
+      ["OP-01", "OP-09", "OP-17", "EB-05"]
+    )).toBeUndefined();
+
+    expect(candidateForAllOnePiece(
+      candidate("OP-09", "available"),
+      ["Français confirmé"],
+      90,
+      ["OP-01", "OP-09", "OP-17", "EB-05"]
+    )?.matchedReferences).toEqual(["OP-09"]);
+  });
+
   it("baseline ALL silencieuse puis alerte uniquement sur un vrai restock historique", async () => {
     const root = new MemoryStateStore({ writable: true });
     const allState = scopedStateStore(root, "one-piece-all");
@@ -82,6 +99,37 @@ describe("séparation des deux veilles", () => {
     expect(second.alertMatches[0].change.type).toBe("back_in_stock");
     expect(second.alertMatches[0].rule.scope).toBe("one_piece_all");
     expect(buildDiscordPayload(second.alertMatches[0]).embeds[0].title).toContain("ONE PIECE ALL");
+  });
+
+  it("prend le relais après la fenêtre Nouvelles sorties sans faux new_listing", async () => {
+    const root = new MemoryStateStore({ writable: true });
+    const allState = scopedStateStore(root, "one-piece-all");
+    const op17 = candidateForAllOnePiece(candidate("OP-17", "available"))!;
+
+    const whileActive = await evaluateCandidates([op17], {
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run"
+    }, {
+      config: buildAllOnePieceWatchConfig([op17], ["OP-17"]),
+      stateStore: allState,
+      baselineStores: ["esprit-jeu"],
+      now: "2026-09-30T12:00:00.000Z",
+      claimSettleMs: 0
+    });
+    expect(whileActive.alertMatches).toEqual([]);
+
+    const afterWindow = await evaluateCandidates([op17], {
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run"
+    }, {
+      config: buildAllOnePieceWatchConfig([op17], []),
+      stateStore: allState,
+      baselineStores: ["esprit-jeu"],
+      now: "2026-10-01T12:00:00.000Z",
+      claimSettleMs: 0
+    });
+    expect(afterWindow.changes).toEqual([]);
+    expect(afterWindow.alertMatches).toEqual([]);
   });
 
   it("rend une règle historique sans scope comme une alerte Nouvelles sorties", () => {

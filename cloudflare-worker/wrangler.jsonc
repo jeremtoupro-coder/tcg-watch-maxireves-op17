@@ -18,6 +18,7 @@
     "WRITE_STATE": "false",
     "DISCORD_MODE": "dry-run",
     "SCHEDULER_MODE": "disabled",
+    "CRON_CONFIGURED": "false",
     "RUNTIME_TEST_MODE": "false"
   }
 }

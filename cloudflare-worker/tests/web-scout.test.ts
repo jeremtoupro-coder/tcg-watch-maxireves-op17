@@ -6,6 +6,7 @@ import {
   hasCommercialSignal,
   hasFrenchSignal,
   isWebScoutTick,
+  isWebScoutVerificationCandidateUrl,
   matchedProductIds,
   registeredDomainFromUrl,
   registrationDateFromRdap,
@@ -61,6 +62,18 @@ describe("Web Scout", () => {
     expect(hasCommercialSignal("Article de blog One Piece")).toBe(false);
     expect(hasFrenchSignal("OP-18 FR - français")).toBe(true);
     expect(hasFrenchSignal("OP-18 Japanese version JP")).toBe(false);
+    expect(hasFrenchSignal("Display One Piece OP-18 en stock")).toBe(false);
+    expect(hasFrenchSignal("OP-18 FR / English version")).toBe(false);
+  });
+
+  it("rejette les marketplaces bloquées mais conserve les réseaux sociaux vérifiables", () => {
+    expect(isWebScoutVerificationCandidateUrl("https://boutique-fiable.fr/op17-fr")).toBe(true);
+    expect(isWebScoutVerificationCandidateUrl("https://www.ebay.fr/itm/op17")).toBe(false);
+    // Une publication sociale n'est jamais approuvée sur son URL seule :
+    // verifySearchResult exige ensuite une référence, un signal commercial FR
+    // et une boutique connue ou un domaine marchand légalement vérifié.
+    expect(isWebScoutVerificationCandidateUrl("https://www.instagram.com/p/op17")).toBe(true);
+    expect(isWebScoutVerificationCandidateUrl("http://boutique-fiable.fr/op17-fr")).toBe(false);
   });
 
   it("recognizes French legal identifiers and address evidence", () => {

@@ -7,6 +7,10 @@ interface WranglerConfig {
 
 const runId = process.env.RUNTIME_TEST_RUN_ID?.trim();
 if (!runId) throw new Error("RUNTIME_TEST_RUN_ID est obligatoire.");
+const schedulerTest = process.env.RUNTIME_TEST_SCHEDULER_MODE === "true";
+const fallbackTest = process.env.RUNTIME_TEST_FALLBACK_MODE === "true";
+if (schedulerTest && fallbackTest) throw new Error("Les tests Cron et fallback doivent être déployés séparément.");
+const automaticTest = schedulerTest || fallbackTest;
 
 const base = JSON.parse(await readFile("wrangler.jsonc", "utf8")) as WranglerConfig;
 const vars = {
@@ -14,9 +18,11 @@ const vars = {
   MONITORING_ENABLED: "true",
   WRITE_STATE: "true",
   DISCORD_MODE: "dry-run",
-  SCHEDULER_MODE: "disabled",
+  SCHEDULER_MODE: automaticTest ? "test" : "disabled",
+  CRON_CONFIGURED: automaticTest ? "true" : "false",
   RUNTIME_TEST_MODE: "true",
   RUNTIME_TEST_RUN_ID: runId,
+  PRODUCTION_PROBE_MODE: "true",
   ALLOW_PUBLIC_AUDIT: "false"
 };
 
@@ -36,10 +42,10 @@ const generated: WranglerConfig = {
       new_sqlite_classes: ["StoreMonitorDurableObject", "CalendarCoordinatorDurableObject"]
     }
   ],
-  triggers: { crons: [] }
+  triggers: { crons: schedulerTest ? ["* * * * *"] : [] }
 };
 
 delete generated.kv_namespaces;
 
 await writeFile("wrangler.runtime-test.generated.json", `${JSON.stringify(generated, null, 2)}\n`, "utf8");
-console.log(`Runtime test config generated: worker=${String(generated.name)}, run=${runId}, cron=disabled, discord=dry-run`);
+console.log(`Runtime test config generated: worker=${String(generated.name)}, run=${runId}, cron=${schedulerTest ? "* * * * *" : "disabled"}, fallback=${fallbackTest ? "alarm" : "disabled"}, discord=dry-run`);

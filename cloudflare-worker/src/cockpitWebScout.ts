@@ -1,7 +1,7 @@
 import type { RuntimeEnv } from "./durableMonitoring";
+import { readSchedulerHealth } from "./schedulerHealth";
 import type { WebScoutHealth } from "./webScout";
 
-const ADMIN_PASSWORD_SHA256 = "1ed7f0d774b4b9b878c9579c32db88d6983dcbf6936f1e12995d3fffe33c0670";
 const ALLOWED_ORIGIN = "https://op-watch-tcg-fr.pages.dev";
 const WEB_SCOUT_MINUTE = 7;
 
@@ -12,7 +12,7 @@ function corsHeaders(request: Request): Record<string, string> {
   return {
     "access-control-allow-origin": origin === ALLOWED_ORIGIN ? ALLOWED_ORIGIN : ALLOWED_ORIGIN,
     "access-control-allow-methods": "GET,OPTIONS",
-    "access-control-allow-headers": "content-type,x-op-watch-admin-password,authorization",
+    "access-control-allow-headers": "content-type,authorization",
     "access-control-max-age": "600",
     "vary": "Origin"
   };
@@ -39,17 +39,7 @@ function constantTimeEqual(left: string, right: string): boolean {
   return mismatch === 0;
 }
 
-async function sha256(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function authorized(request: Request, env: RuntimeEnv): Promise<boolean> {
-  const password = request.headers.get("x-op-watch-admin-password") ?? "";
-  if (password.length >= 12 && password.length <= 200 && constantTimeEqual(await sha256(password), ADMIN_PASSWORD_SHA256)) {
-    return true;
-  }
   const expected = env.PREVIEW_AUDIT_TOKEN?.trim() ?? "";
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
   return Boolean(expected && bearer) && constantTimeEqual(bearer, expected);
@@ -85,6 +75,11 @@ export async function handleCockpitWebScout(request: Request, env: CockpitWebSco
   const searchConfigured = Boolean(env.BRAVE_SEARCH_API_KEY?.trim());
   let health: WebScoutHealth | null = null;
   let healthError: string | undefined;
+  const scheduler = await readSchedulerHealth(env).catch((error) => ({
+    health: null,
+    observed: { status: "never_seen" as const, observedRecently: false, staleAfterMs: 3 * 60_000 },
+    error: error instanceof Error ? error.message : String(error)
+  }));
 
   if (bindingPresent) {
     try {
@@ -96,15 +91,17 @@ export async function handleCockpitWebScout(request: Request, env: CockpitWebSco
 
   return json(request, {
     checkedAt: new Date(now).toISOString(),
-    ready: bindingPresent && searchConfigured && env.SCHEDULER_MODE === "live" && env.RUNTIME_TEST_MODE !== "true",
+    ready: bindingPresent && searchConfigured && scheduler.observed.observedRecently && env.RUNTIME_TEST_MODE !== "true",
     bindingPresent,
     searchConfigured,
-    schedulerLive: env.SCHEDULER_MODE === "live",
+    schedulerConfigured: env.CRON_CONFIGURED === "true",
+    schedulerObserved: scheduler.observed,
     cadence: {
       kind: "hourly",
       minute: WEB_SCOUT_MINUTE,
       label: "Toutes les heures à :07",
-      nextScheduledAt: nextScheduledAt(now)
+      nextScheduledAt: health?.nextExpectedRunAt ?? nextScheduledAt(now),
+      overdue: health?.checkedAt ? now - Date.parse(health.checkedAt) > 65 * 60_000 : true
     },
     health,
     ...(healthError ? { healthError } : {})

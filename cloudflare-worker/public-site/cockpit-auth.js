@@ -1,132 +1,85 @@
 (() => {
   const ALLOWED_EMAIL = 'jrm.touitou@gmail.com';
-  const SESSION_SENTINEL = 'session-cookie-auth';
-  const PASSWORD_KEY = 'opwatch-cockpit-password';
   const login = document.getElementById('login');
   const loginForm = document.getElementById('loginForm');
+  const emailInput = document.getElementById('cockpitEmail');
   const passwordInput = document.getElementById('password');
   const loginError = document.getElementById('loginError');
+  const status = document.getElementById('authStatus');
+  const forgot = document.getElementById('forgotPassword');
   const logout = document.getElementById('logout');
-  if (!login || !loginForm || !passwordInput || !loginError) return;
-
-  const card = loginForm.closest('.login-card');
-  const heading = card?.querySelector('h2');
-  const intro = heading?.nextElementSibling;
-  if (heading) heading.textContent = 'Connexion';
-  if (intro) intro.textContent = 'Accès privé réservé au propriétaire du cockpit.';
-
-  const passwordField = passwordInput.closest('.field');
-  const emailField = document.createElement('div');
-  emailField.className = 'field';
-  emailField.innerHTML = '<label>Adresse e-mail</label><input id="cockpitEmail" type="email" inputmode="email" autocomplete="username" required>';
-  passwordField?.before(emailField);
-  const emailInput = emailField.querySelector('input');
-  if (emailInput) emailInput.value = ALLOWED_EMAIL;
-  const passwordLabel = passwordField?.querySelector('label');
-  if (passwordLabel) passwordLabel.textContent = 'Mot de passe';
-
-  const submit = loginForm.querySelector('button');
-  if (submit) submit.textContent = 'Se connecter';
-
-  const forgot = document.createElement('button');
-  forgot.type = 'button';
-  forgot.className = 'btn ghost';
-  forgot.style.cssText = 'width:100%;margin-top:10px';
-  forgot.textContent = 'Mot de passe oublié ?';
-  loginForm.insertBefore(forgot, loginError);
-
-  const help = document.createElement('div');
-  help.className = 'detail';
-  help.style.cssText = 'margin-top:12px;text-align:center';
-  help.textContent = 'Seule l’adresse jrm.touitou@gmail.com est autorisée.';
-  loginForm.appendChild(help);
-
-  const resetPanel = document.createElement('form');
-  resetPanel.id = 'cockpitResetForm';
-  resetPanel.className = 'hidden';
-  resetPanel.innerHTML = `
-    <div class="field"><label>Nouveau mot de passe</label><input id="newCockpitPassword" type="password" autocomplete="new-password" minlength="12" required></div>
-    <div class="field"><label>Confirmer le mot de passe</label><input id="confirmCockpitPassword" type="password" autocomplete="new-password" minlength="12" required></div>
-    <button class="btn primary" style="width:100%">Enregistrer le nouveau mot de passe</button>
-    <div id="resetError" class="error"></div>
-  `;
-  card?.appendChild(resetPanel);
-
-  const status = document.createElement('div');
-  status.className = 'detail';
-  status.style.cssText = 'margin-top:12px;text-align:center';
-  loginForm.appendChild(status);
+  const resetPanel = document.getElementById('cockpitResetForm');
+  if (!login || !loginForm || !emailInput || !passwordInput || !loginError || !resetPanel) return;
 
   async function authFetch(path, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (options.body && !headers['content-type']) headers['content-type'] = 'application/json';
-    const response = await fetch(path, { ...options, headers, cache: 'no-store', credentials: 'same-origin' });
+    const response = await fetch(path, {
+      ...options,
+      headers,
+      cache: 'no-store',
+      credentials: 'same-origin'
+    });
     const raw = await response.text();
     let data = {};
     if (raw) {
       try {
         data = JSON.parse(raw);
       } catch {
-        const detail = raw.replace(/\s+/g, ' ').trim().slice(0, 180);
-        throw new Error(`HTTP ${response.status} — réponse non JSON du service${detail ? ` : ${detail}` : ''}`);
+        throw new Error(`HTTP ${response.status} — réponse non JSON du service`);
       }
     }
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   }
 
-  function setSessionFlag() {
-    sessionStorage.setItem(PASSWORD_KEY, SESSION_SENTINEL);
-  }
-
-  function clearSessionFlag() {
-    sessionStorage.removeItem(PASSWORD_KEY);
+  function displayLogin(message = '') {
+    if (typeof window.showLogin === 'function') window.showLogin(message);
+    else login.classList.remove('hidden');
   }
 
   async function openCockpitFromSession() {
     try {
       await authFetch('/cockpit/api/auth/session', { method: 'GET' });
-      setSessionFlag();
       if (typeof window.load === 'function') await window.load();
       return true;
     } catch {
-      clearSessionFlag();
+      displayLogin();
       return false;
     }
   }
 
   loginForm.addEventListener('submit', async event => {
     event.preventDefault();
-    event.stopImmediatePropagation();
     loginError.textContent = '';
-    status.textContent = '';
-    const email = emailInput?.value.trim().toLowerCase() || '';
+    if (status) status.textContent = '';
+    const email = emailInput.value.trim().toLowerCase();
     const password = passwordInput.value;
     if (email !== ALLOWED_EMAIL) {
       loginError.textContent = 'Cette adresse e-mail n’est pas autorisée.';
       return;
     }
+    const submit = loginForm.querySelector('button[type="submit"],button:not([type])');
     if (submit) submit.disabled = true;
     try {
       await authFetch('/cockpit/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password })
       });
-      setSessionFlag();
       passwordInput.value = '';
       if (typeof window.load === 'function') await window.load();
     } catch (error) {
-      clearSessionFlag();
+      displayLogin();
       loginError.textContent = error.message || String(error);
     } finally {
       if (submit) submit.disabled = false;
     }
-  }, true);
+  });
 
-  forgot.addEventListener('click', async () => {
+  forgot?.addEventListener('click', async () => {
     loginError.textContent = '';
-    status.textContent = '';
-    const email = emailInput?.value.trim().toLowerCase() || '';
+    if (status) status.textContent = '';
+    const email = emailInput.value.trim().toLowerCase();
     if (email !== ALLOWED_EMAIL) {
       loginError.textContent = 'Cette adresse e-mail n’est pas autorisée.';
       return;
@@ -138,7 +91,7 @@
         method: 'POST',
         body: JSON.stringify({ email })
       });
-      status.textContent = 'Si la demande est autorisée, le lien de réinitialisation a été envoyé sur ta boîte Gmail.';
+      if (status) status.textContent = 'Si la demande est autorisée, le lien de réinitialisation a été envoyé sur ta boîte Gmail.';
     } catch (error) {
       loginError.textContent = error.message || String(error);
     } finally {
@@ -173,7 +126,7 @@
       resetPanel.classList.add('hidden');
       loginForm.classList.remove('hidden');
       passwordInput.value = '';
-      status.textContent = 'Mot de passe modifié. Tu peux maintenant te connecter.';
+      if (status) status.textContent = 'Mot de passe modifié. Tu peux maintenant te connecter.';
     } catch (error) {
       if (errorBox) errorBox.textContent = error.message || String(error);
     } finally {
@@ -183,16 +136,16 @@
 
   logout?.addEventListener('click', async event => {
     event.preventDefault();
-    event.stopImmediatePropagation();
-    try { await authFetch('/cockpit/api/auth/logout', { method: 'POST' }); } catch {}
-    clearSessionFlag();
-    location.reload();
-  }, true);
+    try {
+      await authFetch('/cockpit/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Le cookie local est supprimé par le serveur quand il est joignable.
+    }
+    displayLogin();
+  });
 
   const resetToken = new URLSearchParams(location.search).get('reset');
   if (resetToken) {
-    if (heading) heading.textContent = 'Nouveau mot de passe';
-    if (intro) intro.textContent = 'Choisis un nouveau mot de passe pour le cockpit OP Watch.';
     loginForm.classList.add('hidden');
     resetPanel.classList.remove('hidden');
   } else {

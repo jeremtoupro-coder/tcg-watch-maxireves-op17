@@ -172,11 +172,41 @@ for (let index = 0; index < CADENCE_SAMPLE_CYCLES; index += 1) {
   cycles.push(cycle);
   console.log(
     `cycle=${index + 1}/${CADENCE_SAMPLE_CYCLES} discovery=${cycle.discovery} ` +
-    `stores=${cycle.stores.length} durableMs=${cycle.durableDurationMs} doRequests=${cycle.durableRequestCount}`
+    `stores=${cycle.stores.length} wallMs=${cycle.wallDurationMs} durableMs=${cycle.durableDurationMs} doRequests=${cycle.durableRequestCount}`
   );
 }
 
 const budget = projectCadenceBudget(cycles);
+const incidentCycles = cycles.flatMap((cycle, index) => cycle.stores
+  .filter((store) => store.status !== "completed")
+  .map((store) => ({ cycle: index + 1, store: store.store, status: store.status, error: store.error }))
+);
+const incidentStores = [...new Set(incidentCycles.map((entry) => entry.store))].sort();
+const partnerFeedFallbacks = cycles.flatMap((cycle, cycleIndex) => cycle.stores.flatMap((store) =>
+  (store.result?.audits ?? []).flatMap((audit) => (audit.warnings ?? [])
+    .filter((warning) => /Flux partenaire indisponible/i.test(warning))
+    .map((warning) => ({ cycle: cycleIndex + 1, store: store.store, warning })))
+));
+const authorizedFeedSources = cycles.flatMap((cycle, cycleIndex) => cycle.stores.flatMap((store) =>
+  (store.result?.audits ?? []).flatMap((audit) => audit.sources
+    .filter((source) => source.sourceUrl.startsWith("authorized-feed:"))
+    .map((source) => ({
+      cycle: cycleIndex + 1,
+      store: store.store,
+      status: source.status,
+      responseBytes: source.responseBytes ?? 0,
+      cacheValidation: source.cacheValidation ?? "none",
+      notModified: source.notModified === true,
+      deferred: source.deferred === true,
+      error: source.error
+    })))
+));
+const fullResponsesByStore = Object.fromEntries([...new Set(authorizedFeedSources.map((source) => source.store))]
+  .sort()
+  .map((store) => [store, authorizedFeedSources.filter((source) => source.store === store && source.status === 200).length]));
+const repeatedFullResponseStores = Object.entries(fullResponsesByStore)
+  .filter(([, count]) => count > 1)
+  .map(([store]) => store);
 const report = {
   generatedAt: new Date().toISOString(),
   environment: "isolated-runtime-test",
@@ -187,6 +217,7 @@ const report = {
     index: index + 1,
     scheduledTime: new Date(cycle.scheduledTime).toISOString(),
     discovery: cycle.discovery,
+    wallDurationMs: cycle.wallDurationMs,
     durableDurationMs: cycle.durableDurationMs,
     durableRequestCount: cycle.durableRequestCount,
     pendingAuthorizedFeedStores: cycle.pendingAuthorizedFeedStores,
@@ -198,11 +229,48 @@ const report = {
       merchantDurationMs: store.merchantDurationMs,
       backoffUntil: store.backoffUntil,
       error: store.error,
-      degradedStores: store.result?.degradedStores ?? []
+      degradedStores: store.result?.degradedStores ?? [],
+      sources: (store.result?.audits ?? []).flatMap((audit) => audit.sources.map((source) => ({
+        source: source.sourceUrl,
+        status: source.status,
+        responseBytes: source.responseBytes ?? 0,
+        cacheValidation: source.cacheValidation,
+        notModified: source.notModified === true,
+        deferred: source.deferred === true,
+        durationMs: source.durationMs,
+        error: source.error
+      })))
     }))
   })),
+  authorizedFeeds: {
+    checks: authorizedFeedSources.length,
+    fullResponses: authorizedFeedSources.filter((source) => source.status === 200).length,
+    notModifiedResponses: authorizedFeedSources.filter((source) => source.notModified).length,
+    responseBytes: authorizedFeedSources.reduce((total, source) => total + source.responseBytes, 0),
+    validators: Object.fromEntries([...new Set(authorizedFeedSources.map((source) => source.cacheValidation))]
+      .sort()
+      .map((kind) => [kind, authorizedFeedSources.filter((source) => source.cacheValidation === kind).length])),
+    fullResponsesByStore,
+    repeatedFullResponseStores,
+    networkPass: repeatedFullResponseStores.length === 0,
+    sources: authorizedFeedSources
+  },
   budget,
-  verdict: budget.pass ? "PASS" : "FAIL"
+  operational: {
+    pass: incidentCycles.length === 0 && partnerFeedFallbacks.length === 0,
+    incidentStores,
+    incidentCycles,
+    partnerFeedFallbacks
+  },
+  budgetVerdict: budget.pass ? "PASS" : "FAIL",
+  verdict: budget.pass &&
+    incidentCycles.length === 0 &&
+    partnerFeedFallbacks.length === 0 &&
+    repeatedFullResponseStores.length === 0
+    ? "PASS"
+    : budget.pass
+      ? "PASS_BUDGET_WITH_STORE_INCIDENTS"
+      : "FAIL"
 };
 
 await writeFile("runtime-cadence-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -212,5 +280,15 @@ if (!budget.pass) {
   throw new Error(
     `Budget Cloudflare refusé: ${budget.projectedGbSecondsPerDay.toFixed(2)} GB-s/j, ` +
     `${budget.projectedDurableRequestsPerDay} requêtes DO/j.`
+  );
+}
+if (repeatedFullResponseStores.length > 0) {
+  throw new Error(
+    `Catalogues partenaires complets retéléchargés pendant Fast Watch: ${repeatedFullResponseStores.join(", ")}.`
+  );
+}
+if (partnerFeedFallbacks.length > 0) {
+  throw new Error(
+    `Fallback partenaire observé pendant la cadence isolée: ${partnerFeedFallbacks.map((entry) => entry.store).join(", ")}.`
   );
 }

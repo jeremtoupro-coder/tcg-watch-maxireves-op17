@@ -65,6 +65,7 @@ describe("double circuit en cycle marchand réel", () => {
 
     const baseline = await runMonitoringCycle(env, {
       officialProducts: [OP17],
+      officialCatalogProductIds: ["OP-09", "OP-17"],
       stateStore,
       scheduledTime: Date.UTC(2026, 7, 11, 18, 0, 0)
     });
@@ -82,6 +83,7 @@ describe("double circuit en cycle marchand réel", () => {
     op09Available = true;
     const restock = await runMonitoringCycle(env, {
       officialProducts: [OP17],
+      officialCatalogProductIds: ["OP-09", "OP-17"],
       stateStore,
       scheduledTime: Date.UTC(2026, 7, 11, 18, 15, 0)
     });
@@ -102,6 +104,7 @@ describe("double circuit en cycle marchand réel", () => {
 
     const baseline = await runMonitoringCycle(env, {
       officialProducts: [],
+      officialCatalogProductIds: ["OP-09", "OP-17"],
       stateStore,
       scheduledTime: Date.UTC(2026, 10, 11, 18, 0, 0)
     });
@@ -115,6 +118,7 @@ describe("double circuit en cycle marchand réel", () => {
     op09Available = true;
     const restock = await runMonitoringCycle(env, {
       officialProducts: [],
+      officialCatalogProductIds: ["OP-09", "OP-17"],
       stateStore,
       scheduledTime: Date.UTC(2026, 10, 11, 18, 15, 0)
     });

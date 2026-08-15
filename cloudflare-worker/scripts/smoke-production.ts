@@ -8,11 +8,12 @@ if (phase !== "standby" && phase !== "armed" && phase !== "live") {
   throw new Error("PRODUCTION_SMOKE_PHASE doit valoir standby, armed ou live.");
 }
 
-async function jsonGet(path: string, authenticated = false): Promise<Record<string, any>> {
+async function jsonRequest(path: string, authenticated = false, method = "GET"): Promise<Record<string, any>> {
   let lastError: Error | undefined;
   for (let attempt = 1; attempt <= 12; attempt += 1) {
     try {
       const response = await fetch(`${baseUrl}${path}?probe=${Date.now()}-${attempt}`, {
+        method,
         headers: authenticated ? { authorization: `Bearer ${token}` } : undefined
       });
       const raw = await response.text();
@@ -31,6 +32,9 @@ async function jsonGet(path: string, authenticated = false): Promise<Record<stri
   }
   throw lastError ?? new Error(`${path}: aucune réponse exploitable.`);
 }
+
+const jsonGet = (path: string, authenticated = false) => jsonRequest(path, authenticated, "GET");
+const jsonPost = (path: string, authenticated = false) => jsonRequest(path, authenticated, "POST");
 
 const authHealth = await jsonGet("/cockpit/api/auth/health", true);
 if (authHealth.ok !== true || authHealth.hashing !== "hmac-sha256-v1") {
@@ -55,11 +59,48 @@ if (phase === "standby") {
     ready.discordMode !== "live" ||
     ready.monitoringEnabled !== true ||
     ready.stateWritesEnabled !== true ||
-    ready.automaticPolling !== false ||
     !Array.isArray(ready.stores) ||
     ready.stores.length !== 24
   ) {
     throw new Error(`Readiness ${phase} invalide: ${JSON.stringify(ready)}`);
   }
-  console.log(JSON.stringify({ ok: true, phase, readiness: "PASS", stores: ready.stores.length, cockpitAuth: "PASS" }));
+  if (phase === "armed") {
+    if (ready.automaticPolling !== false) throw new Error("La phase armed sans cron ne doit pas être observée comme active.");
+    console.log(JSON.stringify({ ok: true, phase, readiness: "PASS", schedulerObserved: false, stores: ready.stores.length, cockpitAuth: "PASS" }));
+  } else {
+    const armed = await jsonPost("/scheduler-watchdog/arm", true);
+    const baseline = Number(armed.health?.receivedCount) || 0;
+    let observed: Record<string, any> | undefined;
+    // Une modification de Cron Trigger peut mettre jusqu'à 15 minutes à se
+    // propager chez Cloudflare. Le smoke laisse ensuite deux frontières de
+    // minute distinctes, avec une marge : 20 minutes au total.
+    for (let attempt = 1; attempt <= 240; attempt += 1) {
+      const current = await jsonGet("/scheduler-health", true);
+      const received = Number(current.health?.receivedCount) || 0;
+      const monitoring = current.health?.automaticMonitoring;
+      if (
+        current.observed?.observedRecently === true &&
+        received >= baseline + 2 &&
+        monitoring?.status === "completed" &&
+        Date.parse(monitoring.completedAt || "") >= Date.parse(armed.health?.armedAt || "")
+      ) {
+        observed = current;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+    if (!observed) {
+      throw new Error("Le cron final n'a pas démontré deux Scheduled Events et un cycle automatique terminé en vingt minutes.");
+    }
+    console.log(JSON.stringify({
+      ok: true,
+      phase,
+      readiness: "PASS",
+      schedulerObserved: "PASS",
+      automaticCyclesObserved: (Number(observed.health?.receivedCount) || 0) - baseline,
+      lastAutomaticMonitoring: observed.health?.automaticMonitoring?.status,
+      stores: ready.stores.length,
+      cockpitAuth: "PASS"
+    }));
+  }
 }

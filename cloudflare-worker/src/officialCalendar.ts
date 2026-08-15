@@ -22,7 +22,10 @@ export interface OfficialCalendarSnapshot {
   activeProducts: Array<OfficialCalendarProduct & {
     watchWindow: OfficialWatchWindow;
   }>;
-  cache: "hit" | "miss";
+  cache: "hit" | "miss" | "stale";
+  cacheAgeMs: number;
+  /** Erreur du dernier rafraîchissement lorsque le dernier catalogue vérifié sert de filet. */
+  warning?: string;
 }
 
 interface CalendarOptions {
@@ -88,7 +91,8 @@ export function validateOfficialCatalogPage(html: string): void {
 function buildSnapshot(
   cached: CachedCalendar,
   now: Date,
-  cache: "hit" | "miss"
+  cache: "hit" | "miss" | "stale",
+  warning?: string
 ): OfficialCalendarSnapshot {
   const activeProducts = cached.catalogProducts.flatMap((product) => {
     const watchWindow = computeOfficialWatchWindow(product.releaseDate, now);
@@ -97,8 +101,18 @@ function buildSnapshot(
   return {
     ...cached,
     activeProducts,
-    cache
+    cache,
+    cacheAgeMs: Math.max(0, now.getTime() - Date.parse(cached.fetchedAt)),
+    ...(warning ? { warning } : {})
   };
+}
+
+function calendarWarning(error: unknown): string {
+  const detail = (error instanceof Error ? error.message : String(error))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 900);
+  return `Rafraîchissement Bandai en échec ; dernier catalogue vérifié conservé${detail ? ` : ${detail}` : "."}`;
 }
 
 function parseCachedCalendar(raw?: string): CachedCalendar | undefined {
@@ -108,6 +122,7 @@ function parseCachedCalendar(raw?: string): CachedCalendar | undefined {
     if (
       typeof parsed.source !== "string" ||
       typeof parsed.fetchedAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.fetchedAt)) ||
       !Number.isInteger(parsed.sourcePages) ||
       !Array.isArray(parsed.catalogProducts) ||
       parsed.catalogProducts.length === 0
@@ -183,44 +198,52 @@ export async function loadOfficialCalendar(options: CalendarOptions): Promise<Of
     }
   }
 
-  const fetcher = options.fetcher ?? fetch;
-  const firstHtml = await fetchPage(fetcher, source.toString());
-  const sourcePages = parseOfficialCatalogPageCount(firstHtml);
-  const htmlPages = [firstHtml];
+  try {
+    const fetcher = options.fetcher ?? fetch;
+    const firstHtml = await fetchPage(fetcher, source.toString());
+    const sourcePages = parseOfficialCatalogPageCount(firstHtml);
+    const htmlPages = [firstHtml];
 
-  for (let page = 2; page <= sourcePages; page += 3) {
-    const batch: Promise<string>[] = [];
-    for (let offset = 0; offset < 3 && page + offset <= sourcePages; offset += 1) {
-      const pageUrl = new URL(source);
-      pageUrl.searchParams.set("page", String(page + offset));
-      batch.push(fetchPage(fetcher, pageUrl.toString()));
+    for (let page = 2; page <= sourcePages; page += 3) {
+      const batch: Promise<string>[] = [];
+      for (let offset = 0; offset < 3 && page + offset <= sourcePages; offset += 1) {
+        const pageUrl = new URL(source);
+        pageUrl.searchParams.set("page", String(page + offset));
+        batch.push(fetchPage(fetcher, pageUrl.toString()));
+      }
+      htmlPages.push(...await Promise.all(batch));
     }
-    htmlPages.push(...await Promise.all(batch));
-  }
 
-  const productsById = new Map<string, OfficialCalendarProduct>();
-  for (const html of htmlPages) {
-    for (const product of parseOfficialCatalogWithMonthFallback(html)) {
-      productsById.set(
-        product.id,
-        mergeOfficialCalendarProduct(productsById.get(product.id), product)
-      );
+    const productsById = new Map<string, OfficialCalendarProduct>();
+    for (const html of htmlPages) {
+      for (const product of parseOfficialCatalogWithMonthFallback(html)) {
+        productsById.set(
+          product.id,
+          mergeOfficialCalendarProduct(productsById.get(product.id), product)
+        );
+      }
     }
-  }
-  const catalogProducts = [...productsById.values()]
-    .sort((left, right) => left.releaseDate.localeCompare(right.releaseDate));
-  if (catalogProducts.length === 0) {
-    throw new Error("Le catalogue officiel est valide mais aucun produit daté n'a été reconnu.");
-  }
+    const catalogProducts = [...productsById.values()]
+      .sort((left, right) => left.releaseDate.localeCompare(right.releaseDate));
+    if (catalogProducts.length === 0) {
+      throw new Error("Le catalogue officiel est valide mais aucun produit daté n'a été reconnu.");
+    }
 
-  const fresh: CachedCalendar = {
-    source: source.toString(),
-    fetchedAt: now.toISOString(),
-    sourcePages,
-    catalogProducts
-  };
-  if (options.stateStore?.writable) {
-    await options.stateStore.putMetadata(CACHE_KEY, JSON.stringify(fresh));
+    const fresh: CachedCalendar = {
+      source: source.toString(),
+      fetchedAt: now.toISOString(),
+      sourcePages,
+      catalogProducts
+    };
+    if (options.stateStore?.writable) {
+      await options.stateStore.putMetadata(CACHE_KEY, JSON.stringify(fresh));
+    }
+    return buildSnapshot(fresh, now, "miss");
+  } catch (error) {
+    // Une panne Bandai ne doit jamais arrêter les 24 veilles. Le cache a déjà
+    // été validé et garde les références connues ; le warning reste visible
+    // dans le cockpit jusqu'au prochain rafraîchissement réussi.
+    if (cached) return buildSnapshot(cached, now, "stale", calendarWarning(error));
+    throw error;
   }
-  return buildSnapshot(fresh, now, "miss");
 }

@@ -86,17 +86,35 @@ export interface WebScoutHealth {
   query?: string;
   activeReferences: string[];
   searchResults: number;
+  candidates?: number;
   verified: number;
   alerted: number;
   skippedCached: number;
   rejected: number;
+  lastBraveCallAt?: string;
+  nextExpectedRunAt?: string;
+  monthlySearchRequests?: number;
+  monthlySearchRequestCap?: number;
+  rejectionReasons?: Record<string, number>;
+  recentRejections?: Array<{ domain: string; reason: string }>;
+  deliveryErrors?: string[];
   error?: string;
+}
+
+interface WebScoutVerification {
+  finding?: WebScoutFinding;
+  reason?: string;
 }
 
 interface TimedCacheEntry {
   id: string;
   at: string;
   until?: string;
+}
+
+interface WebScoutResponseSnapshot {
+  body: string;
+  status: number;
 }
 
 interface IanaBootstrap {
@@ -130,6 +148,17 @@ class ScoutStateStore implements StateStore {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function webScoutSnapshot(data: unknown, status = 200): WebScoutResponseSnapshot {
+  return { body: JSON.stringify(data), status };
+}
+
+function responseFromWebScoutSnapshot(snapshot: WebScoutResponseSnapshot): Response {
+  return new Response(snapshot.body, {
+    status: snapshot.status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+  });
 }
 
 function normalizeText(value: string): string {
@@ -251,7 +280,12 @@ export function hasCommercialSignal(value: string): boolean {
 export function hasFrenchSignal(value: string): boolean {
   const explicitFrench = /lang=["']fr(?:-|["'])|\bfran[çc]ais\b|\bversion\s+fr\b|\bvf\b|(?:^|[\s([\-|])fr(?:$|[\s)\]|-])/i.test(value);
   const explicitForeign = /\bversion\s+(?:anglaise|japonaise)\b|\benglish\s+version\b|\bjapanese\s+version\b|(?:^|[\s([\-|])jp(?:$|[\s)\]|-])|(?:^|[\s([\-|])eng(?:$|[\s)\]|-])/i.test(value);
-  return explicitFrench || !explicitForeign;
+  return explicitFrench && !explicitForeign;
+}
+
+export function isWebScoutVerificationCandidateUrl(value: string): boolean {
+  const target = publicHttpsUrl(value);
+  return Boolean(target && sourceTypeForUrl(target.toString()) !== "blocked");
 }
 
 export function extractLegalEvidence(value: string): {
@@ -530,22 +564,22 @@ async function verifySearchResult(
   result: BraveWebResult,
   products: OfficialProduct[],
   now: number
-): Promise<WebScoutFinding | undefined> {
-  if (!result.url || !result.title) return undefined;
+): Promise<WebScoutVerification> {
+  if (!result.url || !result.title) return { reason: "résultat Brave incomplet" };
   const target = publicHttpsUrl(result.url);
-  if (!target) return undefined;
+  if (!target) return { reason: "URL non HTTPS ou non publique" };
   const sourceType = sourceTypeForUrl(target.toString());
-  if (sourceType === "blocked") return undefined;
+  if (sourceType === "blocked") return { reason: "marketplace/social/source bloqué par politique" };
   const searchText = resultText(result);
   const searchRefs = matchedProductIds(searchText, products);
 
   if (sourceType === "facebook" || sourceType === "instagram") {
     if (searchRefs.length === 0 || !/one[\s-]*piece/i.test(searchText) || !hasCommercialSignal(searchText) || !hasFrenchSignal(searchText)) {
-      return undefined;
+      return { reason: "publication sociale sans preuve One Piece + référence + signal commercial FR" };
     }
     const knownStore = knownStoreFromText(`${result.title} ${result.description ?? ""}`);
     if (knownStore) {
-      return {
+      return { finding: {
         id: findingId(target.toString(), searchRefs),
         title: result.title,
         url: target.toString(),
@@ -555,13 +589,17 @@ async function verifySearchResult(
         knownStore,
         trustReason: `publication sociale rattachée à la boutique déjà qualifiée ${knownStore}`,
         snippet: result.description
-      };
+      } };
     }
 
+    const trustFailures: string[] = [];
     for (const domain of externalDomainsFromText(searchText).slice(0, 2)) {
       const trust = await validateDomainTrust(storage, `https://${domain}/`, undefined, now);
-      if (!trust.trusted) continue;
-      return {
+      if (!trust.trusted) {
+        trustFailures.push(`${domain}: ${trust.reason}`);
+        continue;
+      }
+      return { finding: {
         id: findingId(target.toString(), searchRefs),
         title: result.title,
         url: target.toString(),
@@ -572,23 +610,30 @@ async function verifySearchResult(
         domainAgeDays: trust.ageDays,
         legalIdentifier: trust.legalIdentifier,
         snippet: result.description
-      };
+      } };
     }
-    return undefined;
+    return {
+      reason: trustFailures.length
+        ? `marchand social non vérifié — ${trustFailures.join(" | ").slice(0, 500)}`
+        : "publication sociale sans marchand français vérifiable"
+    };
   }
 
   const page = await safeFetchText(target.toString());
-  if (page.status < 200 || page.status >= 400 || challengePage(page.text)) return undefined;
+  if (challengePage(page.text)) return { reason: "page rejetée : challenge/security" };
+  if (page.status < 200 || page.status >= 400) return { reason: `page produit HTTP ${page.status}` };
   const combined = `${searchText}\n${page.text}`;
   const refs = matchedProductIds(combined, products);
   if (refs.length === 0 || !/one[\s-]*piece/i.test(combined) || !hasCommercialSignal(combined) || !hasFrenchSignal(combined)) {
-    return undefined;
+    return { reason: "page sans preuve One Piece + référence + signal commercial FR" };
   }
   const finalDomain = registeredDomainFromUrl(page.url);
-  if (!finalDomain || DISCOVERY_BLOCKED_DOMAINS.has(finalDomain) || SOCIAL_DOMAINS.has(finalDomain)) return undefined;
+  if (!finalDomain || DISCOVERY_BLOCKED_DOMAINS.has(finalDomain) || SOCIAL_DOMAINS.has(finalDomain)) {
+    return { reason: "redirection vers un domaine bloqué" };
+  }
   const trust = await validateDomainTrust(storage, page.url, page.text, now);
-  if (!trust.trusted) return undefined;
-  return {
+  if (!trust.trusted) return { reason: `marchand non vérifié — ${trust.reason}` };
+  return { finding: {
     id: findingId(page.url, refs),
     title: result.title,
     url: page.url,
@@ -600,7 +645,7 @@ async function verifySearchResult(
     domainAgeDays: trust.ageDays,
     legalIdentifier: trust.legalIdentifier,
     snippet: result.description
-  };
+  } };
 }
 
 async function readCache(storage: DurableObjectStorage, key: string): Promise<TimedCacheEntry[]> {
@@ -652,8 +697,31 @@ function buildWebScoutPayload(finding: WebScoutFinding, now: number): DiscordPay
   };
 }
 
+function monthlySearchBudgetKey(scheduledTime: number): string {
+  return `web-scout:search-budget:${new Date(scheduledTime).toISOString().slice(0, 7)}`;
+}
+
+function nextExpectedRunAt(scheduledTime: number): string {
+  const next = new Date(scheduledTime);
+  next.setUTCSeconds(0, 0);
+  next.setUTCHours(next.getUTCHours() + 1);
+  next.setUTCMinutes(WEB_SCOUT_MINUTE);
+  return next.toISOString();
+}
+
+function candidateResultCount(results: BraveWebResult[]): number {
+  return results.filter((result) => Boolean(
+    result.url && result.title && isWebScoutVerificationCandidateUrl(result.url)
+  )).length;
+}
+
+function addReason(reasons: Record<string, number>, reason: string): void {
+  const normalized = reason.replace(/\s+/g, " ").trim().slice(0, 500) || "raison inconnue";
+  reasons[normalized] = (reasons[normalized] ?? 0) + 1;
+}
+
 export class WebScoutDurableObject {
-  private running?: Promise<Response>;
+  private running?: Promise<WebScoutResponseSnapshot>;
 
   constructor(private readonly state: DurableObjectState, private readonly env: ScoutEnv) {}
 
@@ -667,19 +735,23 @@ export class WebScoutDurableObject {
     if (request.method !== "POST" || pathname !== "/run") {
       return new Response(JSON.stringify({ error: "Route Web Scout invalide." }), { status: 404, headers: { "content-type": "application/json" } });
     }
-    if (this.running) return this.running;
+    if (this.running) return responseFromWebScoutSnapshot(await this.running);
 
     this.running = this.run(request);
     try {
-      return await this.running;
+      return responseFromWebScoutSnapshot(await this.running);
     } finally {
       this.running = undefined;
     }
   }
 
-  private async run(request: Request): Promise<Response> {
+  private async run(request: Request): Promise<WebScoutResponseSnapshot> {
     const nowFallback = Date.now();
     let scheduledTime = nowFallback;
+    let attemptedQuery: string | undefined;
+    let attemptedReferences: string[] = [];
+    let lastBraveCallAt: string | undefined;
+    let monthlySearchRequests: number | undefined;
     try {
       const input = await request.json() as { scheduledTime?: number };
       scheduledTime = Number(input.scheduledTime);
@@ -699,7 +771,7 @@ export class WebScoutDurableObject {
           error: apiKey ? "Web Scout désactivé en runtime test." : "BRAVE_SEARCH_API_KEY absent."
         };
         await this.state.storage.put("web-scout:health", health);
-        return new Response(JSON.stringify(health), { headers: { "content-type": "application/json" } });
+        return webScoutSnapshot(health);
       }
 
       const stateStore = new ScoutStateStore(this.state.storage, this.env.WRITE_STATE === "true");
@@ -723,10 +795,38 @@ export class WebScoutDurableObject {
           rejected: 0
         };
         await this.state.storage.put("web-scout:health", health);
-        return new Response(JSON.stringify(health), { headers: { "content-type": "application/json" } });
+        return webScoutSnapshot(health);
       }
 
       const query = buildWebScoutQuery(products);
+      attemptedQuery = query;
+      attemptedReferences = products.map((product) => product.id);
+      const budgetKey = monthlySearchBudgetKey(scheduledTime);
+      const usedRequests = (await this.state.storage.get<number>(budgetKey)) ?? 0;
+      if (usedRequests >= WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP) {
+        const health: WebScoutHealth = {
+          status: "degraded",
+          checkedAt,
+          query,
+          activeReferences: products.map((product) => product.id),
+          searchResults: 0,
+          candidates: 0,
+          verified: 0,
+          alerted: 0,
+          skippedCached: 0,
+          rejected: 0,
+          nextExpectedRunAt: nextExpectedRunAt(scheduledTime),
+          monthlySearchRequests: usedRequests,
+          monthlySearchRequestCap: WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP,
+          rejectionReasons: {},
+          error: "Budget Brave mensuel atteint : aucun appel supplémentaire n'a été effectué."
+        };
+        await this.state.storage.put("web-scout:health", health);
+        return webScoutSnapshot(health);
+      }
+      await this.state.storage.put(budgetKey, usedRequests + 1);
+      monthlySearchRequests = usedRequests + 1;
+      lastBraveCallAt = checkedAt;
       const results = await fetchBraveResults(apiKey, query);
       const seen = await readCache(this.state.storage, "web-scout:seen");
       const rejectedCache = await readCache(this.state.storage, "web-scout:rejected");
@@ -734,24 +834,59 @@ export class WebScoutDurableObject {
       let rejected = 0;
       let verified = 0;
       let alerted = 0;
+      const rejectionReasons: Record<string, number> = {};
+      const recentRejections: Array<{ domain: string; reason: string }> = [];
+      const deliveryErrors: string[] = [];
 
       for (const result of results) {
-        if (verified >= WEB_SCOUT_MAX_VERIFY || alerted >= WEB_SCOUT_MAX_ALERTS) break;
-        if (!result.url) continue;
+        if (alerted >= WEB_SCOUT_MAX_ALERTS) break;
+        if (!result.url || !result.title) {
+          rejected += 1;
+          addReason(rejectionReasons, "résultat Brave incomplet");
+          continue;
+        }
+        const target = publicHttpsUrl(result.url);
         const preliminaryRefs = matchedProductIds(resultText(result), products);
-        const id = findingId(result.url, preliminaryRefs.length ? preliminaryRefs : products.map((product) => product.id));
+        if (!target) {
+          rejected += 1;
+          addReason(rejectionReasons, "URL non HTTPS ou non publique");
+          continue;
+        }
+        const id = findingId(target.toString(), preliminaryRefs.length ? preliminaryRefs : products.map((product) => product.id));
         if (cacheHas(seen, id, scheduledTime) || cacheHas(rejectedCache, id, scheduledTime)) {
           skippedCached += 1;
           continue;
         }
+        if (sourceTypeForUrl(target.toString()) === "blocked") {
+          const reason = "marketplace/social/source bloqué par politique";
+          rejected += 1;
+          addReason(rejectionReasons, reason);
+          recentRejections.push({
+            domain: registeredDomainFromUrl(target.toString()) ?? "domaine inconnu",
+            reason
+          });
+          rejectedCache.push({ id, at: checkedAt, until: new Date(scheduledTime + REJECT_TTL_MS).toISOString() });
+          continue;
+        }
+        // Seules les pages pouvant réellement faire l'objet d'une vérification
+        // réseau consomment le plafond de quatre. Les marketplaces déjà
+        // bloquées ne doivent pas masquer un marchand valide placé plus bas.
+        if (verified >= WEB_SCOUT_MAX_VERIFY) break;
         verified += 1;
         try {
-          const finding = await verifySearchResult(this.state.storage, result, products, scheduledTime);
-          if (!finding) {
+          const verification = await verifySearchResult(this.state.storage, result, products, scheduledTime);
+          if (!verification.finding) {
+            const reason = verification.reason ?? "candidat non qualifié";
             rejected += 1;
+            addReason(rejectionReasons, reason);
+            recentRejections.push({
+              domain: registeredDomainFromUrl(result.url) ?? "domaine inconnu",
+              reason: reason.slice(0, 500)
+            });
             rejectedCache.push({ id, at: checkedAt, until: new Date(scheduledTime + REJECT_TTL_MS).toISOString() });
             continue;
           }
+          const finding = verification.finding;
           const findingAlreadySeen = cacheHas(seen, finding.id, scheduledTime);
           if (findingAlreadySeen) {
             skippedCached += 1;
@@ -763,9 +898,17 @@ export class WebScoutDurableObject {
             seen.push({ id: finding.id, at: checkedAt });
           } else if (delivery.mode === "dry-run") {
             seen.push({ id: finding.id, at: checkedAt });
+          } else {
+            deliveryErrors.push(...delivery.errors);
           }
         } catch (error) {
+          const reason = `exception de vérification — ${safeError(error)}`;
           rejected += 1;
+          addReason(rejectionReasons, reason);
+          recentRejections.push({
+            domain: registeredDomainFromUrl(result.url) ?? "domaine inconnu",
+            reason: reason.slice(0, 500)
+          });
           rejectedCache.push({ id, at: checkedAt, until: new Date(scheduledTime + REJECT_TTL_MS).toISOString() });
         }
       }
@@ -773,32 +916,55 @@ export class WebScoutDurableObject {
       await writeCache(this.state.storage, "web-scout:seen", seen);
       await writeCache(this.state.storage, "web-scout:rejected", rejectedCache);
       const health: WebScoutHealth = {
-        status: "completed",
+        status: deliveryErrors.length ? "degraded" : "completed",
         checkedAt,
         query,
         activeReferences: products.map((product) => product.id),
         searchResults: results.length,
+        candidates: candidateResultCount(results),
         verified,
         alerted,
         skippedCached,
-        rejected
+        rejected,
+        lastBraveCallAt: checkedAt,
+        nextExpectedRunAt: nextExpectedRunAt(scheduledTime),
+        monthlySearchRequests: usedRequests + 1,
+        monthlySearchRequestCap: WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP,
+        rejectionReasons,
+        recentRejections: recentRejections.slice(-8),
+        ...(deliveryErrors.length
+          ? {
+              deliveryErrors: deliveryErrors.slice(0, 8),
+              error: "Discord n'a confirmé aucune livraison pour au moins une piste ; elle reste éligible."
+            }
+          : {})
       };
       await this.state.storage.put("web-scout:health", health);
-      return new Response(JSON.stringify(health), { headers: { "content-type": "application/json" } });
+      return webScoutSnapshot(health);
     } catch (error) {
       const health: WebScoutHealth = {
         status: "error",
         checkedAt: new Date(scheduledTime || nowFallback).toISOString(),
-        activeReferences: [],
+        ...(attemptedQuery ? { query: attemptedQuery } : {}),
+        activeReferences: attemptedReferences,
         searchResults: 0,
+        candidates: 0,
         verified: 0,
         alerted: 0,
         skippedCached: 0,
         rejected: 0,
+        ...(lastBraveCallAt ? { lastBraveCallAt } : {}),
+        nextExpectedRunAt: nextExpectedRunAt(scheduledTime || nowFallback),
+        ...(monthlySearchRequests !== undefined
+          ? {
+              monthlySearchRequests,
+              monthlySearchRequestCap: WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP
+            }
+          : {}),
         error: safeError(error)
       };
       await this.state.storage.put("web-scout:health", health);
-      return new Response(JSON.stringify(health), { status: 500, headers: { "content-type": "application/json" } });
+      return webScoutSnapshot(health, 500);
     }
   }
 }

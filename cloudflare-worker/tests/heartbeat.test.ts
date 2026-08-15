@@ -15,6 +15,7 @@ function cycle(overrides: Partial<DurableCycleResult> = {}): DurableCycleResult 
     calendarDurationMs: 10,
     storeDurationMs: 20,
     durableDurationMs: 30,
+    wallDurationMs: 25,
     durableRequestCount: 4,
     stores: [
       { store: "parkage", status: "completed", durationMs: 10, merchantDurationMs: 8 },

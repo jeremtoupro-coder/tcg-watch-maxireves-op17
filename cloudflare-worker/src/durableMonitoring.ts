@@ -1,8 +1,20 @@
 import { CONNECTORS } from "./connectors";
 import { configuredStoreStatus } from "./storeAudit";
-import { isDiscoveryTick, parseActiveStores, runMonitoringCycle } from "./monitor";
-import { candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
+import {
+  isDiscoveryTick,
+  parseActiveStores,
+  runMonitoringCycle,
+  type MonitoringCircuitAnalysis
+} from "./monitor";
+import type { OfficialProduct } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
+import { handleSchedulerHealthRequest, handleSchedulerWatchdogAlarm } from "./schedulerHealth";
+import { isWebScoutTick } from "./webScout";
+import {
+  dispatchRuntimeHeartbeatFailure,
+  dispatchRuntimeHeartbeatSignal,
+  isHeartbeatTick
+} from "./heartbeat";
 import { CONTROL_CONFIG_STORAGE_KEY, applyRuntimeControlConfig, defaultRuntimeControlConfig, extraStoreSources, normalizeRuntimeControlConfig, type RuntimeControlConfig } from "./controlPlane";
 import type { StateStore } from "./state";
 import type { Env, LanguageStatus, ProductSnapshot, StoreKey } from "./types";
@@ -21,7 +33,9 @@ const DISCOVERY_INTERVAL_MS = 15 * 60_000;
 export interface RuntimeEnv extends Env {
   STORE_MONITORS?: DurableObjectNamespace;
   CALENDAR_COORDINATOR?: DurableObjectNamespace;
-  SCHEDULER_MODE?: "disabled" | "live";
+  WEB_SCOUT?: DurableObjectNamespace;
+  SCHEDULER_MODE?: "disabled" | "live" | "test";
+  CRON_CONFIGURED?: string;
   RUNTIME_TEST_MODE?: string;
   RUNTIME_TEST_RUN_ID?: string;
 }
@@ -51,7 +65,27 @@ export interface StoreRuntimeHealth {
   durationMs: number;
   merchantDurationMs: number;
   candidates: number;
+  merchantSources: number;
+  successfulMerchantSources: number;
+  lastMerchantCheckAt?: string;
+  lastDiscoveryAt?: string;
+  lastFastWatchAt?: string;
+  deferredFastWatch: boolean;
+  analysis?: {
+    newReleases: MonitoringCircuitAnalysis;
+    onePieceAll: MonitoringCircuitAnalysis;
+  };
+  warnings?: string[];
   sourceKind?: string;
+  sourceChecks?: Array<{
+    source: string;
+    status?: number;
+    responseBytes?: number;
+    cacheValidation?: "etag" | "last-modified" | "etag+last-modified" | "none";
+    notModified?: boolean;
+    deferred?: boolean;
+    error?: string;
+  }>;
   error?: string;
   backoffUntil?: string;
   discovery: boolean;
@@ -64,6 +98,8 @@ export interface DurableCycleResult {
   calendarDurationMs: number;
   storeDurationMs: number;
   durableDurationMs: number;
+  /** Temps mural réellement attendu par le Scheduled Event (les durées DO sommées servent au budget). */
+  wallDurationMs: number;
   durableRequestCount: number;
   stores: DurableCycleStoreResult[];
   pendingAuthorizedFeedStores: StoreKey[];
@@ -87,6 +123,22 @@ export interface CadenceBudgetProjection {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+  });
+}
+
+interface JsonResponseSnapshot {
+  body: string;
+  status: number;
+}
+
+function jsonSnapshot(data: unknown, status = 200): JsonResponseSnapshot {
+  return { body: JSON.stringify(data), status };
+}
+
+function responseFromSnapshot(snapshot: JsonResponseSnapshot): Response {
+  return new Response(snapshot.body, {
+    status: snapshot.status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
   });
 }
@@ -131,7 +183,12 @@ export function assertRuntimeReadiness(env: RuntimeEnv, mode: "test" | "live"): 
 
   if (mode === "test") {
     if (env.RUNTIME_TEST_MODE !== "true") throw new Error("RUNTIME_TEST_MODE doit être activé pour le test isolé.");
-    if (env.SCHEDULER_MODE !== "disabled") throw new Error("Le scheduler doit rester désactivé pendant le test isolé.");
+    if (env.SCHEDULER_MODE !== "disabled" && env.SCHEDULER_MODE !== "test") {
+      throw new Error("Le scheduler du test isolé doit être désactivé ou explicitement en mode test.");
+    }
+    if (env.SCHEDULER_MODE === "test" && env.CRON_CONFIGURED !== "true") {
+      throw new Error("Le scheduler isolé en mode test exige CRON_CONFIGURED=true.");
+    }
     if (env.DISCORD_MODE !== "dry-run") throw new Error("Discord doit rester en dry-run pendant le test isolé.");
     runtimePrefix(env, mode);
     return;
@@ -230,40 +287,26 @@ function asStateStore(store: DurableObjectStateStore): StateStore {
   return store;
 }
 
-function discoveryCacheKey(store: StoreKey): string {
-  return `discovery:v1:${store}`;
-}
-
-async function forceDiscoveryDue(store: StateStore): Promise<void> {
-  await store.putMetadata("monitor:last-discovery", "1970-01-01T00:00:00.000Z");
-}
-
-async function pruneFastWatchCache(
-  stateStore: StateStore,
-  store: StoreKey,
-  officialProducts: OfficialProduct[],
-  acceptedLanguages: LanguageStatus[],
-  result: Awaited<ReturnType<typeof runMonitoringCycle>>,
-  discoveredAt: string
-): Promise<void> {
-  const connector = CONNECTORS.find((entry) => entry.key === store);
-  if (!connector || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
-  const audit = result.audits?.find((entry) => entry.store === store);
-  if (!audit) return;
-
-  const entries = audit.candidates.flatMap((candidate) => {
-    const qualified = candidateForActiveProducts(candidate, officialProducts, acceptedLanguages);
-    return qualified ? [{ url: qualified.url, references: [...qualified.matchedReferences].sort() }] : [];
-  });
-  const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
-  await stateStore.putMetadata(discoveryCacheKey(store), JSON.stringify({ discoveredAt, entries: unique }));
-}
-
 function sourceDurationMs(result: Awaited<ReturnType<typeof runMonitoringCycle>>): number {
   return result.audits?.reduce(
     (total, audit) => total + audit.sources.reduce((sum, source) => sum + Math.max(0, source.durationMs), 0),
     0
   ) ?? 0;
+}
+
+async function invokeWebScout(env: RuntimeEnv, scheduledTime: number, label: string): Promise<void> {
+  if (!env.WEB_SCOUT) throw new Error("Binding WEB_SCOUT absent.");
+  if (!env.BRAVE_SEARCH_API_KEY?.trim()) throw new Error("BRAVE_SEARCH_API_KEY absent.");
+  const stub = env.WEB_SCOUT.get(env.WEB_SCOUT.idFromName("production:web-scout"));
+  const response = await stub.fetch(new Request("https://web-scout.internal/run", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scheduledTime })
+  }));
+  if (!response.ok) {
+    throw new Error(`${label} HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+  }
+  await response.body?.cancel().catch(() => undefined);
 }
 
 export class StoreMonitorDurableObject {
@@ -291,6 +334,7 @@ export class StoreMonitorDurableObject {
     let activeStore: StoreKey | undefined;
     let activeScheduledTime = Date.now();
     let activeDiscovery = false;
+    let previousHealth: StoreRuntimeHealth | undefined;
     this.running = true;
     try {
       const input = await request.json() as {
@@ -298,6 +342,7 @@ export class StoreMonitorDurableObject {
         scheduledTime?: number;
         forceDiscovery?: boolean;
         officialProducts?: OfficialProduct[];
+        officialCatalogProductIds?: string[];
         acceptedLanguages?: LanguageStatus[];
         extraStoreSources?: string[];
       };
@@ -315,6 +360,7 @@ export class StoreMonitorDurableObject {
 
       const connector = CONNECTORS.find((entry) => entry.key === store)!;
       if (connector.maxConcurrency === undefined) connector.maxConcurrency = 2;
+      previousHealth = await this.state.storage.get<StoreRuntimeHealth>("runtime:health");
 
       const stateStore = asStateStore(new DurableObjectStateStore(this.state.storage, this.env.WRITE_STATE === "true"));
       const backoffRaw = await stateStore.getMetadata("runtime:backoff-until");
@@ -329,6 +375,14 @@ export class StoreMonitorDurableObject {
           durationMs,
           merchantDurationMs: 0,
           candidates: 0,
+          merchantSources: 0,
+          successfulMerchantSources: 0,
+          ...(previousHealth?.lastMerchantCheckAt ? { lastMerchantCheckAt: previousHealth.lastMerchantCheckAt } : {}),
+          ...(previousHealth?.lastDiscoveryAt ? { lastDiscoveryAt: previousHealth.lastDiscoveryAt } : {}),
+          ...(previousHealth?.lastFastWatchAt ? { lastFastWatchAt: previousHealth.lastFastWatchAt } : {}),
+          deferredFastWatch: previousHealth?.deferredFastWatch ?? false,
+          ...(previousHealth?.analysis ? { analysis: previousHealth.analysis } : {}),
+          ...(previousHealth?.sourceChecks ? { sourceChecks: previousHealth.sourceChecks } : {}),
           backoffUntil: new Date(backoffUntil).toISOString(),
           discovery: false
         };
@@ -336,51 +390,85 @@ export class StoreMonitorDurableObject {
         return json({ status: "backoff", durationMs, merchantDurationMs: 0, backoffUntil: health.backoffUntil });
       }
 
-      if (input.forceDiscovery === true) await forceDiscoveryDue(stateStore);
-
       const storeEnv: RuntimeEnv = { ...this.env, ACTIVE_STORES: store };
       const acceptedLanguages = input.acceptedLanguages?.length ? input.acceptedLanguages : ["Français confirmé" as LanguageStatus];
       const result = await runMonitoringCycle(storeEnv, {
         scheduledTime: scheduledTime as number,
         officialProducts: input.officialProducts,
+        officialCatalogProductIds: input.officialCatalogProductIds,
         acceptedLanguages,
         extraSourcesByStore: input.extraStoreSources?.length ? { [store]: input.extraStoreSources } : undefined,
         stateStore,
-        now: new Date(scheduledTime as number)
+        now: new Date(scheduledTime as number),
+        forceDiscovery: input.forceDiscovery === true
       });
 
       const degraded = result.degradedStores?.some((entry) => entry.store === store) === true;
       if (degraded) {
         const until = new Date((scheduledTime as number) + DEGRADED_BACKOFF_MS).toISOString();
-        await stateStore.putMetadata("runtime:backoff-until", until);
-      } else {
+        if (backoffRaw !== until) await stateStore.putMetadata("runtime:backoff-until", until);
+      } else if (backoffRaw && backoffRaw !== "1970-01-01T00:00:00.000Z") {
         await stateStore.putMetadata("runtime:backoff-until", "1970-01-01T00:00:00.000Z");
-      }
-
-      if (input.forceDiscovery === true) {
-        await pruneFastWatchCache(
-          stateStore,
-          store,
-          input.officialProducts,
-          acceptedLanguages,
-          result,
-          new Date(scheduledTime as number).toISOString()
-        );
       }
 
       const durationMs = Math.round(performance.now() - started);
       const merchantDurationMs = sourceDurationMs(result);
       const audit = result.audits?.find((entry) => entry.store === store);
+      const merchantSources = audit?.sources.length ?? 0;
+      const successfulMerchantSources = audit?.sources.filter((source) => !source.error && !source.deferred).length ?? 0;
+      const successfulMerchantCheck = successfulMerchantSources > 0;
+      const checkedAt = new Date(scheduledTime as number).toISOString();
+      const deferredFastWatch = result.deferredFastWatchStores?.includes(store) === true ||
+        (audit?.sources.length ? audit.sources.every((source) => source.deferred === true) : false);
       const error = result.degradedStores?.find((entry) => entry.store === store)?.errors.join(" | ");
+      const sourceChecks = audit?.sources.map((source) => ({
+        source: source.sourceUrl,
+        ...(source.status !== undefined ? { status: source.status } : {}),
+        ...(source.responseBytes !== undefined ? { responseBytes: source.responseBytes } : {}),
+        ...(source.cacheValidation ? { cacheValidation: source.cacheValidation } : {}),
+        ...(source.notModified ? { notModified: true } : {}),
+        ...(source.deferred ? { deferred: true } : {}),
+        ...(source.error ? { error: source.error } : {})
+      })) ?? [];
+      const passiveAuthorizedFeed = sourceChecks.length > 0 && sourceChecks.every((source) =>
+        source.notModified === true || source.deferred === true
+      );
       const health: StoreRuntimeHealth = {
         store,
         status: degraded ? "degraded" : "completed",
-        checkedAt: new Date(scheduledTime as number).toISOString(),
+        checkedAt,
         completedAt: new Date().toISOString(),
         durationMs,
         merchantDurationMs,
-        candidates: audit?.candidates.length ?? 0,
-        sourceKind: audit?.sourceKind,
+        candidates: passiveAuthorizedFeed ? previousHealth?.candidates ?? 0 : audit?.candidates.length ?? 0,
+        merchantSources,
+        successfulMerchantSources,
+        ...(successfulMerchantCheck
+          ? { lastMerchantCheckAt: checkedAt }
+          : previousHealth?.lastMerchantCheckAt
+            ? { lastMerchantCheckAt: previousHealth.lastMerchantCheckAt }
+            : {}),
+        ...(input.forceDiscovery === true && successfulMerchantCheck
+          ? { lastDiscoveryAt: checkedAt }
+          : previousHealth?.lastDiscoveryAt
+            ? { lastDiscoveryAt: previousHealth.lastDiscoveryAt }
+            : {}),
+        ...(input.forceDiscovery !== true && successfulMerchantCheck
+          ? { lastFastWatchAt: checkedAt }
+          : previousHealth?.lastFastWatchAt
+            ? { lastFastWatchAt: previousHealth.lastFastWatchAt }
+            : {}),
+        deferredFastWatch,
+        ...(passiveAuthorizedFeed && previousHealth?.analysis
+          ? { analysis: previousHealth.analysis }
+          : audit && result.analysis
+          ? { analysis: result.analysis }
+          : previousHealth?.analysis
+            ? { analysis: previousHealth.analysis }
+            : {}),
+        ...(audit?.warnings?.length ? { warnings: audit.warnings.slice(0, 8) } : {}),
+        sourceKind: audit?.sourceKind ?? previousHealth?.sourceKind,
+        ...(sourceChecks.length ? { sourceChecks } : previousHealth?.sourceChecks ? { sourceChecks: previousHealth.sourceChecks } : {}),
         ...(error ? { error } : {}),
         discovery: input.forceDiscovery === true
       };
@@ -398,6 +486,14 @@ export class StoreMonitorDurableObject {
           durationMs,
           merchantDurationMs: 0,
           candidates: 0,
+          merchantSources: 0,
+          successfulMerchantSources: 0,
+          ...(previousHealth?.lastMerchantCheckAt ? { lastMerchantCheckAt: previousHealth.lastMerchantCheckAt } : {}),
+          ...(previousHealth?.lastDiscoveryAt ? { lastDiscoveryAt: previousHealth.lastDiscoveryAt } : {}),
+          ...(previousHealth?.lastFastWatchAt ? { lastFastWatchAt: previousHealth.lastFastWatchAt } : {}),
+          deferredFastWatch: previousHealth?.deferredFastWatch ?? false,
+          ...(previousHealth?.analysis ? { analysis: previousHealth.analysis } : {}),
+          ...(previousHealth?.sourceChecks ? { sourceChecks: previousHealth.sourceChecks } : {}),
           error: message,
           discovery: activeDiscovery
         } satisfies StoreRuntimeHealth);
@@ -410,11 +506,165 @@ export class StoreMonitorDurableObject {
 }
 
 export class CalendarCoordinatorDurableObject {
-  private running?: Promise<Response>;
+  /**
+   * Une seule lecture Bandai est exécutée à la fois, mais chaque appelant doit
+   * recevoir son propre corps HTTP. Une Response est un stream mono-lecture :
+   * la partager entre le cron et le cockpit provoquait aléatoirement
+   * "Body has already been used" chez le second consommateur.
+  */
+  private running?: Promise<JsonResponseSnapshot>;
+  private scheduledMonitoringRunning = false;
 
   constructor(private readonly state: DurableObjectState, private readonly env: RuntimeEnv) {}
 
+  private async schedulerMark(input: Record<string, unknown>): Promise<void> {
+    try {
+      const response = await handleSchedulerHealthRequest(new Request("https://scheduler-health.internal/mark", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input)
+      }), this.state.storage, this.env);
+      if (!response?.ok) throw new Error(`Scheduler mark HTTP ${response?.status ?? 500}`);
+    } catch (error) {
+      console.error("Scheduler coordinator mark failed:", safeError(error));
+    }
+  }
+
+  private async runDeliveredWebScout(scheduledTime: number): Promise<void> {
+    if (!isWebScoutTick(scheduledTime)) return;
+    const started = performance.now();
+    await this.schedulerMark({ kind: "web_scout_started", scheduledTime });
+    try {
+      await invokeWebScout(this.env, scheduledTime, "Web Scout");
+      await this.schedulerMark({
+        kind: "web_scout_completed",
+        scheduledTime,
+        durationMs: performance.now() - started
+      });
+    } catch (error) {
+      const message = safeError(error);
+      await this.schedulerMark({
+        kind: "web_scout_failed",
+        scheduledTime,
+        durationMs: performance.now() - started,
+        error: message
+      });
+      console.error("Web Scout error:", message);
+    }
+  }
+
+  private async runPreCycleHeartbeat(scheduledTime: number, enabled: boolean): Promise<void> {
+    if (!enabled) return;
+    await this.schedulerMark({ kind: "automatic_heartbeat_started", scheduledTime });
+    try {
+      const delivery = await dispatchRuntimeHeartbeatSignal(scheduledTime, this.env);
+      if (delivery.sent !== 1) {
+        const error = delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi.";
+        await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error });
+        console.error("Automatic pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
+      } else {
+        await this.schedulerMark({ kind: "automatic_heartbeat_completed", scheduledTime });
+      }
+    } catch (error) {
+      await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error: safeError(error) });
+      console.error("Automatic pre-cycle heartbeat crashed:", safeError(error));
+    }
+  }
+
+  /**
+   * Le Cron Free dispose de 10 ms de CPU. Toute l'orchestration et la lecture
+   * des réponses boutiques sont donc déportées dans ce Durable Object (30 s
+   * de CPU par requête), tandis que le Scheduled Handler ne fait qu'un appel
+   * de binding. Le heartbeat reste strictement antérieur au cycle marchand.
+   */
+  private async runDeliveredScheduledEvent(request: Request): Promise<Response> {
+    const input = await request.json() as { scheduledTime?: number; mode?: "test" | "live" };
+    const scheduledTime = Number(input.scheduledTime);
+    const mode = input.mode;
+    if (!Number.isFinite(scheduledTime) || (mode !== "test" && mode !== "live")) {
+      return json({ error: "Scheduled Event interne invalide." }, 400);
+    }
+    const isolatedSchedulerTest = mode === "test" &&
+      this.env.SCHEDULER_MODE === "test" &&
+      this.env.RUNTIME_TEST_MODE === "true" &&
+      this.env.DISCORD_MODE === "dry-run" &&
+      Boolean(this.env.RUNTIME_TEST_RUN_ID?.trim());
+    if ((mode === "live" && this.env.SCHEDULER_MODE !== "live") || (mode === "test" && !isolatedSchedulerTest)) {
+      return json({ error: "Scheduled Event interne refusé par les garde-fous runtime." }, 403);
+    }
+
+    const discovery = isDiscoveryTick(scheduledTime);
+    const heartbeatTick = mode === "live" && isHeartbeatTick(scheduledTime);
+    await this.schedulerMark({
+      kind: "scheduled_received",
+      scheduledTime,
+      observedTime: Date.now()
+    });
+
+    await this.runPreCycleHeartbeat(scheduledTime, heartbeatTick);
+
+    if (this.scheduledMonitoringRunning) {
+      await this.schedulerMark({
+        kind: "monitoring_failed",
+        scheduledTime,
+        discovery,
+        error: "Cycle scheduler déjà en cours : tick enregistré sans double polling."
+      });
+      if (mode === "live") await this.runDeliveredWebScout(scheduledTime);
+      return json({ status: "overlap", discovery }, 202);
+    }
+
+    this.scheduledMonitoringRunning = true;
+    const started = performance.now();
+    let responseStatus = 200;
+    let responseBody: Record<string, unknown>;
+    try {
+      await this.schedulerMark({ kind: "monitoring_started", scheduledTime, discovery });
+      try {
+        const cycle = await runDistributedMonitoringCycle(this.env, { mode, scheduledTime });
+        const completedStores = cycle.stores.filter((store) => store.status === "completed").length;
+        const incidentStores = cycle.stores.filter((store) => store.status !== "completed").length;
+        await this.schedulerMark({
+          kind: "monitoring_completed",
+          scheduledTime,
+          discovery: cycle.discovery,
+          durationMs: performance.now() - started,
+          completedStores,
+          incidentStores
+        });
+        responseBody = { status: "completed", discovery: cycle.discovery, completedStores, incidentStores };
+      } catch (error) {
+        const message = safeError(error);
+        await this.schedulerMark({
+          kind: "monitoring_failed",
+          scheduledTime,
+          discovery,
+          durationMs: performance.now() - started,
+          error: message
+        });
+        console.error("Scheduled monitoring cycle failed:", message);
+        if (heartbeatTick) {
+          try {
+            const delivery = await dispatchRuntimeHeartbeatFailure(scheduledTime, this.env, error);
+            if (delivery.sent !== 1) console.error("Scheduled fail-safe cycle alert delivery failed:", JSON.stringify(delivery));
+          } catch (heartbeatError) {
+            console.error("Scheduled fail-safe cycle alert crashed:", safeError(heartbeatError));
+          }
+        }
+        responseStatus = 503;
+        responseBody = { status: "error", error: message };
+      }
+    } finally {
+      this.scheduledMonitoringRunning = false;
+    }
+    if (mode === "live") await this.runDeliveredWebScout(scheduledTime);
+    return json(responseBody!, responseStatus);
+  }
+
   async fetch(request: Request): Promise<Response> {
+    const schedulerHealthResponse = await handleSchedulerHealthRequest(request, this.state.storage, this.env);
+    if (schedulerHealthResponse) return schedulerHealthResponse;
+
     const pathname = new URL(request.url).pathname;
     if (request.method === "GET" && pathname === "/control") {
       const raw = await this.state.storage.get<unknown>(CONTROL_CONFIG_STORAGE_KEY);
@@ -426,17 +676,20 @@ export class CalendarCoordinatorDurableObject {
       await this.state.storage.put(CONTROL_CONFIG_STORAGE_KEY, config);
       return json(config);
     }
+    if (request.method === "POST" && pathname === "/scheduled-event") {
+      return this.runDeliveredScheduledEvent(request);
+    }
     if (request.method !== "POST" || pathname !== "/calendar") {
       return json({ error: "Route Durable Object calendrier invalide." }, 404);
     }
-    if (this.running) return this.running;
+    if (this.running) return responseFromSnapshot(await this.running);
 
     this.running = (async () => {
       const started = performance.now();
       try {
         const input = await request.json() as { scheduledTime?: number };
         const scheduledTime = Number(input.scheduledTime);
-        if (!Number.isFinite(scheduledTime)) return json({ error: "scheduledTime invalide." }, 400);
+        if (!Number.isFinite(scheduledTime)) return jsonSnapshot({ error: "scheduledTime invalide." }, 400);
         const stateStore = asStateStore(new DurableObjectStateStore(this.state.storage, true));
         const calendar = await loadOfficialCalendar({
           sourceUrl: opWatchV1Config.officialCatalogUrl,
@@ -448,18 +701,21 @@ export class CalendarCoordinatorDurableObject {
         const rawControl = await this.state.storage.get<unknown>(CONTROL_CONFIG_STORAGE_KEY);
         const control = rawControl ? normalizeRuntimeControlConfig(rawControl) : defaultRuntimeControlConfig();
         const activeProducts = applyRuntimeControlConfig(calendar.activeProducts, control, new Date(scheduledTime));
-        return json({
+        return jsonSnapshot({
           durationMs: Math.round(performance.now() - started),
           fetchedAt: calendar.fetchedAt,
           sourcePages: calendar.sourcePages,
           cache: calendar.cache,
+          cacheAgeMs: calendar.cacheAgeMs,
+          ...(calendar.warning ? { calendarWarning: calendar.warning } : {}),
           activeProducts,
+          officialCatalogProductIds: calendar.catalogProducts.map((product) => product.id),
           acceptedLanguages: control.languages,
           extraSourcesByStore: extraStoreSources(control),
           controlUpdatedAt: control.updatedAt
         });
       } catch (error) {
-        return json({
+        return jsonSnapshot({
           durationMs: Math.round(performance.now() - started),
           error: safeError(error)
         }, 502);
@@ -467,9 +723,95 @@ export class CalendarCoordinatorDurableObject {
     })();
 
     try {
-      return await this.running;
+      return responseFromSnapshot(await this.running);
     } finally {
       this.running = undefined;
+    }
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const watchdog = await handleSchedulerWatchdogAlarm(this.state.storage, this.env, now);
+    if (!watchdog.stale || this.env.MONITORING_ENABLED !== "true" || this.env.WRITE_STATE !== "true") return;
+
+    const isolatedFallbackTest = this.env.SCHEDULER_MODE === "test" &&
+      this.env.RUNTIME_TEST_MODE === "true" &&
+      this.env.DISCORD_MODE === "dry-run" &&
+      Boolean(this.env.RUNTIME_TEST_RUN_ID?.trim());
+    const mode: "test" | "live" = isolatedFallbackTest ? "test" : "live";
+
+    const scheduledTime = Math.floor(now / 60_000) * 60_000;
+    const discovery = isDiscoveryTick(scheduledTime);
+    const heartbeatTick = mode === "live" && isHeartbeatTick(scheduledTime);
+    const mark = async (input: Record<string, unknown>) => {
+      await handleSchedulerHealthRequest(new Request("https://scheduler-health.internal/mark", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scheduledTime, ...input })
+      }), this.state.storage, this.env);
+    };
+
+    // Le secours conserve exactement le contrat du cron nominal : le signal
+    // 10 h/22 h Paris part avant tout accès marchand.
+    await this.runPreCycleHeartbeat(scheduledTime, heartbeatTick);
+
+    if (this.scheduledMonitoringRunning) {
+      await mark({
+        kind: "fallback_monitoring_failed",
+        discovery,
+        error: "Cycle automatique déjà en cours : fallback différé sans double polling."
+      });
+      return;
+    }
+    this.scheduledMonitoringRunning = true;
+
+    try {
+      const started = performance.now();
+      await mark({ kind: "fallback_monitoring_started", discovery });
+      try {
+        const cycle = await runDistributedMonitoringCycle(this.env, { mode, scheduledTime });
+        await mark({
+          kind: "fallback_monitoring_completed",
+          discovery: cycle.discovery,
+          durationMs: performance.now() - started,
+          completedStores: cycle.stores.filter((store) => store.status === "completed").length,
+          incidentStores: cycle.stores.filter((store) => store.status !== "completed").length
+        });
+      } catch (error) {
+        await mark({
+          kind: "fallback_monitoring_failed",
+          discovery,
+          durationMs: performance.now() - started,
+          error: safeError(error)
+        });
+        if (heartbeatTick) {
+          const delivery = await dispatchRuntimeHeartbeatFailure(scheduledTime, this.env, error).catch((deliveryError) => ({
+            attempted: 0,
+            sent: 0,
+            errors: [safeError(deliveryError)]
+          }));
+          if (delivery.sent !== 1) console.error("Fallback fail-safe cycle alert delivery failed:", JSON.stringify(delivery));
+        }
+      }
+
+      // Le test d'alarme isolé ne consomme jamais Brave. En production, le
+      // fallback conserve la même minute :07 que le Scheduled Event nominal.
+      if (mode === "live" && isWebScoutTick(scheduledTime)) {
+        const scoutStarted = performance.now();
+        await mark({ kind: "fallback_web_scout_started" });
+        try {
+          await invokeWebScout(this.env, scheduledTime, "Web Scout fallback");
+          await mark({ kind: "fallback_web_scout_completed", durationMs: performance.now() - scoutStarted });
+        } catch (error) {
+          await mark({
+            kind: "fallback_web_scout_failed",
+            durationMs: performance.now() - scoutStarted,
+            error: safeError(error)
+          });
+        }
+      }
+    } finally {
+      this.scheduledMonitoringRunning = false;
     }
   }
 }
@@ -487,6 +829,7 @@ async function getCalendar(
 ): Promise<{
   durationMs: number;
   activeProducts: OfficialProduct[];
+  officialCatalogProductIds: string[];
   acceptedLanguages: LanguageStatus[];
   extraSourcesByStore: Partial<Record<StoreKey, string[]>>;
 }> {
@@ -506,6 +849,7 @@ async function runStore(
   scheduledTime: number,
   forceDiscovery: boolean,
   officialProducts: OfficialProduct[],
+  officialCatalogProductIds: string[],
   acceptedLanguages: LanguageStatus[],
   extraStoreSources: string[]
 ): Promise<DurableCycleStoreResult> {
@@ -515,7 +859,15 @@ async function runStore(
     const response = await stub.fetch(new Request("https://store.internal/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ store, scheduledTime, forceDiscovery, officialProducts, acceptedLanguages, extraStoreSources })
+      body: JSON.stringify({
+        store,
+        scheduledTime,
+        forceDiscovery,
+        officialProducts,
+        officialCatalogProductIds,
+        acceptedLanguages,
+        extraStoreSources
+      })
     }));
     const payload = await response.json() as Omit<DurableCycleStoreResult, "store">;
     return { store, ...payload };
@@ -533,6 +885,7 @@ export async function runDistributedMonitoringCycle(
     mode: "test" | "live";
   }
 ): Promise<DurableCycleResult> {
+  const wallStarted = performance.now();
   assertRuntimeReadiness(env, options.mode);
   const scheduledTime = options.scheduledTime ?? Date.now();
   const prefix = runtimePrefix(env, options.mode);
@@ -553,6 +906,7 @@ export async function runDistributedMonitoringCycle(
       scheduledTime,
       selection.discovery,
       calendar.activeProducts,
+      calendar.officialCatalogProductIds,
       calendar.acceptedLanguages,
       calendar.extraSourcesByStore[store] ?? []
     ))));
@@ -566,6 +920,7 @@ export async function runDistributedMonitoringCycle(
     calendarDurationMs: Math.max(0, calendar.durationMs),
     storeDurationMs,
     durableDurationMs: Math.max(0, calendar.durationMs) + storeDurationMs,
+    wallDurationMs: Math.round(performance.now() - wallStarted),
     durableRequestCount: 1 + stores.length,
     stores,
     pendingAuthorizedFeedStores: selection.pendingAuthorizedFeedStores,

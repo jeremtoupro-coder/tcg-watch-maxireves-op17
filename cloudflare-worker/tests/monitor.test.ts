@@ -130,6 +130,164 @@ describe("surveillance planifiée", () => {
     expect(calls).toEqual(["https://maxireves.fr/produit/display-op17-fr/"]);
   });
 
+  it("ne double pas la même fiche entre Discovery et Fast Watch", async () => {
+    const productUrl = "https://maxireves.fr/produit/display-op17-fr/";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(url === productUrl
+        ? `<html><body><h1>Display OP-17 Français</h1><p>En stock — 119,90 €</p></body></html>`
+        : `<html><body><h1>One Piece TCG</h1><a href="${productUrl}">Display OP-17 Français</a></body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
+    }));
+    const stateStore = new MemoryStateStore({ writable: true });
+    const env = {
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run" as const,
+      ACTIVE_STORES: "maxireves"
+    };
+
+    const discovery = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+    expect(discovery.evaluation?.alertMatches).toEqual([]);
+
+    const fast = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 16, 0)
+    });
+    expect(fast.evaluation?.changes).toEqual([]);
+    expect(fast.evaluation?.alertMatches).toEqual([]);
+    expect(fast.evaluation?.discordDispatch.attempted).toBe(0);
+  });
+
+  it("utilise le feed public en Discovery puis seulement la fiche directe en Fast Watch", async () => {
+    const stateStore = new MemoryStateStore({ writable: true });
+    const productUrl = "https://www.joueclub.fr/one-piece/display-op17-fr-123456.html";
+    const feedUrl = "https://feed.example/joueclub.csv";
+    const feed = `title,url,price,stock,language\nOne Piece OP17 Display FR,${productUrl},119.90,disponible,français`;
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      return url === feedUrl
+        ? new Response(feed, { status: 200, headers: { "content-type": "text/csv" } })
+        : new Response("<html><body><h1>One Piece OP17 Display FR</h1><p>En stock — 119,90 € — Français</p></body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html" }
+          });
+    }));
+    const env = {
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run" as const,
+      ACTIVE_STORES: "joueclub",
+      AUTHORIZED_FEED_JOUECLUB_URL: feedUrl
+    };
+
+    const baseline = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+    const fast = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 16, 0)
+    });
+
+    expect(baseline.evaluation?.snapshots).toHaveLength(1);
+    expect(baseline.evaluation?.alertMatches).toEqual([]);
+    expect(fast.healthyStores).toEqual(["joueclub"]);
+    expect(calls).toEqual([feedUrl, productUrl, productUrl]);
+    expect(fast.audits?.[0].sourceKind).toBe("public_html");
+    expect(fast.audits?.[0].sources[0].sourceUrl).toBe(productUrl);
+    expect(fast.evaluation?.changes).toEqual([]);
+    expect(fast.evaluation?.state.writes).toBe(0);
+    expect(fast.evaluation?.discordDispatch.attempted).toBe(0);
+  });
+
+  it("conserve le feed autorisé comme Fast Watch pour une origine protégée", async () => {
+    const stateStore = new MemoryStateStore({ writable: true });
+    const feedUrl = "https://feed.example/playin.csv";
+    const feed = "title,url,price,stock,language\nOne Piece OP17 Display FR,https://www.play-in.com/fr/produit/999999/display-op17-fr,119.90,disponible,français";
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (headers.get("if-none-match") === '"playin-v1"') {
+        return new Response(null, { status: 304, headers: { etag: '"playin-v1"' } });
+      }
+      return new Response(feed, {
+        status: 200,
+        headers: { "content-type": "text/csv", etag: '"playin-v1"' }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const env = {
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run" as const,
+      ACTIVE_STORES: "playin",
+      AUTHORIZED_FEED_PLAYIN_URL: feedUrl
+    };
+
+    await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+    const fast = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 16, 0)
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fast.healthyStores).toEqual(["playin"]);
+    expect(fast.audits?.[0].sources[0]).toMatchObject({ status: 304, notModified: true });
+    expect(fast.evaluation?.changes).toEqual([]);
+    expect(fast.evaluation?.discordDispatch.attempted).toBe(0);
+  });
+
+  it("trace les raisons de filtrage au lieu d'expliquer le silence par zéro candidat", async () => {
+    const productUrl = "https://maxireves.fr/produit/display-op17/";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(url === productUrl
+        ? `<html><body><h1>Display One Piece OP-17</h1><p>En stock — 119,90 €</p></body></html>`
+        : `<html><body><h1>One Piece TCG</h1><a href="${productUrl}">Display OP-17</a></body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
+    }));
+
+    const result = await runMonitoringCycle({
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run",
+      ACTIVE_STORES: "maxireves"
+    }, {
+      officialProducts: [OP17],
+      stateStore: new MemoryStateStore({ writable: true }),
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+
+    expect(result.analysis?.newReleases.observedCandidates).toBe(1);
+    expect(result.analysis?.newReleases.candidates).toBe(0);
+    expect(result.analysis?.newReleases.rejectionReasons).toMatchObject({
+      langue_non_acceptee: 1,
+      confiance_langue_insuffisante: 1
+    });
+  });
+
   it("retire du Fast Watch une URL devenue absente après une découverte saine", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
