@@ -35,7 +35,10 @@ async function waitForHealthRoute(): Promise<HealthResponse> {
 const initial = await waitForHealthRoute();
 const initialReceived = initial.health?.receivedCount ?? 0;
 const initialCompleted = initial.health?.monitoringCompletedCount ?? 0;
-const deadline = Date.now() + 4 * 60_000;
+// Cloudflare documente jusqu'à 15 minutes de propagation après une
+// modification de Cron Trigger. Le test laisse cette fenêtre complète, puis
+// exige toujours deux minutes distinctes réellement reçues et terminées.
+const deadline = Date.now() + 16 * 60_000;
 let final = initial;
 
 while (Date.now() < deadline) {
@@ -85,4 +88,4 @@ const report = {
   verdict: "FAIL"
 };
 await writeFile("scheduler-test-report.json", `${JSON.stringify(report, null, 2)}\n`, "utf8");
-throw new Error("Deux Scheduled Events automatiques successifs et terminés n'ont pas été observés en quatre minutes.");
+throw new Error("Deux Scheduled Events automatiques successifs et terminés n'ont pas été observés en seize minutes.");

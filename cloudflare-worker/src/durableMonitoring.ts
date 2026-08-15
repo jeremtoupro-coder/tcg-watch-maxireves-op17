@@ -10,6 +10,11 @@ import { candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
 import { handleSchedulerHealthRequest, handleSchedulerWatchdogAlarm } from "./schedulerHealth";
 import { isWebScoutTick } from "./webScout";
+import {
+  dispatchRuntimeHeartbeatFailure,
+  dispatchRuntimeHeartbeatSignal,
+  isHeartbeatTick
+} from "./heartbeat";
 import { CONTROL_CONFIG_STORAGE_KEY, applyRuntimeControlConfig, defaultRuntimeControlConfig, extraStoreSources, normalizeRuntimeControlConfig, type RuntimeControlConfig } from "./controlPlane";
 import type { StateStore } from "./state";
 import type { Env, LanguageStatus, ProductSnapshot, StoreKey } from "./types";
@@ -314,6 +319,21 @@ function sourceDurationMs(result: Awaited<ReturnType<typeof runMonitoringCycle>>
   ) ?? 0;
 }
 
+async function invokeWebScout(env: RuntimeEnv, scheduledTime: number, label: string): Promise<void> {
+  if (!env.WEB_SCOUT) throw new Error("Binding WEB_SCOUT absent.");
+  if (!env.BRAVE_SEARCH_API_KEY?.trim()) throw new Error("BRAVE_SEARCH_API_KEY absent.");
+  const stub = env.WEB_SCOUT.get(env.WEB_SCOUT.idFromName("production:web-scout"));
+  const response = await stub.fetch(new Request("https://web-scout.internal/run", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scheduledTime })
+  }));
+  if (!response.ok) {
+    throw new Error(`${label} HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+  }
+  await response.body?.cancel().catch(() => undefined);
+}
+
 export class StoreMonitorDurableObject {
   private running = false;
 
@@ -510,10 +530,152 @@ export class CalendarCoordinatorDurableObject {
    * recevoir son propre corps HTTP. Une Response est un stream mono-lecture :
    * la partager entre le cron et le cockpit provoquait aléatoirement
    * "Body has already been used" chez le second consommateur.
-   */
+  */
   private running?: Promise<JsonResponseSnapshot>;
+  private scheduledMonitoringRunning = false;
 
   constructor(private readonly state: DurableObjectState, private readonly env: RuntimeEnv) {}
+
+  private async schedulerMark(input: Record<string, unknown>): Promise<void> {
+    try {
+      const response = await handleSchedulerHealthRequest(new Request("https://scheduler-health.internal/mark", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input)
+      }), this.state.storage, this.env);
+      if (!response?.ok) throw new Error(`Scheduler mark HTTP ${response?.status ?? 500}`);
+    } catch (error) {
+      console.error("Scheduler coordinator mark failed:", safeError(error));
+    }
+  }
+
+  private async runDeliveredWebScout(scheduledTime: number): Promise<void> {
+    if (!isWebScoutTick(scheduledTime)) return;
+    const started = performance.now();
+    await this.schedulerMark({ kind: "web_scout_started", scheduledTime });
+    try {
+      await invokeWebScout(this.env, scheduledTime, "Web Scout");
+      await this.schedulerMark({
+        kind: "web_scout_completed",
+        scheduledTime,
+        durationMs: performance.now() - started
+      });
+    } catch (error) {
+      const message = safeError(error);
+      await this.schedulerMark({
+        kind: "web_scout_failed",
+        scheduledTime,
+        durationMs: performance.now() - started,
+        error: message
+      });
+      console.error("Web Scout error:", message);
+    }
+  }
+
+  /**
+   * Le Cron Free dispose de 10 ms de CPU. Toute l'orchestration et la lecture
+   * des réponses boutiques sont donc déportées dans ce Durable Object (30 s
+   * de CPU par requête), tandis que le Scheduled Handler ne fait qu'un appel
+   * de binding. Le heartbeat reste strictement antérieur au cycle marchand.
+   */
+  private async runDeliveredScheduledEvent(request: Request): Promise<Response> {
+    const input = await request.json() as { scheduledTime?: number; mode?: "test" | "live" };
+    const scheduledTime = Number(input.scheduledTime);
+    const mode = input.mode;
+    if (!Number.isFinite(scheduledTime) || (mode !== "test" && mode !== "live")) {
+      return json({ error: "Scheduled Event interne invalide." }, 400);
+    }
+    const isolatedSchedulerTest = mode === "test" &&
+      this.env.SCHEDULER_MODE === "test" &&
+      this.env.RUNTIME_TEST_MODE === "true" &&
+      this.env.DISCORD_MODE === "dry-run" &&
+      Boolean(this.env.RUNTIME_TEST_RUN_ID?.trim());
+    if ((mode === "live" && this.env.SCHEDULER_MODE !== "live") || (mode === "test" && !isolatedSchedulerTest)) {
+      return json({ error: "Scheduled Event interne refusé par les garde-fous runtime." }, 403);
+    }
+
+    const discovery = isDiscoveryTick(scheduledTime);
+    const heartbeatTick = mode === "live" && isHeartbeatTick(scheduledTime);
+    await this.schedulerMark({
+      kind: "scheduled_received",
+      scheduledTime,
+      observedTime: Date.now()
+    });
+
+    if (heartbeatTick) {
+      await this.schedulerMark({ kind: "automatic_heartbeat_started", scheduledTime });
+      try {
+        const delivery = await dispatchRuntimeHeartbeatSignal(scheduledTime, this.env);
+        if (delivery.sent !== 1) {
+          const error = delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi.";
+          await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error });
+          console.error("Scheduled pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
+        } else {
+          await this.schedulerMark({ kind: "automatic_heartbeat_completed", scheduledTime });
+        }
+      } catch (error) {
+        await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error: safeError(error) });
+        console.error("Scheduled pre-cycle heartbeat crashed:", safeError(error));
+      }
+    }
+
+    if (this.scheduledMonitoringRunning) {
+      await this.schedulerMark({
+        kind: "monitoring_failed",
+        scheduledTime,
+        discovery,
+        error: "Cycle scheduler déjà en cours : tick enregistré sans double polling."
+      });
+      if (mode === "live") await this.runDeliveredWebScout(scheduledTime);
+      return json({ status: "overlap", discovery }, 202);
+    }
+
+    this.scheduledMonitoringRunning = true;
+    const started = performance.now();
+    let responseStatus = 200;
+    let responseBody: Record<string, unknown>;
+    try {
+      await this.schedulerMark({ kind: "monitoring_started", scheduledTime, discovery });
+      try {
+        const cycle = await runDistributedMonitoringCycle(this.env, { mode, scheduledTime });
+        const completedStores = cycle.stores.filter((store) => store.status === "completed").length;
+        const incidentStores = cycle.stores.filter((store) => store.status !== "completed").length;
+        await this.schedulerMark({
+          kind: "monitoring_completed",
+          scheduledTime,
+          discovery: cycle.discovery,
+          durationMs: performance.now() - started,
+          completedStores,
+          incidentStores
+        });
+        responseBody = { status: "completed", discovery: cycle.discovery, completedStores, incidentStores };
+      } catch (error) {
+        const message = safeError(error);
+        await this.schedulerMark({
+          kind: "monitoring_failed",
+          scheduledTime,
+          discovery,
+          durationMs: performance.now() - started,
+          error: message
+        });
+        console.error("Scheduled monitoring cycle failed:", message);
+        if (heartbeatTick) {
+          try {
+            const delivery = await dispatchRuntimeHeartbeatFailure(scheduledTime, this.env, error);
+            if (delivery.sent !== 1) console.error("Scheduled fail-safe cycle alert delivery failed:", JSON.stringify(delivery));
+          } catch (heartbeatError) {
+            console.error("Scheduled fail-safe cycle alert crashed:", safeError(heartbeatError));
+          }
+        }
+        responseStatus = 503;
+        responseBody = { status: "error", error: message };
+      }
+    } finally {
+      this.scheduledMonitoringRunning = false;
+    }
+    if (mode === "live") await this.runDeliveredWebScout(scheduledTime);
+    return json(responseBody!, responseStatus);
+  }
 
   async fetch(request: Request): Promise<Response> {
     const schedulerHealthResponse = await handleSchedulerHealthRequest(request, this.state.storage, this.env);
@@ -529,6 +691,9 @@ export class CalendarCoordinatorDurableObject {
       const config = normalizeRuntimeControlConfig(raw);
       await this.state.storage.put(CONTROL_CONFIG_STORAGE_KEY, config);
       return json(config);
+    }
+    if (request.method === "POST" && pathname === "/scheduled-event") {
+      return this.runDeliveredScheduledEvent(request);
     }
     if (request.method !== "POST" || pathname !== "/calendar") {
       return json({ error: "Route Durable Object calendrier invalide." }, 404);
@@ -593,47 +758,53 @@ export class CalendarCoordinatorDurableObject {
       }), this.state.storage, this.env);
     };
 
-    const started = performance.now();
-    await mark({ kind: "fallback_monitoring_started", discovery });
-    try {
-      const cycle = await runDistributedMonitoringCycle(this.env, { mode: "live", scheduledTime });
-      await mark({
-        kind: "fallback_monitoring_completed",
-        discovery: cycle.discovery,
-        durationMs: performance.now() - started,
-        completedStores: cycle.stores.filter((store) => store.status === "completed").length,
-        incidentStores: cycle.stores.filter((store) => store.status !== "completed").length
-      });
-    } catch (error) {
+    if (this.scheduledMonitoringRunning) {
       await mark({
         kind: "fallback_monitoring_failed",
         discovery,
-        durationMs: performance.now() - started,
-        error: safeError(error)
+        error: "Cycle automatique déjà en cours : fallback différé sans double polling."
       });
+      return;
     }
+    this.scheduledMonitoringRunning = true;
 
-    if (isWebScoutTick(scheduledTime)) {
-      const scoutStarted = performance.now();
-      await mark({ kind: "fallback_web_scout_started" });
+    try {
+      const started = performance.now();
+      await mark({ kind: "fallback_monitoring_started", discovery });
       try {
-        if (!this.env.WEB_SCOUT) throw new Error("Binding WEB_SCOUT absent.");
-        if (!this.env.BRAVE_SEARCH_API_KEY?.trim()) throw new Error("BRAVE_SEARCH_API_KEY absent.");
-        const stub = this.env.WEB_SCOUT.get(this.env.WEB_SCOUT.idFromName("production:web-scout"));
-        const response = await stub.fetch(new Request("https://web-scout.internal/run", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ scheduledTime })
-        }));
-        if (!response.ok) throw new Error(`Web Scout fallback HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
-        await mark({ kind: "fallback_web_scout_completed", durationMs: performance.now() - scoutStarted });
+        const cycle = await runDistributedMonitoringCycle(this.env, { mode: "live", scheduledTime });
+        await mark({
+          kind: "fallback_monitoring_completed",
+          discovery: cycle.discovery,
+          durationMs: performance.now() - started,
+          completedStores: cycle.stores.filter((store) => store.status === "completed").length,
+          incidentStores: cycle.stores.filter((store) => store.status !== "completed").length
+        });
       } catch (error) {
         await mark({
-          kind: "fallback_web_scout_failed",
-          durationMs: performance.now() - scoutStarted,
+          kind: "fallback_monitoring_failed",
+          discovery,
+          durationMs: performance.now() - started,
           error: safeError(error)
         });
       }
+
+      if (isWebScoutTick(scheduledTime)) {
+        const scoutStarted = performance.now();
+        await mark({ kind: "fallback_web_scout_started" });
+        try {
+          await invokeWebScout(this.env, scheduledTime, "Web Scout fallback");
+          await mark({ kind: "fallback_web_scout_completed", durationMs: performance.now() - scoutStarted });
+        } catch (error) {
+          await mark({
+            kind: "fallback_web_scout_failed",
+            durationMs: performance.now() - scoutStarted,
+            error: safeError(error)
+          });
+        }
+      }
+    } finally {
+      this.scheduledMonitoringRunning = false;
     }
   }
 }

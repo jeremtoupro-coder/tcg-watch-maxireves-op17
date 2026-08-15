@@ -267,6 +267,13 @@ jobs:
           JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==2) process.exit(1)"
       - name: Deploy isolated automatic scheduler test
         run: npx wrangler deploy --config wrangler.runtime-test.generated.json
+      - name: Verify isolated cron is registered by the Cloudflare API
+        shell: bash
+        run: |
+          response="$(curl -fsS \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/tcg-watch-one-piece-runtime-test/schedules")"
+          jq -e '.success == true and (.result.schedules | map(.cron)) == ["* * * * *"]' <<<"$response"
       - name: Observe two real successive Scheduled Events
         run: npm run smoke-scheduler
 
