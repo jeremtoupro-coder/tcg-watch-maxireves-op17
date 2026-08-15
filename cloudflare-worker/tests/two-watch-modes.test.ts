@@ -45,6 +45,23 @@ describe("séparation des deux veilles", () => {
     expect(config.products.map((product) => product.id)).toEqual(["OP-09", "OP-17"]);
   });
 
+  it("ne classe pas une future référence marchande non publiée comme historique", () => {
+    const op18 = candidate("OP-18", "available");
+    expect(candidateForAllOnePiece(
+      op18,
+      ["Français confirmé"],
+      90,
+      ["OP-01", "OP-09", "OP-17", "EB-05"]
+    )).toBeUndefined();
+
+    expect(candidateForAllOnePiece(
+      candidate("OP-09", "available"),
+      ["Français confirmé"],
+      90,
+      ["OP-01", "OP-09", "OP-17", "EB-05"]
+    )?.matchedReferences).toEqual(["OP-09"]);
+  });
+
   it("baseline ALL silencieuse puis alerte uniquement sur un vrai restock historique", async () => {
     const root = new MemoryStateStore({ writable: true });
     const allState = scopedStateStore(root, "one-piece-all");

@@ -347,6 +347,7 @@ export class StoreMonitorDurableObject {
         scheduledTime?: number;
         forceDiscovery?: boolean;
         officialProducts?: OfficialProduct[];
+        officialCatalogProductIds?: string[];
         acceptedLanguages?: LanguageStatus[];
         extraStoreSources?: string[];
       };
@@ -400,6 +401,7 @@ export class StoreMonitorDurableObject {
       const result = await runMonitoringCycle(storeEnv, {
         scheduledTime: scheduledTime as number,
         officialProducts: input.officialProducts,
+        officialCatalogProductIds: input.officialCatalogProductIds,
         acceptedLanguages,
         extraSourcesByStore: input.extraStoreSources?.length ? { [store]: input.extraStoreSources } : undefined,
         stateStore,
@@ -556,6 +558,7 @@ export class CalendarCoordinatorDurableObject {
           sourcePages: calendar.sourcePages,
           cache: calendar.cache,
           activeProducts,
+          officialCatalogProductIds: calendar.catalogProducts.map((product) => product.id),
           acceptedLanguages: control.languages,
           extraSourcesByStore: extraStoreSources(control),
           controlUpdatedAt: control.updatedAt
@@ -648,6 +651,7 @@ async function getCalendar(
 ): Promise<{
   durationMs: number;
   activeProducts: OfficialProduct[];
+  officialCatalogProductIds: string[];
   acceptedLanguages: LanguageStatus[];
   extraSourcesByStore: Partial<Record<StoreKey, string[]>>;
 }> {
@@ -667,6 +671,7 @@ async function runStore(
   scheduledTime: number,
   forceDiscovery: boolean,
   officialProducts: OfficialProduct[],
+  officialCatalogProductIds: string[],
   acceptedLanguages: LanguageStatus[],
   extraStoreSources: string[]
 ): Promise<DurableCycleStoreResult> {
@@ -676,7 +681,15 @@ async function runStore(
     const response = await stub.fetch(new Request("https://store.internal/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ store, scheduledTime, forceDiscovery, officialProducts, acceptedLanguages, extraStoreSources })
+      body: JSON.stringify({
+        store,
+        scheduledTime,
+        forceDiscovery,
+        officialProducts,
+        officialCatalogProductIds,
+        acceptedLanguages,
+        extraStoreSources
+      })
     }));
     const payload = await response.json() as Omit<DurableCycleStoreResult, "store">;
     return { store, ...payload };
@@ -715,6 +728,7 @@ export async function runDistributedMonitoringCycle(
       scheduledTime,
       selection.discovery,
       calendar.activeProducts,
+      calendar.officialCatalogProductIds,
       calendar.acceptedLanguages,
       calendar.extraSourcesByStore[store] ?? []
     ))));

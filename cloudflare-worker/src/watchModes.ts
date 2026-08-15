@@ -28,6 +28,7 @@ const ACCESSORY_PATTERNS = [
 
 export type AllCandidateRejectionReason =
   | "reference_one_piece_absente_ou_ambigue"
+  | "reference_officielle_inconnue"
   | "langue_non_acceptee"
   | "confiance_langue_insuffisante"
   | "disponibilite_inconnue"
@@ -57,7 +58,8 @@ function canonicalAllReference(reference: string): string | undefined {
 export function qualifyCandidateForAllOnePiece(
   candidate: ProductCandidate,
   acceptedLanguages: LanguageStatus[] = ["Français confirmé"],
-  minimumLanguageConfidence = 90
+  minimumLanguageConfidence = 90,
+  knownOfficialProductIds?: Iterable<string>
 ): AllCandidateQualification {
   const enriched = enrichCandidateIdentity(candidate);
   const references = [...new Set(enriched.matchedReferences.flatMap((reference) => {
@@ -67,6 +69,12 @@ export function qualifyCandidateForAllOnePiece(
 
   const reasons: AllCandidateRejectionReason[] = [];
   if (references.length !== 1) reasons.push("reference_one_piece_absente_ou_ambigue");
+  if (knownOfficialProductIds && references.length === 1) {
+    const knownIds = new Set([...knownOfficialProductIds]
+      .map((reference) => canonicalProductCode(reference))
+      .filter((reference): reference is string => Boolean(reference)));
+    if (!knownIds.has(references[0])) reasons.push("reference_officielle_inconnue");
+  }
   if (!acceptedLanguages.includes(enriched.language)) reasons.push("langue_non_acceptee");
   if (candidateLanguageConfidence(enriched) < minimumLanguageConfidence) reasons.push("confiance_langue_insuffisante");
   if (enriched.availability === "unknown") reasons.push("disponibilite_inconnue");
@@ -98,12 +106,14 @@ export function qualifyCandidateForAllOnePiece(
 export function candidateForAllOnePiece(
   candidate: ProductCandidate,
   acceptedLanguages: LanguageStatus[] = ["Français confirmé"],
-  minimumLanguageConfidence = 90
+  minimumLanguageConfidence = 90,
+  knownOfficialProductIds?: Iterable<string>
 ): ProductCandidate | undefined {
   return qualifyCandidateForAllOnePiece(
     candidate,
     acceptedLanguages,
-    minimumLanguageConfidence
+    minimumLanguageConfidence,
+    knownOfficialProductIds
   ).candidate;
 }
 

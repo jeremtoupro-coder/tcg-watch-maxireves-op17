@@ -79,6 +79,15 @@ La branche rend chaque rejet explicable : référence, format, langue/confiance,
 
 La baseline initiale reste silencieuse. ONE PIECE ALL n'alerte ni rupture, ni prix, ni précommande. Une source challenge/403/429/5xx reste dégradée et n'est jamais interprétée comme une rupture.
 
+### Calendrier Bandai contrôlé le 15 août
+
+La page FR officielle publie actuellement OP-17 (28 août 2026), DP-12 (28 août 2026), EB-05 (octobre 2026) et ST-31 à ST-36 (31 juillet 2026). EB-05 utilise donc provisoirement le 1er octobre jusqu'à ce que Bandai publie un jour exact. OP-18 n'apparaît pas dans le catalogue officiel FR au moment du contrôle : ses fiches marchandes sont découvertables, mais elle ne doit pas devenir une « Nouvelle sortie » avant publication Bandai.
+
+Deux protections ont été ajoutées à la suite de ce contrôle :
+
+- `[OP15-EB04]` attribue désormais la date officielle aux deux codes, au lieu de perdre OP-15 ;
+- ONE PIECE ALL accepte uniquement une référence déjà présente dans le catalogue officiel complet. Une OP-18 marchande anticipée ne peut donc plus être mal étiquetée comme ancienne référence. Lors de sa publication Bandai, elle est baselinée dans ALL tout en restant exclue de ses alertes, puis peut basculer après sa fenêtre sans faux `new_listing`.
+
 ## Audit des 24 boutiques en preview isolée
 
 Audit du 15 août : 24 connecteurs appelés, 269 produits observés, 164 en français, 173 éligibles à la source et 125 commercialement éligibles avant les derniers durcissements. « Source accessible » ne signifie pas « capable d'alerter ».

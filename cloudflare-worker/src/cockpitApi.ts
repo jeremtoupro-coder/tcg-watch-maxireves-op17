@@ -146,6 +146,7 @@ function healthAgeMs(health: StoreRuntimeHealth | undefined, now: number): numbe
 const REJECTION_LABELS: Record<string, string> = {
   reference_active_absente_ou_ambigue: "référence hors calendrier/ambiguë",
   reference_one_piece_absente_ou_ambigue: "référence One Piece absente/ambiguë",
+  reference_officielle_inconnue: "référence non publiée par Bandai",
   format_non_cible: "format non ciblé",
   langue_non_acceptee: "langue FR non confirmée",
   confiance_langue_insuffisante: "confiance langue < 90",

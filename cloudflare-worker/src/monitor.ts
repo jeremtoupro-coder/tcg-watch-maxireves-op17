@@ -236,6 +236,8 @@ export async function runMonitoringCycle(
     forceStore?: StoreKey;
     forceDiscovery?: boolean;
     officialProducts?: OfficialProduct[];
+    /** Catalogue Bandai complet, utilisé pour empêcher ALL de classer une future référence non publiée comme historique. */
+    officialCatalogProductIds?: string[];
     acceptedLanguages?: LanguageStatus[];
     extraSourcesByStore?: Partial<Record<StoreKey, string[]>>;
     stateStore?: StateStore;
@@ -293,13 +295,19 @@ export async function runMonitoringCycle(
   }
 
   const stateStore = options.stateStore ?? createStateStore(env);
-  const officialProducts = options.officialProducts ?? (await loadOfficialCalendar({
-    sourceUrl: opWatchV1Config.officialCatalogUrl,
-    now: options.now,
-    daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
-    daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
-    stateStore
-  })).activeProducts;
+  let officialProducts = options.officialProducts;
+  let officialCatalogProductIds = options.officialCatalogProductIds;
+  if (!officialProducts) {
+    const calendar = await loadOfficialCalendar({
+      sourceUrl: opWatchV1Config.officialCatalogUrl,
+      now: options.now,
+      daysBefore: opWatchV1Config.watchWindow.daysBeforeRelease,
+      daysAfter: opWatchV1Config.watchWindow.daysAfterRelease,
+      stateStore
+    });
+    officialProducts = calendar.activeProducts;
+    officialCatalogProductIds ??= calendar.catalogProducts.map((product) => product.id);
+  }
   const dynamicConfig = officialProducts.length > 0
     ? buildActiveWatchConfig(officialProducts, acceptedLanguages)
     : emptyReleaseWatchConfig(acceptedLanguages);
@@ -432,7 +440,8 @@ export async function runMonitoringCycle(
       qualifyCandidateForAllOnePiece(
         candidate,
         acceptedLanguages,
-        MINIMUM_LANGUAGE_CONFIDENCE
+        MINIMUM_LANGUAGE_CONFIDENCE,
+        officialCatalogProductIds
       )
     );
     const allCandidates = allQualifications

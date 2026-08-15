@@ -43,6 +43,29 @@ describe("calendrier officiel français", () => {
     expect(parseOfficialCatalog(html)).toEqual([]);
   });
 
+  it("attribue la date Bandai à chaque code d'une référence composite", async () => {
+    const composite = `
+      <html><head><title>PRODUITS | ONE PIECE CARD GAME</title></head><body>
+        <h1>PRODUITS ONE PIECE CARD GAME</h1>
+        <article>BOOSTER -AVENTURE SUR L'ÎLE DE DIEU- [OP15-EB04]
+          Date de sortie 3 avril 2026</article>
+        <nav>1 / 1</nav>
+      </body></html>
+    `;
+    const calendar = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-03-01T12:00:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      fetcher: vi.fn(async () => new Response(composite, { status: 200 })) as typeof fetch
+    });
+
+    expect(calendar.catalogProducts
+      .map((product) => `${product.id}:${product.releaseDate}`)
+      .sort()).toEqual(["EB-04:2026-04-03", "OP-15:2026-04-03"]);
+    expect(calendar.activeProducts.map((product) => product.id).sort()).toEqual(["EB-04", "OP-15"]);
+  });
+
   it("refuse deux dates exactes contradictoires pour une même référence", () => {
     expect(() => parseOfficialCatalog(`
       <article>BOOSTER -TEST- [OP-17] Date de sortie 28 août 2026</article>
