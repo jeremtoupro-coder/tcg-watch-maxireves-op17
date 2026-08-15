@@ -2,6 +2,11 @@ name: OP Watch Production Diagnostics (read-only)
 
 on:
   workflow_dispatch:
+  # Déclencheur one-shot de la branche d'incident. Il est retiré après la
+  # collecte des métriques ; toutes les étapes ci-dessous restent en lecture.
+  push:
+    branches:
+      - fix/op-watch-prod-reliability
 
 permissions:
   contents: read
