@@ -100,4 +100,24 @@ describe("santé observée du scheduler", () => {
     expect(health.consecutiveMonitoringFailures).toBe(1);
     expect(health.lastManualHeartbeat?.status).toBe("completed");
   });
+
+  it("compte séparément les cycles automatiques de secours", () => {
+    let health = applySchedulerMarker(undefined, {
+      kind: "fallback_monitoring_started",
+      scheduledTime,
+      observedTime: scheduledTime + 1_000,
+      discovery: false
+    });
+    health = applySchedulerMarker(health, {
+      kind: "fallback_monitoring_completed",
+      scheduledTime,
+      observedTime: scheduledTime + 6_000,
+      discovery: false,
+      completedStores: 15,
+      incidentStores: 2
+    });
+    expect(health.fallbackMonitoringCompletedCount).toBe(1);
+    expect(health.monitoringCompletedCount).toBe(0);
+    expect(health.lastFallbackMonitoring).toMatchObject({ status: "completed", completedStores: 15 });
+  });
 });

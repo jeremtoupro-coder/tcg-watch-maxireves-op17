@@ -731,6 +731,12 @@ export class CalendarCoordinatorDurableObject {
     const watchdog = await handleSchedulerWatchdogAlarm(this.state.storage, this.env, now);
     if (!watchdog.stale || this.env.MONITORING_ENABLED !== "true" || this.env.WRITE_STATE !== "true") return;
 
+    const isolatedFallbackTest = this.env.SCHEDULER_MODE === "test" &&
+      this.env.RUNTIME_TEST_MODE === "true" &&
+      this.env.DISCORD_MODE === "dry-run" &&
+      Boolean(this.env.RUNTIME_TEST_RUN_ID?.trim());
+    const mode: "test" | "live" = isolatedFallbackTest ? "test" : "live";
+
     const scheduledTime = Math.floor(now / 60_000) * 60_000;
     const discovery = isDiscoveryTick(scheduledTime);
     const mark = async (input: Record<string, unknown>) => {
@@ -755,7 +761,7 @@ export class CalendarCoordinatorDurableObject {
       const started = performance.now();
       await mark({ kind: "fallback_monitoring_started", discovery });
       try {
-        const cycle = await runDistributedMonitoringCycle(this.env, { mode: "live", scheduledTime });
+        const cycle = await runDistributedMonitoringCycle(this.env, { mode, scheduledTime });
         await mark({
           kind: "fallback_monitoring_completed",
           discovery: cycle.discovery,
@@ -772,7 +778,9 @@ export class CalendarCoordinatorDurableObject {
         });
       }
 
-      if (isWebScoutTick(scheduledTime)) {
+      // Le test d'alarme isolé ne consomme jamais Brave. En production, le
+      // fallback conserve la même minute :07 que le Scheduled Event nominal.
+      if (mode === "live" && isWebScoutTick(scheduledTime)) {
         const scoutStarted = performance.now();
         await mark({ kind: "fallback_web_scout_started" });
         try {

@@ -54,6 +54,7 @@ export interface SchedulerHealth {
   armedAt?: string;
   receivedCount: number;
   monitoringCompletedCount: number;
+  fallbackMonitoringCompletedCount: number;
   recentScheduledEvents: Array<{ scheduledAt: string; receivedAt: string }>;
   recentAutomaticMonitoring: SchedulerRunObservation[];
   lastScheduledEvent?: { scheduledAt: string; receivedAt: string };
@@ -88,6 +89,8 @@ interface SchedulerHealthEnv extends Env {
   CALENDAR_COORDINATOR?: DurableObjectNamespace;
   SCHEDULER_MODE?: "disabled" | "live" | "test";
   CRON_CONFIGURED?: string;
+  RUNTIME_TEST_MODE?: string;
+  RUNTIME_TEST_RUN_ID?: string;
 }
 
 function initialHealth(): SchedulerHealth {
@@ -95,6 +98,7 @@ function initialHealth(): SchedulerHealth {
     version: 1,
     receivedCount: 0,
     monitoringCompletedCount: 0,
+    fallbackMonitoringCompletedCount: 0,
     recentScheduledEvents: [],
     recentAutomaticMonitoring: [],
     consecutiveMonitoringFailures: 0,
@@ -148,6 +152,7 @@ export function applySchedulerMarker(
   // Compatibilité avec l'état v1 déjà déployé avant l'ajout des compteurs.
   next.receivedCount ??= 0;
   next.monitoringCompletedCount ??= 0;
+  next.fallbackMonitoringCompletedCount ??= 0;
   next.recentScheduledEvents ??= [];
   next.recentAutomaticMonitoring ??= [];
   const observedMs = safeTime(marker.observedTime);
@@ -228,6 +233,7 @@ export function applySchedulerMarker(
       break;
     case "fallback_monitoring_completed":
       next.lastFallbackMonitoring = completedObservation(next.lastFallbackMonitoring, marker, observedAt, "completed");
+      next.fallbackMonitoringCompletedCount += 1;
       break;
     case "fallback_monitoring_failed":
       next.lastFallbackMonitoring = completedObservation(next.lastFallbackMonitoring, marker, observedAt, "error");
@@ -383,7 +389,13 @@ export async function handleSchedulerWatchdogAlarm(
   const health = (await storage.get<SchedulerHealth>(SCHEDULER_HEALTH_KEY)) ?? initialHealth();
   health.watchdog.lastCheckedAt = new Date(now).toISOString();
 
-  if (env.SCHEDULER_MODE !== "live" || env.CRON_CONFIGURED !== "true") {
+  const isolatedFallbackTest = env.SCHEDULER_MODE === "test" &&
+    env.RUNTIME_TEST_MODE === "true" &&
+    env.DISCORD_MODE === "dry-run" &&
+    env.MONITORING_ENABLED === "true" &&
+    env.WRITE_STATE === "true" &&
+    Boolean(env.RUNTIME_TEST_RUN_ID?.trim());
+  if ((env.SCHEDULER_MODE !== "live" && !isolatedFallbackTest) || env.CRON_CONFIGURED !== "true") {
     health.watchdog.status = "disabled";
     delete health.watchdog.nextCheckAt;
     await storage.put(SCHEDULER_HEALTH_KEY, health);

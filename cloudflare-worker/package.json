@@ -17,6 +17,7 @@
     "smoke-preview": "node --import tsx scripts/smoke-preview.ts",
     "smoke-runtime": "node --import tsx scripts/smoke-runtime.ts",
     "smoke-scheduler": "node --import tsx scripts/smoke-scheduler-test.ts",
+    "smoke-scheduler-fallback": "node --import tsx scripts/smoke-scheduler-fallback-test.ts",
     "smoke-production": "node --import tsx scripts/smoke-production.ts",
     "audit-preview": "node --import tsx scripts/audit-preview.ts"
   },
