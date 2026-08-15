@@ -177,4 +177,15 @@ Sur ce même SHA, un déploiement distinct avec `CRON_CONFIGURED=true` mais **z�
 - suppression API-confirmée du cron isolé ;
 - diagnostic production en lecture seule.
 
-La PR reste brouillon. Aucun merge et aucun déploiement Worker ou Pages ne sont autorisés sans validation explicite.
+## Promotion production du 15 août
+
+Après validation explicite :
+
+- la PR #29 a été mergée dans `main` au SHA `ee7e477500f4ddb6220ef47425f42ce3c09acc23` ;
+- le run Worker #14900 a terminé avec succès et déployé la version `325fbda5-041b-4467-8436-a7c44a3f04c5` ;
+- le smoke Worker a observé deux cycles automatiques successifs, le dernier monitoring automatique terminé, 24 boutiques et l'auth cockpit disponible ;
+- le premier run Pages #19 a correctement publié le SHA sur l'alias preview `main.op-watch-tcg-fr.pages.dev`, mais le smoke du domaine principal a échoué ;
+- la cause est la configuration historique du projet Direct Upload : sa branche de production était encore `op-watch-v1-test`, tandis que le workflow publiait désormais `main`. Le domaine principal servait donc encore l'ancien HTML avec `sessionStorage` et `x-op-watch-admin-password` ;
+- le workflow Pages aligne désormais explicitement `production_branch=main` via l'API Cloudflare avant l'upload, vérifie la réponse API, puis contrôle le domaine principal pendant deux minutes.
+
+Le premier échec Pages n'a pas été requalifié en simple délai de propagation : l'alias `main` servait le nouveau cockpit tandis que le domaine principal servait de façon reproductible l'ancien document avec `cache-control: no-store`.
