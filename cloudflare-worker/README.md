@@ -53,7 +53,7 @@ AUTHORIZED_FEED_CARREFOUR_URL
 AUTHORIZED_FEED_KING_JOUET_URL
 ```
 
-JouéClub, La Grande Récré et BCD Jeux peuvent utiliser un feed autorisé avec fallback public uniquement pendant Discovery. Les catalogues volumineux sont lus en streaming puis revalidés avec `ETag`/`Last-Modified` lorsque l'éditeur les fournit ; un `304` sain ne produit aucune fausse transition. La Discovery force une lecture complète toutes les 15 minutes pour réévaluer les références nouvellement activées. Un feed défaillant ne déclenche jamais un martèlement HTML à la minute.
+JouéClub, La Grande Récré et BCD Jeux utilisent leur feed autorisé pendant Discovery, puis les fiches directes actives et qualifiées alimentent le Fast Watch minute. Les catalogues volumineux sont lus en streaming. Un feed qui fournit `ETag`/`Last-Modified` peut être revalidé par HTTP 304 ; sans validateur, il n'est jamais retéléchargé toutes les minutes et attend la prochaine Discovery. Les origines protégées restent fail-closed : leur feed autorisé est la seule source et, sans validateur, leur couverture est explicitement affichée comme Discovery plutôt que faussement verte.
 
 ## Commandes
 

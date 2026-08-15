@@ -18,6 +18,8 @@ type FeedRow = Record<string, string>;
 interface FeedRevalidationState {
   sourceHash: string;
   baseline: true;
+  lastFullFetchedAt?: string;
+  responseBytes?: number;
   etag?: string;
   lastModified?: string;
 }
@@ -58,6 +60,12 @@ async function readRevalidationState(
     return {
       sourceHash,
       baseline: true,
+      ...(typeof parsed.lastFullFetchedAt === "string" && Number.isFinite(Date.parse(parsed.lastFullFetchedAt))
+        ? { lastFullFetchedAt: parsed.lastFullFetchedAt }
+        : {}),
+      ...(Number.isFinite(parsed.responseBytes) && (parsed.responseBytes as number) >= 0
+        ? { responseBytes: Math.round(parsed.responseBytes as number) }
+        : {}),
       ...(safeValidator(parsed.etag ?? null) ? { etag: safeValidator(parsed.etag ?? null) } : {}),
       ...(safeValidator(parsed.lastModified ?? null) ? { lastModified: safeValidator(parsed.lastModified ?? null) } : {})
     };
@@ -121,14 +129,21 @@ function parseDelimitedLine(line: string, delimiter: string): string[] {
 
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index];
-    if (char === '"') {
-      if (quoted && line[index + 1] === '"') {
+    if (quoted) {
+      if (char === '"' && line[index + 1] === '"') {
         current += '"';
         index += 1;
+      } else if (char === '"' && (line[index + 1] === delimiter || index + 1 === line.length)) {
+        quoted = false;
       } else {
-        quoted = !quoted;
+        // Certains exports marchands contiennent un guillemet littéral non
+        // doublé (dimensions en pouces, HTML). Il ne ferme le champ que
+        // devant le séparateur ou la fin de l'enregistrement.
+        current += char;
       }
-    } else if (char === delimiter && !quoted) {
+    } else if (char === '"' && current.length === 0) {
+      quoted = true;
+    } else if (char === delimiter) {
       cells.push(current);
       current = "";
     } else {
@@ -374,6 +389,7 @@ function createCsvStreamProcessor(accept: (row?: FeedRow) => void): FeedTextProc
   let recordChars = 0;
   let quoted = false;
   let pendingQuote = false;
+  let atFieldStart = true;
 
   const append = (value: string): void => {
     if (!value) return;
@@ -392,6 +408,7 @@ function createCsvStreamProcessor(accept: (row?: FeedRow) => void): FeedTextProc
       delimiter = [...delimiters].sort((left, right) => scoreDelimiter(raw, right) - scoreDelimiter(raw, left))[0];
       headers = parseDelimitedLine(raw, delimiter).map(normalizeKey);
       if (headers.length < 2) throw new Error("Flux autorisé: en-tête CSV invalide");
+      atFieldStart = true;
       return;
     }
     // rowToCandidate rejetterait de toute façon ces lignes. Cette vérification
@@ -416,32 +433,54 @@ function createCsvStreamProcessor(accept: (row?: FeedRow) => void): FeedTextProc
         if (value[0] === '"') {
           // Deux guillemets séparés par une frontière de chunk : échappement.
           index = 1;
-        } else {
+        } else if (value[0] === delimiter || value[0] === "\n" || value[0] === "\r") {
+          // Le guillemet terminal du chunk fermait réellement le champ.
           quoted = false;
+        } else {
+          // Guillemets littéraux tolérés dans des exports imparfaits.
+          quoted = true;
         }
         pendingQuote = false;
       }
 
       for (; index < value.length; index += 1) {
         const char = value[index];
+        if (!headers) {
+          // L'en-tête ne contient pas de champ multiligne : cette première
+          // frontière physique suffit à déterminer le séparateur.
+          if (char === "\n" || char === "\r") {
+            append(value.slice(segmentStart, index));
+            finishRecord();
+            if (char === "\r" && value[index + 1] === "\n") index += 1;
+            segmentStart = index + 1;
+          }
+          continue;
+        }
         if (char === '"') {
           if (!quoted) {
-            quoted = true;
+            if (atFieldStart) quoted = true;
           } else if (index + 1 < value.length && value[index + 1] === '"') {
             index += 1;
           } else if (index + 1 === value.length) {
             pendingQuote = true;
-          } else {
+          } else if (value[index + 1] === delimiter || value[index + 1] === "\n" || value[index + 1] === "\r") {
             quoted = false;
           }
+          continue;
+        }
+        if (!quoted && char === delimiter) {
+          atFieldStart = true;
           continue;
         }
         if ((char === "\n" || char === "\r") && !quoted && !pendingQuote) {
           append(value.slice(segmentStart, index));
           finishRecord();
+          atFieldStart = true;
           if (char === "\r" && value[index + 1] === "\n") index += 1;
           segmentStart = index + 1;
+          continue;
         }
+        if (!quoted && !/\s/.test(char)) atFieldStart = false;
       }
       append(value.slice(segmentStart));
     },
@@ -595,6 +634,7 @@ async function readAuthorizedFeedResponse(
   const contentType = response.headers.get("content-type") ?? "";
   let prefix = "";
   let processor: FeedTextProcessor | undefined;
+  let detectedFormat: "csv" | "json" | "xml" | undefined;
 
   const consumeText = (text: string): void => {
     if (!text) return;
@@ -602,6 +642,7 @@ async function readAuthorizedFeedResponse(
       prefix += text;
       if (!prefix.trim() && prefix.length < 65_536) return;
       const format = feedFormat(contentType, prefix);
+      detectedFormat = format;
       processor = format === "xml"
         ? createXmlStreamProcessor(accept)
         : format === "json"
@@ -629,7 +670,12 @@ async function readAuthorizedFeedResponse(
     processor?.end();
   } catch (error) {
     await reader.cancel().catch(() => undefined);
-    throw error;
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = /^Flux autorisé:/i.test(rawMessage)
+      ? rawMessage
+      : `Flux autorisé: lecture ${detectedFormat ?? "indéterminée"} impossible`;
+    const safeContentType = contentType.replace(/[^a-z0-9/+.;=_ -]/gi, "").slice(0, 120) || "absent";
+    throw new Error(`${message} (format ${detectedFormat ?? "indéterminé"}, content-type ${safeContentType}, ${responseBytes} octets lus)`);
   } finally {
     reader.releaseLock();
   }
@@ -665,6 +711,33 @@ export async function auditAuthorizedFeed(
       revalidationMetadataKey,
       sourceHash
     );
+    if (
+      !options.forceRefresh &&
+      previousValidation &&
+      !previousValidation.etag &&
+      !previousValidation.lastModified
+    ) {
+      return {
+        store: connector.key,
+        storeName: connector.name,
+        checkedAt: new Date().toISOString(),
+        sources: [{
+          sourceUrl: safeSourceUrl,
+          finalUrl: safeSourceUrl,
+          durationMs: Math.round(performance.now() - started),
+          responseBytes: 0,
+          cacheValidation: "none",
+          deferred: true,
+          productLinksSeen: 0,
+          candidates: []
+        }],
+        candidates: [],
+        notes: [
+          ...connector.notes,
+          `Flux partenaire sans ETag/Last-Modified : catalogue complet reporté à la Discovery (dernière lecture ${previousValidation.lastFullFetchedAt ?? "connue"}, ${previousValidation.responseBytes ?? 0} octets).`
+        ]
+      };
+    }
     const headers: Record<string, string> = {
       "User-Agent": "OPWatch/1.0 (+authorized publisher product-feed consumer)",
       "Accept": "text/csv,text/tab-separated-values,application/json,application/xml,text/xml;q=0.9,*/*;q=0.5"
@@ -710,6 +783,8 @@ export async function auditAuthorizedFeed(
     const nextValidation: FeedRevalidationState = {
       sourceHash,
       baseline: true,
+      lastFullFetchedAt: new Date().toISOString(),
+      responseBytes: streamed.responseBytes,
       ...(safeValidator(response.headers.get("etag")) ? { etag: safeValidator(response.headers.get("etag")) } : {}),
       ...(safeValidator(response.headers.get("last-modified")) ? { lastModified: safeValidator(response.headers.get("last-modified")) } : {})
     };

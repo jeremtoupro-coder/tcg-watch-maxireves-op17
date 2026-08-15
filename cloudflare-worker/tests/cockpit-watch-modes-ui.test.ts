@@ -49,4 +49,9 @@ describe("cockpit deux circuits", () => {
     expect(html).toContain("CACHE DE SECOURS");
     expect(html).toContain("state.calendar.warning");
   });
+
+  it("rend visible le report d'un catalogue partenaire complet à la Discovery", () => {
+    expect(html).toContain("Feed complet reporté");
+    expect(html).toContain("source.deferred");
+  });
 });

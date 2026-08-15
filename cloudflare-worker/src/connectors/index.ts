@@ -31,7 +31,7 @@ const joueclub: ConnectorDefinition = {
   authorizedFeedEnv: "AUTHORIZED_FEED_JOUECLUB_URL",
   notes: [
     ...baseJoueclub.notes,
-    "Flux produits Affilae/Shopping Feed autorisé disponible : il est prioritaire lorsqu'il est configuré.",
+    "Flux produits Affilae/Shopping Feed autorisé disponible : Discovery prioritaire, puis fiches directes qualifiées en Fast Watch.",
     "Sans flux configuré, la catégorie publique JouéClub reste le fallback opérationnel."
   ]
 };

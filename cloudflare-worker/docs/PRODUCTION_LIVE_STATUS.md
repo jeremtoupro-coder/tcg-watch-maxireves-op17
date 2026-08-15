@@ -43,7 +43,7 @@ La branche `fix/op-watch-prod-reliability` et la PR brouillon #29 ajoutent notam
 - watchdog GitHub indépendant du cron Cloudflare ;
 - smoke d'activation exigeant deux événements automatiques successifs ;
 - Scheduled Handler limité à un hand-off DO afin que le cron reste sous 10 ms de CPU ;
-- parser streaming pour les catalogues partenaires réels de 5,3 à 27,7 Mo et revalidation conditionnelle `ETag`/`Last-Modified` ;
+- parser streaming tolérant pour les catalogues partenaires réels de 5,3 à 27,7 Mo ; feeds publics limités à Discovery puis fiches directes qualifiées en Fast Watch, avec revalidation conditionnelle lorsque l'éditeur fournit `ETag`/`Last-Modified` ;
 - Web Scout déclenché depuis l'orchestrateur Durable Object, afin que le handler cron Free ne fasse qu'un seul hand-off même à `:07` ;
 - auth cockpit unique et corps JSON à lecture unique ;
 - health marchand fondé sur une vraie lecture de source ;

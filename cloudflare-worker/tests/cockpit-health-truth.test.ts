@@ -73,6 +73,23 @@ describe("vérité opérationnelle du cockpit", () => {
     expect(state.detail).toMatch(/revalidé sans changement.*304/i);
   });
 
+  it("reste orange lorsqu'un gros feed sans validateur attend la Discovery", () => {
+    const discoveryAt = new Date(NOW - 5 * 60_000).toISOString();
+    const state = classifyStoreHealth("active_fast_watch", health({
+      lastDiscoveryAt: discoveryAt,
+      deferredFastWatch: true,
+      sourceChecks: [{
+        source: "authorized-feed:playin",
+        cacheValidation: "none",
+        deferred: true,
+        responseBytes: 0
+      }]
+    }), NOW);
+    expect(state.level).toBe("amber");
+    expect(state.label).toBe("Discovery active");
+    expect(state.detail).toMatch(/sans validateur.*Discovery/i);
+  });
+
   it("reste rouge si le cycle global est ancien même avec une ancienne preuve Fast Watch", () => {
     const at = new Date(NOW - 10 * 60_000).toISOString();
     const state = classifyStoreHealth("active_fast_watch", health({

@@ -98,7 +98,7 @@ function discoveryCacheKey(store: StoreKey): string {
 
 function connectorHosts(connector: ReturnType<typeof selectConnectors>[number]): Set<string> {
   return new Set(connector.sources.flatMap((source) => {
-    try { return [new URL(source).hostname]; } catch { return []; }
+    try { return [new URL(source).hostname.toLowerCase().replace(/^www\./, "")]; } catch { return []; }
   }));
 }
 
@@ -110,7 +110,7 @@ function normalizedFastWatchUrl(
     const normalized = canonicalProductUrl(url, connector);
     const parsed = new URL(normalized);
     return parsed.protocol === "https:" &&
-      connectorHosts(connector).has(parsed.hostname) &&
+      connectorHosts(connector).has(parsed.hostname.toLowerCase().replace(/^www\./, "")) &&
       connector.productUrlPatterns.some((pattern) => pattern.test(parsed.toString()))
       ? normalized
       : undefined;
@@ -173,6 +173,9 @@ async function fastWatchConnector(
   if (sources.length === 0) return undefined;
   return {
     ...connector,
+    // Un feed partenaire public sert à découvrir les fiches au quart d'heure.
+    // Le Fast Watch relit ensuite ces fiches, pas le catalogue complet.
+    authorizedFeedEnv: undefined,
     sources,
     followDiscoveredProductPages: false
   };
@@ -186,7 +189,11 @@ async function persistDiscoveryCache(
   acceptedLanguages: LanguageStatus[],
   discoveredAt: string
 ): Promise<void> {
-  if (!stateStore.writable || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
+  if (
+    !stateStore.writable ||
+    connector.authoritativeStructuredFeed ||
+    (connector.authorizedFeedEnv && connector.directPollingDisabledWithoutFeed === true)
+  ) return;
 
   const entries = audit.candidates.flatMap((candidate) => {
     const qualified = qualifyCandidateForActiveProducts(
@@ -337,7 +344,10 @@ export async function runMonitoringCycle(
     ? eligibleConnectors.map((connector) => ({ original: connector, fast: connector }))
     : await Promise.all(eligibleConnectors.map(async (connector) => ({
         original: connector,
-        fast: connector.authorizedFeedEnv && hasConfiguredAuthorizedFeed(connector, env) && activeIds.size > 0
+        fast: connector.authorizedFeedEnv &&
+          hasConfiguredAuthorizedFeed(connector, env) &&
+          connector.directPollingDisabledWithoutFeed === true &&
+          activeIds.size > 0
           ? connector
           : await fastWatchConnector(connector, stateStore, activeIds)
       })));

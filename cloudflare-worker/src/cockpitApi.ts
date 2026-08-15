@@ -175,6 +175,8 @@ function warningDetail(health: StoreRuntimeHealth): string {
 
 function revalidationDetail(health: StoreRuntimeHealth): string {
   const unchanged = health.sourceChecks?.filter((source) => source.notModified).length ?? 0;
+  const deferred = health.sourceChecks?.filter((source) => source.deferred).length ?? 0;
+  if (deferred > 0) return ` ${deferred} catalogue partenaire sans validateur reporté à la prochaine Discovery.`;
   return unchanged > 0
     ? ` ${unchanged} flux partenaire revalidé sans changement (HTTP 304).`
     : "";
@@ -255,8 +257,8 @@ export function classifyStoreHealth(
       level: "amber",
       label: health.deferredFastWatch ? "Discovery active" : "Fast Watch à confirmer",
       detail: health.deferredFastWatch
-        ? `La Discovery est réellement observée, mais aucune fiche directe active et qualifiée n'est encore promue au polling minute.${rejectionDetail(health)}${warningDetail(health)}`
-        : `La Discovery est récente, mais aucun contrôle marchand Fast Watch n'a été observé depuis moins de 3 minutes.${rejectionDetail(health)}${warningDetail(health)}`,
+        ? `La Discovery est réellement observée, mais aucune fiche directe active et qualifiée n'est encore promue au polling minute.${revalidationDetail(health)}${rejectionDetail(health)}${warningDetail(health)}`
+        : `La Discovery est récente, mais aucun contrôle marchand Fast Watch n'a été observé depuis moins de 3 minutes.${revalidationDetail(health)}${rejectionDetail(health)}${warningDetail(health)}`,
       ageMs: discoveryAge
     };
   }

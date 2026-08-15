@@ -83,6 +83,7 @@ export interface StoreRuntimeHealth {
     responseBytes?: number;
     cacheValidation?: "etag" | "last-modified" | "etag+last-modified" | "none";
     notModified?: boolean;
+    deferred?: boolean;
     error?: string;
   }>;
   error?: string;
@@ -414,10 +415,11 @@ export class StoreMonitorDurableObject {
       const merchantDurationMs = sourceDurationMs(result);
       const audit = result.audits?.find((entry) => entry.store === store);
       const merchantSources = audit?.sources.length ?? 0;
-      const successfulMerchantSources = audit?.sources.filter((source) => !source.error).length ?? 0;
+      const successfulMerchantSources = audit?.sources.filter((source) => !source.error && !source.deferred).length ?? 0;
       const successfulMerchantCheck = successfulMerchantSources > 0;
       const checkedAt = new Date(scheduledTime as number).toISOString();
-      const deferredFastWatch = result.deferredFastWatchStores?.includes(store) === true;
+      const deferredFastWatch = result.deferredFastWatchStores?.includes(store) === true ||
+        (audit?.sources.length ? audit.sources.every((source) => source.deferred === true) : false);
       const error = result.degradedStores?.find((entry) => entry.store === store)?.errors.join(" | ");
       const sourceChecks = audit?.sources.map((source) => ({
         source: source.sourceUrl,
@@ -425,9 +427,12 @@ export class StoreMonitorDurableObject {
         ...(source.responseBytes !== undefined ? { responseBytes: source.responseBytes } : {}),
         ...(source.cacheValidation ? { cacheValidation: source.cacheValidation } : {}),
         ...(source.notModified ? { notModified: true } : {}),
+        ...(source.deferred ? { deferred: true } : {}),
         ...(source.error ? { error: source.error } : {})
       })) ?? [];
-      const unchangedAuthorizedFeed = sourceChecks.length > 0 && sourceChecks.every((source) => source.notModified === true);
+      const passiveAuthorizedFeed = sourceChecks.length > 0 && sourceChecks.every((source) =>
+        source.notModified === true || source.deferred === true
+      );
       const health: StoreRuntimeHealth = {
         store,
         status: degraded ? "degraded" : "completed",
@@ -435,7 +440,7 @@ export class StoreMonitorDurableObject {
         completedAt: new Date().toISOString(),
         durationMs,
         merchantDurationMs,
-        candidates: unchangedAuthorizedFeed ? previousHealth?.candidates ?? 0 : audit?.candidates.length ?? 0,
+        candidates: passiveAuthorizedFeed ? previousHealth?.candidates ?? 0 : audit?.candidates.length ?? 0,
         merchantSources,
         successfulMerchantSources,
         ...(successfulMerchantCheck
@@ -454,7 +459,7 @@ export class StoreMonitorDurableObject {
             ? { lastFastWatchAt: previousHealth.lastFastWatchAt }
             : {}),
         deferredFastWatch,
-        ...(unchangedAuthorizedFeed && previousHealth?.analysis
+        ...(passiveAuthorizedFeed && previousHealth?.analysis
           ? { analysis: previousHealth.analysis }
           : audit && result.analysis
           ? { analysis: result.analysis }

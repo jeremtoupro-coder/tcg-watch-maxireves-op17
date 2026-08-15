@@ -111,6 +111,21 @@ describe("flux produits autorisés", () => {
     });
   });
 
+  it("tolère un guillemet littéral isolé sans fusionner tout le catalogue CSV", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => chunkedResponse([
+      '"title","url","description","stock","language"\n',
+      '"One Piece OP17 Display FR","https://shop.test/op17","Boîte 7" collector française","disponible","français"\n',
+      '"Autre jeu","https://shop.test/autre","Produit standard","disponible","français"\n'
+    ], "text/csv")));
+
+    const audit = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue-imparfait.csv");
+
+    expect(audit.sources[0].error).toBeUndefined();
+    expect(audit.sources[0].productLinksSeen).toBe(2);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].matchedReferences).toContain("OP-17");
+  });
+
   it("conserve un objet JSON lorsque une chaîne et une accolade traversent les chunks", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => chunkedResponse([
       '{"products":[{"title":"One Piece EB',
@@ -185,6 +200,32 @@ describe("flux produits autorisés", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get("if-none-match")).toBeNull();
     expect(JSON.stringify(second)).not.toContain("secret=token");
+  });
+
+  it("ne retélécharge pas à la minute un catalogue complet sans validateur HTTP", async () => {
+    const stateStore = new MemoryStateStore({ writable: true });
+    const csv = "title,url,price,stock,language\nOne Piece OP17 Display FR,https://shop.test/op17,119.90,disponible,français";
+    const fetchMock = vi.fn(async () => new Response(csv, {
+      status: 200,
+      headers: { "content-type": "text/csv" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue.csv", {
+      stateStore,
+      forceRefresh: true
+    });
+    const fast = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue.csv", { stateStore });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(first.candidates).toHaveLength(1);
+    expect(fast.candidates).toEqual([]);
+    expect(fast.sources[0]).toMatchObject({
+      cacheValidation: "none",
+      deferred: true,
+      responseBytes: 0
+    });
+    expect(fast.notes.join(" ")).toMatch(/reporté à la Discovery/i);
   });
 
   it("n'envoie jamais le validateur d'un ancien URL de feed vers un nouveau feed", async () => {

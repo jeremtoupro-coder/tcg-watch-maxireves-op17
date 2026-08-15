@@ -182,6 +182,11 @@ const incidentCycles = cycles.flatMap((cycle, index) => cycle.stores
   .map((store) => ({ cycle: index + 1, store: store.store, status: store.status, error: store.error }))
 );
 const incidentStores = [...new Set(incidentCycles.map((entry) => entry.store))].sort();
+const partnerFeedFallbacks = cycles.flatMap((cycle, cycleIndex) => cycle.stores.flatMap((store) =>
+  (store.result?.audits ?? []).flatMap((audit) => (audit.warnings ?? [])
+    .filter((warning) => /Flux partenaire indisponible/i.test(warning))
+    .map((warning) => ({ cycle: cycleIndex + 1, store: store.store, warning })))
+));
 const authorizedFeedSources = cycles.flatMap((cycle, cycleIndex) => cycle.stores.flatMap((store) =>
   (store.result?.audits ?? []).flatMap((audit) => audit.sources
     .filter((source) => source.sourceUrl.startsWith("authorized-feed:"))
@@ -192,9 +197,16 @@ const authorizedFeedSources = cycles.flatMap((cycle, cycleIndex) => cycle.stores
       responseBytes: source.responseBytes ?? 0,
       cacheValidation: source.cacheValidation ?? "none",
       notModified: source.notModified === true,
+      deferred: source.deferred === true,
       error: source.error
     })))
 ));
+const fullResponsesByStore = Object.fromEntries([...new Set(authorizedFeedSources.map((source) => source.store))]
+  .sort()
+  .map((store) => [store, authorizedFeedSources.filter((source) => source.store === store && source.status === 200).length]));
+const repeatedFullResponseStores = Object.entries(fullResponsesByStore)
+  .filter(([, count]) => count > 1)
+  .map(([store]) => store);
 const report = {
   generatedAt: new Date().toISOString(),
   environment: "isolated-runtime-test",
@@ -224,6 +236,7 @@ const report = {
         responseBytes: source.responseBytes ?? 0,
         cacheValidation: source.cacheValidation,
         notModified: source.notModified === true,
+        deferred: source.deferred === true,
         durationMs: source.durationMs,
         error: source.error
       })))
@@ -237,16 +250,23 @@ const report = {
     validators: Object.fromEntries([...new Set(authorizedFeedSources.map((source) => source.cacheValidation))]
       .sort()
       .map((kind) => [kind, authorizedFeedSources.filter((source) => source.cacheValidation === kind).length])),
+    fullResponsesByStore,
+    repeatedFullResponseStores,
+    networkPass: repeatedFullResponseStores.length === 0,
     sources: authorizedFeedSources
   },
   budget,
   operational: {
-    pass: incidentCycles.length === 0,
+    pass: incidentCycles.length === 0 && partnerFeedFallbacks.length === 0,
     incidentStores,
-    incidentCycles
+    incidentCycles,
+    partnerFeedFallbacks
   },
   budgetVerdict: budget.pass ? "PASS" : "FAIL",
-  verdict: budget.pass && incidentCycles.length === 0
+  verdict: budget.pass &&
+    incidentCycles.length === 0 &&
+    partnerFeedFallbacks.length === 0 &&
+    repeatedFullResponseStores.length === 0
     ? "PASS"
     : budget.pass
       ? "PASS_BUDGET_WITH_STORE_INCIDENTS"
@@ -260,5 +280,15 @@ if (!budget.pass) {
   throw new Error(
     `Budget Cloudflare refusé: ${budget.projectedGbSecondsPerDay.toFixed(2)} GB-s/j, ` +
     `${budget.projectedDurableRequestsPerDay} requêtes DO/j.`
+  );
+}
+if (repeatedFullResponseStores.length > 0) {
+  throw new Error(
+    `Catalogues partenaires complets retéléchargés pendant Fast Watch: ${repeatedFullResponseStores.join(", ")}.`
+  );
+}
+if (partnerFeedFallbacks.length > 0) {
+  throw new Error(
+    `Fallback partenaire observé pendant la cadence isolée: ${partnerFeedFallbacks.map((entry) => entry.store).join(", ")}.`
   );
 }

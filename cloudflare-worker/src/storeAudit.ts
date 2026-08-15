@@ -1,5 +1,6 @@
 import { auditConnector, WORKERS_FREE_SUBREQUEST_LIMIT } from "./audit";
 import { auditAuthorizedFeed } from "./authorizedFeed";
+import { canonicalProductUrl } from "./connectorUrls";
 import { auditParkagePublicCatalog } from "./parkagePublicCatalog";
 import { auditPhilibertPublicCatalog } from "./philibertPublicCatalog";
 import type { OfficialProduct } from "./opwatchV1";
@@ -53,6 +54,7 @@ function withOperationalStatus(
   const configuredStatus = configuredStoreStatus(connector, env);
   const hasErrors = audit.sources.some((source) => Boolean(source.error));
   const hasHealthySource = audit.sources.some((source) => !source.error);
+  const onlyDeferredSources = audit.sources.length > 0 && audit.sources.every((source) => source.deferred === true);
   const runtimeStatus = configuredStatus === "pending_authorized_feed"
     ? "pending"
     : configuredStatus === "disabled"
@@ -66,7 +68,7 @@ function withOperationalStatus(
     configuredStatus,
     runtimeStatus,
     sourceKind,
-    fastWatchCapable: configuredStatus === "active_fast_watch" && runtimeStatus === "healthy",
+    fastWatchCapable: configuredStatus === "active_fast_watch" && runtimeStatus === "healthy" && !onlyDeferredSources,
     discoveryCapable:
       configuredStatus !== "disabled" &&
       configuredStatus !== "pending_authorized_feed" &&
@@ -88,6 +90,61 @@ function preferDirectCandidates(
   const byUrl = new Map(categoryCandidates.map((candidate) => [candidate.url, candidate]));
   for (const candidate of directCandidates) byUrl.set(candidate.url, candidate);
   return [...byUrl.values()];
+}
+
+function publicPartnerDirectUrls(
+  audit: StoreAudit,
+  connector: ConnectorDefinition,
+  watchProducts: OfficialProduct[]
+): string[] {
+  if (connector.directPollingDisabledWithoutFeed === true) return [];
+  const activeIds = new Set(watchProducts.map((product) => product.id));
+  if (activeIds.size === 0) return [];
+  const allowedHosts = new Set(connector.sources.flatMap((source) => {
+    try { return [new URL(source).hostname.toLowerCase().replace(/^www\./, "")]; } catch { return []; }
+  }));
+  const urls = audit.candidates.flatMap((candidate) => {
+    if (!candidate.matchedReferences.some((reference) => activeIds.has(reference))) return [];
+    try {
+      const canonical = canonicalProductUrl(candidate.url, connector);
+      const parsed = new URL(canonical);
+      if (
+        parsed.protocol !== "https:" ||
+        !allowedHosts.has(parsed.hostname.toLowerCase().replace(/^www\./, "")) ||
+        !connector.productUrlPatterns.some((pattern) => pattern.test(parsed.toString()))
+      ) return [];
+      return [canonical];
+    } catch {
+      return [];
+    }
+  });
+  return [...new Set(urls)].slice(0, Math.max(0, WORKERS_FREE_SUBREQUEST_LIMIT - audit.sources.length));
+}
+
+async function enrichPartnerDiscoveryWithDirectPages(
+  feedAudit: StoreAudit,
+  connector: ConnectorDefinition,
+  watchProducts: OfficialProduct[]
+): Promise<StoreAudit> {
+  const directUrls = publicPartnerDirectUrls(feedAudit, connector, watchProducts);
+  if (directUrls.length === 0) return feedAudit;
+  const directAudit = await auditConnector({
+    ...connector,
+    authorizedFeedEnv: undefined,
+    sources: directUrls,
+    followDiscoveredProductPages: false,
+    maxConcurrency: 2
+  }, watchProducts);
+  return {
+    ...feedAudit,
+    sources: [...feedAudit.sources, ...directAudit.sources],
+    candidates: preferDirectCandidates(feedAudit.candidates, directAudit.candidates),
+    warnings: [...(feedAudit.warnings ?? []), ...(directAudit.warnings ?? [])],
+    notes: [
+      ...feedAudit.notes,
+      "Discovery via feed partenaire ; les fiches directes actives qualifiées alimentent ensuite le Fast Watch minute."
+    ]
+  };
 }
 
 /**
@@ -219,12 +276,16 @@ export async function auditStore(
 ): Promise<StoreAudit> {
   const feedUrl = configuredAuthorizedFeedUrl(connector, env);
   if (feedUrl) {
-    const feedAudit = await auditAuthorizedFeed(connector, feedUrl, {
+    const rawFeedAudit = await auditAuthorizedFeed(connector, feedUrl, {
       stateStore: options.stateStore,
       // Une Discovery reparcourt toujours le catalogue : un nouveau produit
       // Bandai peut devenir actif alors que le contenu/ETag du feed n'a pas changé.
       forceRefresh: options.allowPublicFallback === true
     });
+    const rawFeedHealthy = rawFeedAudit.sources.length > 0 && rawFeedAudit.sources.every((source) => !source.error);
+    const feedAudit = rawFeedHealthy && options.allowPublicFallback === true
+      ? await enrichPartnerDiscoveryWithDirectPages(rawFeedAudit, connector, watchProducts)
+      : rawFeedAudit;
     const feedHealthy = feedAudit.sources.length > 0 && feedAudit.sources.every((source) => !source.error);
     if (feedHealthy || connector.directPollingDisabledWithoutFeed === true) {
       return withOperationalStatus(feedAudit, connector, env, "authorized_feed");

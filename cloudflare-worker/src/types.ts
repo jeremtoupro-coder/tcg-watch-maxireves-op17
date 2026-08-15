@@ -161,6 +161,8 @@ export interface SourceAudit {
   cacheValidation?: "etag" | "last-modified" | "etag+last-modified" | "none";
   /** Un HTTP 304 confirme que la source n'a pas changé et ne doit pas être reparsée. */
   notModified?: boolean;
+  /** Catalogue sans validateur HTTP : lecture complète reportée à la prochaine Discovery. */
+  deferred?: boolean;
   productLinksSeen: number;
   candidates: ProductCandidate[];
   error?: string;
