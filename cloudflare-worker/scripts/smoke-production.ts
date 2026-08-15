@@ -71,7 +71,10 @@ if (phase === "standby") {
     const armed = await jsonPost("/scheduler-watchdog/arm", true);
     const baseline = Number(armed.health?.receivedCount) || 0;
     let observed: Record<string, any> | undefined;
-    for (let attempt = 1; attempt <= 48; attempt += 1) {
+    // Une modification de Cron Trigger peut mettre jusqu'à 15 minutes à se
+    // propager chez Cloudflare. Le smoke attend donc 16 minutes avant de
+    // conclure, tout en exigeant toujours deux événements réellement reçus.
+    for (let attempt = 1; attempt <= 192; attempt += 1) {
       const current = await jsonGet("/scheduler-health", true);
       const received = Number(current.health?.receivedCount) || 0;
       const monitoring = current.health?.automaticMonitoring;
@@ -87,7 +90,7 @@ if (phase === "standby") {
       await new Promise((resolve) => setTimeout(resolve, 5_000));
     }
     if (!observed) {
-      throw new Error("Le cron final n'a pas démontré deux Scheduled Events et un cycle automatique terminé en quatre minutes.");
+      throw new Error("Le cron final n'a pas démontré deux Scheduled Events et un cycle automatique terminé en seize minutes.");
     }
     console.log(JSON.stringify({
       ok: true,

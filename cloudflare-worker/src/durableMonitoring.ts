@@ -6,7 +6,7 @@ import {
   runMonitoringCycle,
   type MonitoringCircuitAnalysis
 } from "./monitor";
-import { candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
+import type { OfficialProduct } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
 import { handleSchedulerHealthRequest, handleSchedulerWatchdogAlarm } from "./schedulerHealth";
 import { isWebScoutTick } from "./webScout";
@@ -77,6 +77,14 @@ export interface StoreRuntimeHealth {
   };
   warnings?: string[];
   sourceKind?: string;
+  sourceChecks?: Array<{
+    source: string;
+    status?: number;
+    responseBytes?: number;
+    cacheValidation?: "etag" | "last-modified" | "etag+last-modified" | "none";
+    notModified?: boolean;
+    error?: string;
+  }>;
   error?: string;
   backoffUntil?: string;
   discovery: boolean;
@@ -278,40 +286,6 @@ function asStateStore(store: DurableObjectStateStore): StateStore {
   return store;
 }
 
-function discoveryCacheKey(store: StoreKey): string {
-  return `discovery:v1:${store}`;
-}
-
-async function forceDiscoveryDue(store: StateStore): Promise<void> {
-  await store.putMetadata("monitor:last-discovery", "1970-01-01T00:00:00.000Z");
-}
-
-async function pruneFastWatchCache(
-  stateStore: StateStore,
-  store: StoreKey,
-  officialProducts: OfficialProduct[],
-  acceptedLanguages: LanguageStatus[],
-  result: Awaited<ReturnType<typeof runMonitoringCycle>>,
-  discoveredAt: string
-): Promise<void> {
-  const connector = CONNECTORS.find((entry) => entry.key === store);
-  if (!connector || connector.authorizedFeedEnv || connector.authoritativeStructuredFeed) return;
-  const audit = result.audits?.find((entry) => entry.store === store);
-  if (!audit) return;
-
-  const entries = audit.candidates.flatMap((candidate) => {
-    const qualified = candidateForActiveProducts(
-      candidate,
-      officialProducts,
-      acceptedLanguages,
-      opWatchV1Config.language.minimumAlertConfidence
-    );
-    return qualified ? [{ url: qualified.url, references: [...qualified.matchedReferences].sort() }] : [];
-  });
-  const unique = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
-  await stateStore.putMetadata(discoveryCacheKey(store), JSON.stringify({ discoveredAt, entries: unique }));
-}
-
 function sourceDurationMs(result: Awaited<ReturnType<typeof runMonitoringCycle>>): number {
   return result.audits?.reduce(
     (total, audit) => total + audit.sources.reduce((sum, source) => sum + Math.max(0, source.durationMs), 0),
@@ -407,14 +381,13 @@ export class StoreMonitorDurableObject {
           ...(previousHealth?.lastFastWatchAt ? { lastFastWatchAt: previousHealth.lastFastWatchAt } : {}),
           deferredFastWatch: previousHealth?.deferredFastWatch ?? false,
           ...(previousHealth?.analysis ? { analysis: previousHealth.analysis } : {}),
+          ...(previousHealth?.sourceChecks ? { sourceChecks: previousHealth.sourceChecks } : {}),
           backoffUntil: new Date(backoffUntil).toISOString(),
           discovery: false
         };
         await this.state.storage.put("runtime:health", health);
         return json({ status: "backoff", durationMs, merchantDurationMs: 0, backoffUntil: health.backoffUntil });
       }
-
-      if (input.forceDiscovery === true) await forceDiscoveryDue(stateStore);
 
       const storeEnv: RuntimeEnv = { ...this.env, ACTIVE_STORES: store };
       const acceptedLanguages = input.acceptedLanguages?.length ? input.acceptedLanguages : ["Français confirmé" as LanguageStatus];
@@ -425,26 +398,16 @@ export class StoreMonitorDurableObject {
         acceptedLanguages,
         extraSourcesByStore: input.extraStoreSources?.length ? { [store]: input.extraStoreSources } : undefined,
         stateStore,
-        now: new Date(scheduledTime as number)
+        now: new Date(scheduledTime as number),
+        forceDiscovery: input.forceDiscovery === true
       });
 
       const degraded = result.degradedStores?.some((entry) => entry.store === store) === true;
       if (degraded) {
         const until = new Date((scheduledTime as number) + DEGRADED_BACKOFF_MS).toISOString();
-        await stateStore.putMetadata("runtime:backoff-until", until);
-      } else {
+        if (backoffRaw !== until) await stateStore.putMetadata("runtime:backoff-until", until);
+      } else if (backoffRaw && backoffRaw !== "1970-01-01T00:00:00.000Z") {
         await stateStore.putMetadata("runtime:backoff-until", "1970-01-01T00:00:00.000Z");
-      }
-
-      if (input.forceDiscovery === true) {
-        await pruneFastWatchCache(
-          stateStore,
-          store,
-          input.officialProducts,
-          acceptedLanguages,
-          result,
-          new Date(scheduledTime as number).toISOString()
-        );
       }
 
       const durationMs = Math.round(performance.now() - started);
@@ -456,6 +419,15 @@ export class StoreMonitorDurableObject {
       const checkedAt = new Date(scheduledTime as number).toISOString();
       const deferredFastWatch = result.deferredFastWatchStores?.includes(store) === true;
       const error = result.degradedStores?.find((entry) => entry.store === store)?.errors.join(" | ");
+      const sourceChecks = audit?.sources.map((source) => ({
+        source: source.sourceUrl,
+        ...(source.status !== undefined ? { status: source.status } : {}),
+        ...(source.responseBytes !== undefined ? { responseBytes: source.responseBytes } : {}),
+        ...(source.cacheValidation ? { cacheValidation: source.cacheValidation } : {}),
+        ...(source.notModified ? { notModified: true } : {}),
+        ...(source.error ? { error: source.error } : {})
+      })) ?? [];
+      const unchangedAuthorizedFeed = sourceChecks.length > 0 && sourceChecks.every((source) => source.notModified === true);
       const health: StoreRuntimeHealth = {
         store,
         status: degraded ? "degraded" : "completed",
@@ -463,7 +435,7 @@ export class StoreMonitorDurableObject {
         completedAt: new Date().toISOString(),
         durationMs,
         merchantDurationMs,
-        candidates: audit?.candidates.length ?? 0,
+        candidates: unchangedAuthorizedFeed ? previousHealth?.candidates ?? 0 : audit?.candidates.length ?? 0,
         merchantSources,
         successfulMerchantSources,
         ...(successfulMerchantCheck
@@ -482,13 +454,16 @@ export class StoreMonitorDurableObject {
             ? { lastFastWatchAt: previousHealth.lastFastWatchAt }
             : {}),
         deferredFastWatch,
-        ...(audit && result.analysis
+        ...(unchangedAuthorizedFeed && previousHealth?.analysis
+          ? { analysis: previousHealth.analysis }
+          : audit && result.analysis
           ? { analysis: result.analysis }
           : previousHealth?.analysis
             ? { analysis: previousHealth.analysis }
             : {}),
         ...(audit?.warnings?.length ? { warnings: audit.warnings.slice(0, 8) } : {}),
         sourceKind: audit?.sourceKind ?? previousHealth?.sourceKind,
+        ...(sourceChecks.length ? { sourceChecks } : previousHealth?.sourceChecks ? { sourceChecks: previousHealth.sourceChecks } : {}),
         ...(error ? { error } : {}),
         discovery: input.forceDiscovery === true
       };
@@ -513,6 +488,7 @@ export class StoreMonitorDurableObject {
           ...(previousHealth?.lastFastWatchAt ? { lastFastWatchAt: previousHealth.lastFastWatchAt } : {}),
           deferredFastWatch: previousHealth?.deferredFastWatch ?? false,
           ...(previousHealth?.analysis ? { analysis: previousHealth.analysis } : {}),
+          ...(previousHealth?.sourceChecks ? { sourceChecks: previousHealth.sourceChecks } : {}),
           error: message,
           discovery: activeDiscovery
         } satisfies StoreRuntimeHealth);
@@ -722,6 +698,8 @@ export class CalendarCoordinatorDurableObject {
           fetchedAt: calendar.fetchedAt,
           sourcePages: calendar.sourcePages,
           cache: calendar.cache,
+          cacheAgeMs: calendar.cacheAgeMs,
+          ...(calendar.warning ? { calendarWarning: calendar.warning } : {}),
           activeProducts,
           officialCatalogProductIds: calendar.catalogProducts.map((product) => product.id),
           acceptedLanguages: control.languages,

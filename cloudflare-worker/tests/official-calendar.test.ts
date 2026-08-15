@@ -170,6 +170,37 @@ describe("calendrier officiel français", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("continue les veilles avec le dernier catalogue vérifié si Bandai tombe", async () => {
+    const store = new MemoryStateStore({ writable: true });
+    const valid = PAGE_1.replace("1 / 2", "1 / 1");
+    const firstFetcher = vi.fn(async () => new Response(valid, { status: 200 })) as typeof fetch;
+    const first = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-08-09T12:00:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      stateStore: store,
+      fetcher: firstFetcher
+    });
+    const failingFetcher = vi.fn(async () => new Response("service unavailable", { status: 503 })) as typeof fetch;
+    const stale = await loadOfficialCalendar({
+      sourceUrl: "https://fr.onepiece-cardgame.com/products/",
+      now: new Date("2026-08-09T12:16:00.000Z"),
+      daysBefore: 120,
+      daysAfter: 30,
+      stateStore: store,
+      fetcher: failingFetcher
+    });
+
+    expect(first.cache).toBe("miss");
+    expect(stale.cache).toBe("stale");
+    expect(stale.cacheAgeMs).toBe(16 * 60_000);
+    expect(stale.fetchedAt).toBe(first.fetchedAt);
+    expect(stale.activeProducts.map((product) => product.id)).toEqual(first.activeProducts.map((product) => product.id));
+    expect(stale.warning).toMatch(/Bandai.*HTTP 503/i);
+    expect(failingFetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("rejette une page de challenge HTTP 200", () => {
     expect(() => validateOfficialCatalogPage(`
       <html><head><title>Just a moment...</title></head><body>

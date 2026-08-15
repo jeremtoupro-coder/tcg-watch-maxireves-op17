@@ -43,4 +43,10 @@ describe("cockpit deux circuits", () => {
     expect(pagesWorker).not.toContain("request.body,");
     expect(pagesWorker).toContain("await request.arrayBuffer()");
   });
+
+  it("rend visible l'usage du cache calendrier de secours", () => {
+    expect(html).toContain("Calendrier Bandai");
+    expect(html).toContain("CACHE DE SECOURS");
+    expect(html).toContain("state.calendar.warning");
+  });
 });

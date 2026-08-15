@@ -23,4 +23,11 @@ describe("budget CPU du Scheduled Handler", () => {
     expect(route.indexOf("runDistributedMonitoringCycle(")).toBeGreaterThan(route.indexOf("dispatchRuntimeHeartbeatSignal("));
     expect(route).toContain("runDeliveredWebScout(");
   });
+
+  it("ne double plus les écritures Discovery et backoff à chaque minute", () => {
+    expect(durableMonitoring).not.toContain("forceDiscoveryDue(");
+    expect(durableMonitoring).not.toContain("pruneFastWatchCache(");
+    expect(durableMonitoring).toContain("forceDiscovery: input.forceDiscovery === true");
+    expect(durableMonitoring).toContain('backoffRaw && backoffRaw !== "1970-01-01T00:00:00.000Z"');
+  });
 });

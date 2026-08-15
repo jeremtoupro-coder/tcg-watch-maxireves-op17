@@ -16,6 +16,16 @@ function connector(overrides: Partial<ConnectorDefinition> = {}): ConnectorDefin
   };
 }
 
+function chunkedResponse(chunks: string[], contentType: string): Response {
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    }
+  }), { status: 200, headers: { "content-type": contentType } });
+}
+
 describe("flux produits autorisés", () => {
   it("parse un CSV personnalisable", () => {
     const rows = parseAuthorizedFeed(`title;url;price;stock;language\nOne Piece OP17 Display FR;https://shop.test/op17;119,90;disponible;français`, "text/csv");
@@ -79,6 +89,39 @@ describe("flux produits autorisés", () => {
 
     const audit = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue.json");
 
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].matchedReferences).toContain("EB-05");
+  });
+
+  it("conserve les enregistrements CSV cités lorsque les chunks coupent guillemets et CRLF", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => chunkedResponse([
+      "title,url,description,stock,language\r",
+      "\n\"One Piece OP17 Display FR\",https://shop.test/op17,\"Texte avec un \"",
+      "\"drop\"\" réel\",disponible,français\r",
+      "\n"
+    ], "text/csv")));
+
+    const audit = await auditAuthorizedFeed(connector(), "https://feed.example/chunked.csv");
+
+    expect(audit.sources[0].error).toBeUndefined();
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0]).toMatchObject({
+      availability: "available",
+      language: "Français confirmé"
+    });
+  });
+
+  it("conserve un objet JSON lorsque une chaîne et une accolade traversent les chunks", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => chunkedResponse([
+      '{"products":[{"title":"One Piece EB',
+      '05 Booster FR","url":"https://shop.test/eb05","description":"précom',
+      'mande française","stock":"disponible","language":"français"}',
+      "]}"
+    ], "application/json")));
+
+    const audit = await auditAuthorizedFeed(connector(), "https://feed.example/chunked.json");
+
+    expect(audit.sources[0].error).toBeUndefined();
     expect(audit.candidates).toHaveLength(1);
     expect(audit.candidates[0].matchedReferences).toContain("EB-05");
   });

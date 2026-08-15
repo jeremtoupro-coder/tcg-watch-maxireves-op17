@@ -1,4 +1,4 @@
-import { auditConnector } from "./audit";
+import { auditConnector, WORKERS_FREE_SUBREQUEST_LIMIT } from "./audit";
 import { auditAuthorizedFeed } from "./authorizedFeed";
 import { auditParkagePublicCatalog } from "./parkagePublicCatalog";
 import { auditPhilibertPublicCatalog } from "./philibertPublicCatalog";
@@ -114,12 +114,19 @@ async function auditEspritJeuCatalog(
   if (categoryAudit.sources.some((source) => Boolean(source.error))) return categoryAudit;
 
   const activeIds = new Set(watchProducts.map((product) => product.id));
-  const directUrls = [...new Set(categoryAudit.candidates
+  const eligibleDirectCandidates = categoryAudit.candidates
     .filter((candidate) =>
       candidate.availability === "available" ||
       candidate.matchedReferences.some((reference) => activeIds.has(reference))
     )
-    .map((candidate) => candidate.url))];
+    .sort((left, right) => {
+      const leftActive = left.matchedReferences.some((reference) => activeIds.has(reference));
+      const rightActive = right.matchedReferences.some((reference) => activeIds.has(reference));
+      return Number(rightActive) - Number(leftActive);
+    });
+  const allDirectUrls = [...new Set(eligibleDirectCandidates.map((candidate) => candidate.url))];
+  const directBudget = Math.max(0, WORKERS_FREE_SUBREQUEST_LIMIT - categoryAudit.sources.length);
+  const directUrls = allDirectUrls.slice(0, directBudget);
 
   if (directUrls.length === 0) return categoryAudit;
 
@@ -136,7 +143,10 @@ async function auditEspritJeuCatalog(
     checkedAt: new Date().toISOString(),
     sources: [...categoryAudit.sources, ...directAudit.sources],
     candidates: preferDirectCandidates(categoryAudit.candidates, directAudit.candidates),
-    notes: connector.notes
+    notes: connector.notes,
+    ...(allDirectUrls.length > directUrls.length
+      ? { warnings: [`${allDirectUrls.length - directUrls.length} fiches Esprit Jeu reportées afin de respecter la limite Free de ${WORKERS_FREE_SUBREQUEST_LIMIT} sous-requêtes par cycle.`] }
+      : {})
   };
 }
 

@@ -54,6 +54,25 @@ describe("vérité opérationnelle du cockpit", () => {
     expect(state.label).toBe("Fast Watch observé");
   });
 
+  it("explique explicitement une revalidation de feed inchangé", () => {
+    const at = new Date(NOW - 60_000).toISOString();
+    const state = classifyStoreHealth("active_fast_watch", health({
+      lastMerchantCheckAt: at,
+      lastFastWatchAt: at,
+      merchantSources: 1,
+      successfulMerchantSources: 1,
+      sourceChecks: [{
+        source: "authorized-feed:joueclub",
+        status: 304,
+        cacheValidation: "etag",
+        notModified: true,
+        responseBytes: 0
+      }]
+    }), NOW);
+    expect(state.level).toBe("green");
+    expect(state.detail).toMatch(/revalidé sans changement.*304/i);
+  });
+
   it("reste rouge si le cycle global est ancien même avec une ancienne preuve Fast Watch", () => {
     const at = new Date(NOW - 10 * 60_000).toISOString();
     const state = classifyStoreHealth("active_fast_watch", health({

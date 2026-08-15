@@ -70,12 +70,15 @@ Web Scout compte désormais les résultats bloqués dans ses rejets sans leur fa
 - tick reçu, cycle automatique terminé, Discovery, Fast Watch, Web Scout, heartbeat automatique et heartbeat manuel persistés séparément ;
 - alarme Calendar Coordinator après trois minutes sans tick ;
 - watchdog GitHub toutes les cinq minutes, indépendant du scheduler Cloudflare, avec une alerte au maximum par heure ;
-- smoke final de production exigeant deux ticks distincts et un cycle automatique terminé ;
+- smoke final de production exigeant deux ticks distincts et un cycle automatique terminé, avec une fenêtre de 16 minutes compatible avec le délai documenté de propagation des triggers ;
 - test PR sur Worker isolé avec vrai cron, Discord dry-run puis suppression vérifiée du trigger ;
 - Web Scout remis au même orchestrateur Durable Object que le monitoring, mais dans une exécution et un état séparés : le Scheduled Handler Free n'effectue ainsi qu'un seul hand-off et ne peut plus dépasser ses 10 ms à `:07` en orchestrant lui-même plusieurs tâches ;
 - health boutique vert seulement après une vraie lecture Fast Watch récente ; Discovery récente sans fiche promue reste orange.
+- dernier calendrier Bandai vérifié conservé si son rafraîchissement échoue, avec cache de secours et erreur visibles dans le cockpit au lieu d'arrêter les 24 veilles ;
 - catalogues partenaires parcourus en streaming, avec 40 Mo de transfert maximum mais sans bufferiser le fichier complet en mémoire ;
 - revalidation conditionnelle des feeds par `ETag`/`Last-Modified` stockés dans le Store Monitor pendant les Fast Watch : un `304` est un contrôle sain, sans retéléchargement, reparsing, faux OOS ni exposition de l'URL secrète. La Discovery force néanmoins une lecture complète toutes les 15 minutes afin de réévaluer un catalogue inchangé face à une nouvelle référence Bandai.
+- suppression de deux écritures DO redondantes par Discovery (forçage via métadonnée puis réécriture du même cache Fast Watch) et arrêt des remises à zéro de backoff déjà nulles ; la projection de lignes écrites reste ainsi nettement sous les 100 000/jour du niveau Free.
+- plafond de 50 sous-requêtes appliqué par Store Monitor, y compris Esprit Jeu : les sorties Bandai actives sont prioritaires et les anciennes fiches excédentaires sont reportées avec un warning explicite.
 
 ## Circuits fonctionnels
 

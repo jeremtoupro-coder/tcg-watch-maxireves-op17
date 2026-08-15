@@ -10,9 +10,13 @@ import type {
 } from "./types";
 
 const MAX_RESPONSE_BYTES = 2_500_000;
+export const WORKERS_FREE_SUBREQUEST_LIMIT = 50;
 const REQUEST_TIMEOUT_MS = 20_000;
 const SOURCE_DELAY_MS = 300;
-const MAX_CONNECTOR_CONCURRENCY = 8;
+// Cloudflare Workers and Durable Objects allow at most six simultaneous
+// outgoing connections per invocation. Keep the connector runner below that
+// hard platform limit even if a future connector asks for more.
+const MAX_CONNECTOR_CONCURRENCY = 6;
 const DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES = 12;
 
 function sleep(ms: number): Promise<void> {
@@ -415,7 +419,11 @@ function discoveredProductUrls(sources: SourceAudit[], connector: ConnectorDefin
     }
   }
 
-  const limit = Math.max(0, Math.min(50, connector.maxDiscoveredProductPages ?? DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES));
+  const remainingSubrequests = Math.max(0, WORKERS_FREE_SUBREQUEST_LIMIT - sources.length);
+  const limit = Math.max(0, Math.min(
+    remainingSubrequests,
+    connector.maxDiscoveredProductPages ?? DEFAULT_MAX_DISCOVERED_PRODUCT_PAGES
+  ));
   return [...discovered].slice(0, limit);
 }
 
@@ -436,7 +444,8 @@ async function fetchSourcesInBatches(
 
 export async function auditConnector(connector: ConnectorDefinition, watchProducts: OfficialProduct[] = []): Promise<StoreAudit> {
   const concurrency = Math.max(1, Math.min(MAX_CONNECTOR_CONCURRENCY, connector.maxConcurrency ?? 1));
-  const initialSources = [...new Set(connector.sources.map((source) => canonicalProductUrl(source, connector)))];
+  const allInitialSources = [...new Set(connector.sources.map((source) => canonicalProductUrl(source, connector)))];
+  const initialSources = allInitialSources.slice(0, WORKERS_FREE_SUBREQUEST_LIMIT);
   const sources = await fetchSourcesInBatches(initialSources, connector, concurrency, watchProducts);
 
   if (connector.followDiscoveredProductPages) {
@@ -460,6 +469,9 @@ export async function auditConnector(connector: ConnectorDefinition, watchProduc
     checkedAt: new Date().toISOString(),
     sources,
     candidates: [...uniqueCandidates.values()],
-    notes: connector.notes
+    notes: connector.notes,
+    ...(allInitialSources.length > initialSources.length
+      ? { warnings: [`${allInitialSources.length - initialSources.length} sources configurées reportées afin de respecter la limite Free de ${WORKERS_FREE_SUBREQUEST_LIMIT} sous-requêtes par cycle.`] }
+      : {})
   };
 }

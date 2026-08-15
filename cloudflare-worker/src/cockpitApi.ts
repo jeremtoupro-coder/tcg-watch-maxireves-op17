@@ -122,6 +122,10 @@ async function readStoreHealth(env: RuntimeEnv, store: StoreKey): Promise<StoreR
 
 async function readCalendarView(env: RuntimeEnv): Promise<{
   fetchedAt?: string;
+  sourcePages?: number;
+  cache?: "hit" | "miss" | "stale";
+  cacheAgeMs?: number;
+  calendarWarning?: string;
   activeProducts: Array<{ id: string; label: string; releaseDate: string; aliases: string[] }>;
   acceptedLanguages?: LanguageStatus[];
   controlUpdatedAt?: string;
@@ -167,6 +171,13 @@ function rejectionDetail(health: StoreRuntimeHealth): string {
 
 function warningDetail(health: StoreRuntimeHealth): string {
   return health.warnings?.length ? ` Avertissement : ${health.warnings[0]}` : "";
+}
+
+function revalidationDetail(health: StoreRuntimeHealth): string {
+  const unchanged = health.sourceChecks?.filter((source) => source.notModified).length ?? 0;
+  return unchanged > 0
+    ? ` ${unchanged} flux partenaire revalidé sans changement (HTTP 304).`
+    : "";
 }
 
 export function classifyStoreHealth(
@@ -233,7 +244,7 @@ export function classifyStoreHealth(
     return {
       level: "green",
       label: "Fast Watch observé",
-      detail: `${health.successfulMerchantSources} source${health.successfulMerchantSources > 1 ? "s" : ""} marchande${health.successfulMerchantSources > 1 ? "s" : ""} réellement relue${health.successfulMerchantSources > 1 ? "s" : ""} ; ${health.analysis?.newReleases.candidates ?? 0} offre${(health.analysis?.newReleases.candidates ?? 0) > 1 ? "s" : ""} qualifiée${(health.analysis?.newReleases.candidates ?? 0) > 1 ? "s" : ""}.${rejectionDetail(health)}${warningDetail(health)}`,
+      detail: `${health.successfulMerchantSources} source${health.successfulMerchantSources > 1 ? "s" : ""} marchande${health.successfulMerchantSources > 1 ? "s" : ""} réellement relue${health.successfulMerchantSources > 1 ? "s" : ""} ; ${health.analysis?.newReleases.candidates ?? 0} offre${(health.analysis?.newReleases.candidates ?? 0) > 1 ? "s" : ""} qualifiée${(health.analysis?.newReleases.candidates ?? 0) > 1 ? "s" : ""}.${revalidationDetail(health)}${rejectionDetail(health)}${warningDetail(health)}`,
       ageMs: fastWatchAge
     };
   }
@@ -299,6 +310,7 @@ async function buildStatus(env: RuntimeEnv) {
       deferredFastWatch: health?.deferredFastWatch ?? null,
       analysis: health?.analysis ?? null,
       warnings: health?.warnings ?? [],
+      sourceChecks: health?.sourceChecks ?? [],
       durationMs: health?.durationMs ?? null,
       merchantDurationMs: health?.merchantDurationMs ?? null,
       runtimeStatus: health?.status ?? null,
@@ -368,6 +380,10 @@ async function buildStatus(env: RuntimeEnv) {
     stores,
     calendar: {
       fetchedAt: calendar.fetchedAt ?? null,
+      sourcePages: calendar.sourcePages ?? null,
+      cache: calendar.cache ?? null,
+      cacheAgeMs: calendar.cacheAgeMs ?? null,
+      warning: calendar.calendarWarning ?? null,
       activeProducts: calendar.activeProducts,
       controllableProducts,
       acceptedLanguages: calendar.acceptedLanguages ?? control.languages,
