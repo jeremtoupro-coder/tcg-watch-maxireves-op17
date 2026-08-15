@@ -182,6 +182,19 @@ const incidentCycles = cycles.flatMap((cycle, index) => cycle.stores
   .map((store) => ({ cycle: index + 1, store: store.store, status: store.status, error: store.error }))
 );
 const incidentStores = [...new Set(incidentCycles.map((entry) => entry.store))].sort();
+const authorizedFeedSources = cycles.flatMap((cycle, cycleIndex) => cycle.stores.flatMap((store) =>
+  (store.result?.audits ?? []).flatMap((audit) => audit.sources
+    .filter((source) => source.sourceUrl.startsWith("authorized-feed:"))
+    .map((source) => ({
+      cycle: cycleIndex + 1,
+      store: store.store,
+      status: source.status,
+      responseBytes: source.responseBytes ?? 0,
+      cacheValidation: source.cacheValidation ?? "none",
+      notModified: source.notModified === true,
+      error: source.error
+    })))
+));
 const report = {
   generatedAt: new Date().toISOString(),
   environment: "isolated-runtime-test",
@@ -204,9 +217,28 @@ const report = {
       merchantDurationMs: store.merchantDurationMs,
       backoffUntil: store.backoffUntil,
       error: store.error,
-      degradedStores: store.result?.degradedStores ?? []
+      degradedStores: store.result?.degradedStores ?? [],
+      sources: (store.result?.audits ?? []).flatMap((audit) => audit.sources.map((source) => ({
+        source: source.sourceUrl,
+        status: source.status,
+        responseBytes: source.responseBytes ?? 0,
+        cacheValidation: source.cacheValidation,
+        notModified: source.notModified === true,
+        durationMs: source.durationMs,
+        error: source.error
+      })))
     }))
   })),
+  authorizedFeeds: {
+    checks: authorizedFeedSources.length,
+    fullResponses: authorizedFeedSources.filter((source) => source.status === 200).length,
+    notModifiedResponses: authorizedFeedSources.filter((source) => source.notModified).length,
+    responseBytes: authorizedFeedSources.reduce((total, source) => total + source.responseBytes, 0),
+    validators: Object.fromEntries([...new Set(authorizedFeedSources.map((source) => source.cacheValidation))]
+      .sort()
+      .map((kind) => [kind, authorizedFeedSources.filter((source) => source.cacheValidation === kind).length])),
+    sources: authorizedFeedSources
+  },
   budget,
   operational: {
     pass: incidentCycles.length === 0,

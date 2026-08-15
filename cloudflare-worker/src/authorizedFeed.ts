@@ -1,11 +1,79 @@
 import { detectAvailability, detectLanguage, extractPrice, matchReferences, stripHtml } from "./matching";
 import { enrichCandidateIdentity } from "./opwatchV1";
+import type { StateStore } from "./state";
 import type { Availability, ConnectorDefinition, ProductCandidate, StoreAudit } from "./types";
 
-const MAX_FEED_BYTES = 5_000_000;
+// Les catalogues partenaires réels font actuellement jusqu'à ~28 Mo. Ils ne
+// doivent jamais être matérialisés en entier : on les parcourt par flux et on
+// ne conserve que les lignes One Piece qualifiables.
+const MAX_FEED_TRANSFER_BYTES = 40_000_000;
+const MAX_FEED_RECORD_CHARS = 750_000;
+const MAX_FEED_CANDIDATES = 2_000;
 const FEED_TIMEOUT_MS = 25_000;
+const REVALIDATION_METADATA_PREFIX = "authorized-feed:http-cache:v1";
+const MAX_VALIDATOR_CHARS = 512;
 
 type FeedRow = Record<string, string>;
+
+interface FeedRevalidationState {
+  sourceHash: string;
+  baseline: true;
+  etag?: string;
+  lastModified?: string;
+}
+
+function fnv1a(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function safeValidator(value: string | null): string | undefined {
+  const cleaned = value?.replace(/[\r\n]/g, "").trim();
+  return cleaned && cleaned.length <= MAX_VALIDATOR_CHARS ? cleaned : undefined;
+}
+
+function cacheValidationKind(state: Pick<FeedRevalidationState, "etag" | "lastModified">):
+  "etag" | "last-modified" | "etag+last-modified" | "none" {
+  if (state.etag && state.lastModified) return "etag+last-modified";
+  if (state.etag) return "etag";
+  if (state.lastModified) return "last-modified";
+  return "none";
+}
+
+async function readRevalidationState(
+  store: StateStore | undefined,
+  metadataKey: string,
+  sourceHash: string
+): Promise<FeedRevalidationState | undefined> {
+  if (!store) return undefined;
+  try {
+    const raw = await store.getMetadata(metadataKey);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<FeedRevalidationState>;
+    if (parsed.sourceHash !== sourceHash || parsed.baseline !== true) return undefined;
+    return {
+      sourceHash,
+      baseline: true,
+      ...(safeValidator(parsed.etag ?? null) ? { etag: safeValidator(parsed.etag ?? null) } : {}),
+      ...(safeValidator(parsed.lastModified ?? null) ? { lastModified: safeValidator(parsed.lastModified ?? null) } : {})
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function persistRevalidationState(
+  store: StateStore | undefined,
+  metadataKey: string,
+  state: FeedRevalidationState
+): Promise<void> {
+  if (!store?.writable) return;
+  await store.putMetadata(metadataKey, JSON.stringify(state));
+}
 
 const FIELD_ALIASES = {
   title: ["title", "name", "product_name", "productname", "nom", "libelle", "label"],
@@ -275,9 +343,305 @@ function rowToCandidate(row: FeedRow, connector: ConnectorDefinition): ProductCa
   });
 }
 
+interface FeedTextProcessor {
+  write(value: string): void;
+  end(): void;
+}
+
+interface StreamedFeedResult {
+  candidates: ProductCandidate[];
+  productRowsSeen: number;
+  responseBytes: number;
+}
+
+function feedFormat(contentType: string, prefix: string): "csv" | "json" | "xml" {
+  const first = prefix.trimStart()[0];
+  if (first === "<") return "xml";
+  if (first === "[" || first === "{") return "json";
+  if (/json/i.test(contentType)) return "json";
+  if (/xml/i.test(contentType)) return "xml";
+  return "csv";
+}
+
+function hasReferenceSignal(value: string): boolean {
+  return /\b(?:OP|EB|ST|DP|TS|PRB)[\s_-]?\d{1,2}\b/i.test(value);
+}
+
+function createCsvStreamProcessor(accept: (row?: FeedRow) => void): FeedTextProcessor {
+  let headers: string[] | undefined;
+  let delimiter = ",";
+  let recordParts: string[] = [];
+  let recordChars = 0;
+  let quoted = false;
+  let pendingQuote = false;
+
+  const append = (value: string): void => {
+    if (!value) return;
+    recordParts.push(value);
+    recordChars += value.length;
+    if (recordChars > MAX_FEED_RECORD_CHARS) throw new Error("Flux autorisé: enregistrement CSV anormalement volumineux");
+  };
+
+  const finishRecord = (): void => {
+    const raw = recordParts.join("").replace(/^\uFEFF/, "").trim();
+    recordParts = [];
+    recordChars = 0;
+    if (!raw || raw.startsWith("#")) return;
+    if (!headers) {
+      const delimiters = ["\t", ";", ",", "|"];
+      delimiter = [...delimiters].sort((left, right) => scoreDelimiter(raw, right) - scoreDelimiter(raw, left))[0];
+      headers = parseDelimitedLine(raw, delimiter).map(normalizeKey);
+      if (headers.length < 2) throw new Error("Flux autorisé: en-tête CSV invalide");
+      return;
+    }
+    // rowToCandidate rejetterait de toute façon ces lignes. Cette vérification
+    // avant allocation garde un catalogue généraliste de 28 Mo peu coûteux.
+    if (!hasReferenceSignal(raw)) {
+      accept();
+      return;
+    }
+    const values = parseDelimitedLine(raw, delimiter);
+    const row: FeedRow = {};
+    headers.forEach((header, index) => {
+      if (header) row[header] = values[index] ?? "";
+    });
+    accept(row);
+  };
+
+  return {
+    write(value: string): void {
+      let index = 0;
+      let segmentStart = 0;
+      if (pendingQuote) {
+        if (value[0] === '"') {
+          // Deux guillemets séparés par une frontière de chunk : échappement.
+          index = 1;
+        } else {
+          quoted = false;
+        }
+        pendingQuote = false;
+      }
+
+      for (; index < value.length; index += 1) {
+        const char = value[index];
+        if (char === '"') {
+          if (!quoted) {
+            quoted = true;
+          } else if (index + 1 < value.length && value[index + 1] === '"') {
+            index += 1;
+          } else if (index + 1 === value.length) {
+            pendingQuote = true;
+          } else {
+            quoted = false;
+          }
+          continue;
+        }
+        if ((char === "\n" || char === "\r") && !quoted && !pendingQuote) {
+          append(value.slice(segmentStart, index));
+          finishRecord();
+          if (char === "\r" && value[index + 1] === "\n") index += 1;
+          segmentStart = index + 1;
+        }
+      }
+      append(value.slice(segmentStart));
+    },
+    end(): void {
+      if (pendingQuote) {
+        pendingQuote = false;
+        quoted = false;
+      }
+      if (quoted) throw new Error("Flux autorisé: guillemet CSV non fermé");
+      finishRecord();
+    }
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function createXmlStreamProcessor(accept: (row?: FeedRow) => void): FeedTextProcessor {
+  let buffer = "";
+
+  const drain = (final: boolean): void => {
+    while (buffer) {
+      const opening = buffer.match(/<((?:[A-Za-z0-9_-]+:)?(?:product|item|article|offer|entry))\b[^>]*>/i);
+      if (!opening || opening.index === undefined) {
+        if (final) return;
+        if (buffer.length > MAX_FEED_RECORD_CHARS) buffer = buffer.slice(-4_096);
+        return;
+      }
+      if (opening.index > 0) buffer = buffer.slice(opening.index);
+      const tag = opening[1];
+      const bodyStart = opening[0].length;
+      const closing = new RegExp(`<\\/${escapeRegExp(tag)}\\s*>`, "i").exec(buffer.slice(bodyStart));
+      if (!closing || closing.index === undefined) {
+        if (buffer.length > MAX_FEED_RECORD_CHARS) throw new Error("Flux autorisé: enregistrement XML anormalement volumineux");
+        return;
+      }
+      const bodyEnd = bodyStart + closing.index;
+      const raw = buffer.slice(bodyStart, bodyEnd);
+      const consumed = bodyEnd + closing[0].length;
+      buffer = buffer.slice(consumed);
+      accept(hasReferenceSignal(raw) ? parseXmlFields(raw) : undefined);
+    }
+  };
+
+  return {
+    write(value: string): void {
+      buffer += value;
+      drain(false);
+    },
+    end(): void {
+      drain(true);
+    }
+  };
+}
+
+function createJsonStreamProcessor(prefix: string, accept: (row?: FeedRow) => void): FeedTextProcessor {
+  // Tableau racine : chaque objet de profondeur 1 est un produit. Objet
+  // racine : compatibilité avec {products:[...]}/{items:[...]}/{results:[...]}.
+  const targetObjectDepth = prefix.trimStart().startsWith("[") ? 1 : 2;
+  let objectDepth = 0;
+  let inString = false;
+  let escaped = false;
+  let capturing = false;
+  let captureParts: string[] = [];
+  let captureChars = 0;
+
+  const appendCapture = (value: string): void => {
+    if (!value) return;
+    captureParts.push(value);
+    captureChars += value.length;
+    if (captureChars > MAX_FEED_RECORD_CHARS) throw new Error("Flux autorisé: objet JSON anormalement volumineux");
+  };
+
+  const finishCapture = (): void => {
+    const raw = captureParts.join("");
+    captureParts = [];
+    captureChars = 0;
+    const parsed = JSON.parse(raw) as unknown;
+    const row = objectToRow(parsed);
+    if (row) accept(hasReferenceSignal(raw) ? row : undefined);
+  };
+
+  return {
+    write(value: string): void {
+      let captureStart = capturing ? 0 : -1;
+      for (let index = 0; index < value.length; index += 1) {
+        const char = value[index];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === '"') inString = false;
+          continue;
+        }
+        if (char === '"') {
+          inString = true;
+          continue;
+        }
+        if (char === "{") {
+          objectDepth += 1;
+          if (!capturing && objectDepth === targetObjectDepth) {
+            capturing = true;
+            captureStart = index;
+          }
+          continue;
+        }
+        if (char === "}") {
+          if (capturing && objectDepth === targetObjectDepth) {
+            appendCapture(value.slice(captureStart, index + 1));
+            finishCapture();
+            capturing = false;
+            captureStart = -1;
+          }
+          objectDepth -= 1;
+        }
+      }
+      if (capturing && captureStart >= 0) appendCapture(value.slice(captureStart));
+    },
+    end(): void {
+      if (capturing || inString || objectDepth !== 0) throw new Error("Flux autorisé: JSON incomplet");
+    }
+  };
+}
+
+async function readAuthorizedFeedResponse(
+  response: Response,
+  connector: ConnectorDefinition
+): Promise<StreamedFeedResult> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_FEED_TRANSFER_BYTES) {
+    throw new Error(`Flux autorisé trop volumineux: ${declaredLength} octets`);
+  }
+  if (!response.body) throw new Error("Flux autorisé: corps de réponse absent");
+
+  const candidates: ProductCandidate[] = [];
+  let productRowsSeen = 0;
+  let responseBytes = 0;
+  const accept = (row?: FeedRow): void => {
+    productRowsSeen += 1;
+    if (!row) return;
+    const candidate = rowToCandidate(row, connector);
+    if (!candidate) return;
+    if (candidates.length >= MAX_FEED_CANDIDATES) {
+      throw new Error(`Flux autorisé: plus de ${MAX_FEED_CANDIDATES} produits One Piece qualifiables`);
+    }
+    candidates.push(candidate);
+  };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  const contentType = response.headers.get("content-type") ?? "";
+  let prefix = "";
+  let processor: FeedTextProcessor | undefined;
+
+  const consumeText = (text: string): void => {
+    if (!text) return;
+    if (!processor) {
+      prefix += text;
+      if (!prefix.trim() && prefix.length < 65_536) return;
+      const format = feedFormat(contentType, prefix);
+      processor = format === "xml"
+        ? createXmlStreamProcessor(accept)
+        : format === "json"
+          ? createJsonStreamProcessor(prefix, accept)
+          : createCsvStreamProcessor(accept);
+      const initial = prefix;
+      prefix = "";
+      processor.write(initial);
+      return;
+    }
+    processor.write(text);
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      responseBytes += value.byteLength;
+      if (responseBytes > MAX_FEED_TRANSFER_BYTES) {
+        throw new Error(`Flux autorisé trop volumineux: plus de ${MAX_FEED_TRANSFER_BYTES} octets`);
+      }
+      consumeText(decoder.decode(value, { stream: true }));
+    }
+    consumeText(decoder.decode());
+    processor?.end();
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!processor || productRowsSeen === 0) throw new Error("Flux autorisé lisible mais aucun produit structuré détecté");
+  return { candidates, productRowsSeen, responseBytes };
+}
+
 export async function auditAuthorizedFeed(
   connector: ConnectorDefinition,
-  feedUrl: string
+  feedUrl: string,
+  options: { stateStore?: StateStore; forceRefresh?: boolean } = {}
 ): Promise<StoreAudit> {
   const started = performance.now();
   const controller = new AbortController();
@@ -294,28 +658,62 @@ export async function auditAuthorizedFeed(
     ) {
       throw new Error("L'URL du flux autorisé doit utiliser HTTPS");
     }
+    const sourceHash = fnv1a(feedUrl);
+    const revalidationMetadataKey = `${REVALIDATION_METADATA_PREFIX}:${connector.key}`;
+    const previousValidation = await readRevalidationState(
+      options.stateStore,
+      revalidationMetadataKey,
+      sourceHash
+    );
+    const headers: Record<string, string> = {
+      "User-Agent": "OPWatch/1.0 (+authorized publisher product-feed consumer)",
+      "Accept": "text/csv,text/tab-separated-values,application/json,application/xml,text/xml;q=0.9,*/*;q=0.5"
+    };
+    if (!options.forceRefresh && previousValidation?.etag) headers["If-None-Match"] = previousValidation.etag;
+    if (!options.forceRefresh && previousValidation?.lastModified) headers["If-Modified-Since"] = previousValidation.lastModified;
     const response = await fetch(feedUrl, {
       method: "GET",
       redirect: "follow",
       signal: controller.signal,
-      headers: {
-        "User-Agent": "OPWatch/1.0 (+authorized publisher product-feed consumer)",
-        "Accept": "text/csv,text/tab-separated-values,application/json,application/xml,text/xml;q=0.9,*/*;q=0.5"
-      }
+      headers
     });
     const finalFeedUrl = new URL(response.url || feedUrl);
     if (finalFeedUrl.protocol !== "https:" || privateOrLocalHostname(finalFeedUrl.hostname)) {
       throw new Error("Redirection du flux autorisé vers une destination non sûre");
     }
-    const body = await response.arrayBuffer();
-    if (body.byteLength > MAX_FEED_BYTES) throw new Error(`Flux autorisé trop volumineux: ${body.byteLength} octets`);
+    if (response.status === 304) {
+      if (!previousValidation) throw new Error("Flux autorisé HTTP 304 sans baseline locale");
+      return {
+        store: connector.key,
+        storeName: connector.name,
+        checkedAt: new Date().toISOString(),
+        sources: [{
+          sourceUrl: safeSourceUrl,
+          finalUrl: safeSourceUrl,
+          status: response.status,
+          responseBytes: 0,
+          durationMs: Math.round(performance.now() - started),
+          cacheValidation: cacheValidationKind(previousValidation),
+          notModified: true,
+          productLinksSeen: 0,
+          candidates: []
+        }],
+        candidates: [],
+        notes: [
+          ...connector.notes,
+          "Source commerciale: flux produit autorisé inchangé (HTTP 304, URL secrète non exposée)."
+        ]
+      };
+    }
     if (!response.ok) throw new Error(`Flux autorisé HTTP ${response.status}`);
-    const raw = new TextDecoder("utf-8").decode(body);
-    const rows = parseAuthorizedFeed(raw, response.headers.get("content-type") ?? "");
-    if (rows.length === 0) throw new Error("Flux autorisé lisible mais aucun produit structuré détecté");
-    const candidates = rows
-      .map((row) => rowToCandidate(row, connector))
-      .filter((candidate): candidate is ProductCandidate => Boolean(candidate));
+    const streamed = await readAuthorizedFeedResponse(response, connector);
+    const nextValidation: FeedRevalidationState = {
+      sourceHash,
+      baseline: true,
+      ...(safeValidator(response.headers.get("etag")) ? { etag: safeValidator(response.headers.get("etag")) } : {}),
+      ...(safeValidator(response.headers.get("last-modified")) ? { lastModified: safeValidator(response.headers.get("last-modified")) } : {})
+    };
+    await persistRevalidationState(options.stateStore, revalidationMetadataKey, nextValidation);
 
     return {
       store: connector.key,
@@ -326,12 +724,13 @@ export async function auditAuthorizedFeed(
         finalUrl: safeSourceUrl,
         status: response.status,
         contentType: response.headers.get("content-type") ?? undefined,
-        responseBytes: body.byteLength,
+        responseBytes: streamed.responseBytes,
         durationMs: Math.round(performance.now() - started),
-        productLinksSeen: rows.length,
-        candidates
+        cacheValidation: cacheValidationKind(nextValidation),
+        productLinksSeen: streamed.productRowsSeen,
+        candidates: streamed.candidates
       }],
-      candidates,
+      candidates: streamed.candidates,
       notes: [...connector.notes, "Source commerciale: flux produit autorisé (URL secrète non exposée dans les audits)."]
     };
   } catch (error) {

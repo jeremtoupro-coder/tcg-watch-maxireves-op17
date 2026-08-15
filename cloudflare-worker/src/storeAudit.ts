@@ -3,6 +3,7 @@ import { auditAuthorizedFeed } from "./authorizedFeed";
 import { auditParkagePublicCatalog } from "./parkagePublicCatalog";
 import { auditPhilibertPublicCatalog } from "./philibertPublicCatalog";
 import type { OfficialProduct } from "./opwatchV1";
+import type { StateStore } from "./state";
 import type {
   ConnectorDefinition,
   Env,
@@ -204,11 +205,16 @@ export async function auditStore(
   connector: ConnectorDefinition,
   env: Env,
   watchProducts: OfficialProduct[] = [],
-  options: { allowPublicFallback?: boolean } = {}
+  options: { allowPublicFallback?: boolean; stateStore?: StateStore } = {}
 ): Promise<StoreAudit> {
   const feedUrl = configuredAuthorizedFeedUrl(connector, env);
   if (feedUrl) {
-    const feedAudit = await auditAuthorizedFeed(connector, feedUrl);
+    const feedAudit = await auditAuthorizedFeed(connector, feedUrl, {
+      stateStore: options.stateStore,
+      // Une Discovery reparcourt toujours le catalogue : un nouveau produit
+      // Bandai peut devenir actif alors que le contenu/ETag du feed n'a pas changé.
+      forceRefresh: options.allowPublicFallback === true
+    });
     const feedHealthy = feedAudit.sources.length > 0 && feedAudit.sources.every((source) => !source.error);
     if (feedHealthy || connector.directPollingDisabledWithoutFeed === true) {
       return withOperationalStatus(feedAudit, connector, env, "authorized_feed");

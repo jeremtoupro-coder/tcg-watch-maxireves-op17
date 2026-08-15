@@ -167,6 +167,48 @@ describe("surveillance planifiée", () => {
     expect(fast.evaluation?.discordDispatch.attempted).toBe(0);
   });
 
+  it("traite un feed partenaire 304 comme un contrôle sain sans fausse transition", async () => {
+    const stateStore = new MemoryStateStore({ writable: true });
+    const feed = "title,url,price,stock,language\nOne Piece OP17 Display FR,https://shop.test/op17,119.90,disponible,français";
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (headers.get("if-none-match") === '"joue-v1"') {
+        return new Response(null, { status: 304, headers: { etag: '"joue-v1"' } });
+      }
+      return new Response(feed, {
+        status: 200,
+        headers: { "content-type": "text/csv", etag: '"joue-v1"' }
+      });
+    }));
+    const env = {
+      MONITORING_ENABLED: "true",
+      WRITE_STATE: "true",
+      DISCORD_MODE: "dry-run" as const,
+      ACTIVE_STORES: "joueclub",
+      AUTHORIZED_FEED_JOUECLUB_URL: "https://feed.example/joueclub.csv"
+    };
+
+    const baseline = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      forceDiscovery: true,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 15, 0)
+    });
+    const fast = await runMonitoringCycle(env, {
+      officialProducts: [OP17],
+      stateStore,
+      scheduledTime: Date.UTC(2026, 7, 9, 18, 16, 0)
+    });
+
+    expect(baseline.evaluation?.snapshots).toHaveLength(1);
+    expect(baseline.evaluation?.alertMatches).toEqual([]);
+    expect(fast.healthyStores).toEqual(["joueclub"]);
+    expect(fast.audits?.[0].sources[0]).toMatchObject({ status: 304, notModified: true });
+    expect(fast.evaluation?.changes).toEqual([]);
+    expect(fast.evaluation?.state.writes).toBe(0);
+    expect(fast.evaluation?.discordDispatch.attempted).toBe(0);
+  });
+
   it("trace les raisons de filtrage au lieu d'expliquer le silence par zéro candidat", async () => {
     const productUrl = "https://maxireves.fr/produit/display-op17/";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

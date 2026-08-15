@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { auditAuthorizedFeed, parseAuthorizedFeed } from "../src/authorizedFeed";
+import { MemoryStateStore } from "../src/state";
 import type { ConnectorDefinition } from "../src/types";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -43,6 +44,122 @@ describe("flux produits autorisés", () => {
     )));
     const audit = await auditAuthorizedFeed(connector(), "https://feed.example/playin.csv");
     expect(audit.candidates[0].availability).toBe("available");
+  });
+
+  it("parcourt un catalogue généraliste supérieur à 5 Mo sans le matérialiser", async () => {
+    const irrelevant = "Autre jeu,https://shop.test/autre,19.90,disponible,français\n".repeat(82_000);
+    const csv = [
+      "title,url,price,stock,language",
+      irrelevant,
+      "One Piece OP17 Display FR,https://shop.test/op17,119.90,disponible,français"
+    ].join("\n");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(csv, {
+      status: 200,
+      headers: { "content-type": "text/csv" }
+    })));
+
+    const audit = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue.csv");
+
+    expect(audit.sources[0].responseBytes).toBeGreaterThan(5_000_000);
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].matchedReferences).toContain("OP-17");
+  });
+
+  it("parcourt les objets d'un gros flux JSON sans partager un Response consommable", async () => {
+    const json = JSON.stringify({
+      products: [
+        { title: "Autre jeu", url: "https://shop.test/autre" },
+        { title: "One Piece EB05 Booster FR", url: "https://shop.test/eb05", stock: "12", language: "français" }
+      ]
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(json, {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })));
+
+    const audit = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue.json");
+
+    expect(audit.candidates).toHaveLength(1);
+    expect(audit.candidates[0].matchedReferences).toContain("EB-05");
+  });
+
+  it("refuse avant lecture un catalogue au-dessus de la borne de transfert", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "title,url\nOne Piece OP17,https://shop.test/op17",
+      { status: 200, headers: { "content-type": "text/csv", "content-length": "40000001" } }
+    )));
+
+    const audit = await auditAuthorizedFeed(connector(), "https://feed.example/catalogue.csv");
+
+    expect(audit.candidates).toEqual([]);
+    expect(audit.sources[0].error).toMatch(/40000001 octets/);
+  });
+
+  it("revalide un gros flux avec ETag sans retélécharger ni reparcourir le catalogue", async () => {
+    const stateStore = new MemoryStateStore({ writable: true });
+    const csv = [
+      "title,url,price,stock,language",
+      "One Piece OP17 Display FR,https://shop.test/op17,119.90,disponible,français"
+    ].join("\n");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (headers.get("if-none-match") === '"catalog-v1"') {
+        return new Response(null, { status: 304, headers: { etag: '"catalog-v1"' } });
+      }
+      return new Response(csv, {
+        status: 200,
+        headers: { "content-type": "text/csv", etag: '"catalog-v1"' }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await auditAuthorizedFeed(
+      connector(),
+      "https://feed.example/catalogue.csv?secret=token",
+      { stateStore }
+    );
+    const second = await auditAuthorizedFeed(
+      connector(),
+      "https://feed.example/catalogue.csv?secret=token",
+      { stateStore }
+    );
+    const discoveryRefresh = await auditAuthorizedFeed(
+      connector(),
+      "https://feed.example/catalogue.csv?secret=token",
+      { stateStore, forceRefresh: true }
+    );
+
+    expect(first.candidates).toHaveLength(1);
+    expect(first.sources[0]).toMatchObject({ status: 200, cacheValidation: "etag" });
+    expect(second.candidates).toEqual([]);
+    expect(second.sources[0]).toMatchObject({
+      status: 304,
+      notModified: true,
+      responseBytes: 0,
+      cacheValidation: "etag"
+    });
+    expect(discoveryRefresh.candidates).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get("if-none-match")).toBeNull();
+    expect(JSON.stringify(second)).not.toContain("secret=token");
+  });
+
+  it("n'envoie jamais le validateur d'un ancien URL de feed vers un nouveau feed", async () => {
+    const stateStore = new MemoryStateStore({ writable: true });
+    const seenHeaders: Headers[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      seenHeaders.push(new Headers(init?.headers));
+      return new Response(
+        "title,url,stock,language\nOne Piece OP17 FR,https://shop.test/op17,1,français",
+        { status: 200, headers: { "content-type": "text/csv", etag: '"v1"' } }
+      );
+    }));
+
+    await auditAuthorizedFeed(connector(), "https://feed.example/first.csv", { stateStore });
+    await auditAuthorizedFeed(connector(), "https://feed.example/second.csv", { stateStore });
+
+    expect(seenHeaders[0].get("if-none-match")).toBeNull();
+    expect(seenHeaders[1].get("if-none-match")).toBeNull();
   });
 
   it("convertit un flux en candidat FR sans exposer l'URL secrète", async () => {

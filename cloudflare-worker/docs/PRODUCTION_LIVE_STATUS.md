@@ -28,10 +28,11 @@ Aucun déploiement de production postérieur à ce commit n'a été trouvé lors
 - ceux du 14 août à 22 h et du 15 août à 10 h n'ont pas été reçus ;
 - un heartbeat manuel du 15 août a exécuté un cycle marchand et a été livré par Discord ;
 - après ce cycle manuel, les health marchands ne se sont pas renouvelés automatiquement ;
-- 190 secondes de tail sur le Worker de production n'ont montré aucun Scheduled Event, alors que trois événements au minimum étaient attendus ;
+- deux fenêtres séparées de 190 secondes de tail sur le Worker de production n'ont montré aucun Scheduled Event, alors que trois événements au minimum étaient attendus à chaque fois ;
+- GraphQL Analytics a compté 113 invocations `exceededResources` entre le 13 août 16:13 et 18:33 UTC, avec la CPU plafonnée à la borne 10 ms ;
 - le dernier état Web Scout lisible datait du `2026-08-14T17:07:01Z`.
 
-Le cron est donc **configuré**, mais son exécution automatique récente n'est pas **observée**. La cause technique détaillée et les limites des preuves accessibles sont consignées dans [l'audit de fiabilité du 15 août](PRODUCTION_RELIABILITY_AUDIT_2026-08-15.md).
+Le cron est donc **configuré**, mais son exécution automatique récente n'est pas **observée**. L'ancien handler dépassait réellement son budget CPU, et le trigger production reste en plus silencieux pendant les fenêtres de tail. Un Worker isolé sur le même compte a reçu et terminé deux crons minute successifs, puis son trigger a été supprimé et cette suppression vérifiée : la cadence est viable, mais la production actuelle ne l'est pas. La cause technique détaillée et les limites des preuves accessibles sont consignées dans [l'audit de fiabilité du 15 août](PRODUCTION_RELIABILITY_AUDIT_2026-08-15.md).
 
 ## Correctif en préparation
 
@@ -41,6 +42,9 @@ La branche `fix/op-watch-prod-reliability` et la PR brouillon #29 ajoutent notam
 - alarme Durable Object de secours ;
 - watchdog GitHub indépendant du cron Cloudflare ;
 - smoke d'activation exigeant deux événements automatiques successifs ;
+- Scheduled Handler limité à un hand-off DO afin que le cron reste sous 10 ms de CPU ;
+- parser streaming pour les catalogues partenaires réels de 5,3 à 27,7 Mo et revalidation conditionnelle `ETag`/`Last-Modified` ;
+- Web Scout déclenché depuis l'orchestrateur Durable Object, afin que le handler cron Free ne fasse qu'un seul hand-off même à `:07` ;
 - auth cockpit unique et corps JSON à lecture unique ;
 - health marchand fondé sur une vraie lecture de source ;
 - raisons de filtrage et résultats Web Scout visibles ;

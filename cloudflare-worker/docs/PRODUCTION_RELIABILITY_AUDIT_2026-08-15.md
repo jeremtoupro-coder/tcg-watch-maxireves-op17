@@ -10,15 +10,21 @@ Ce rapport accompagne la branche `fix/op-watch-prod-reliability`. Il distingue s
 | Discord | heartbeat manuel livré | webhook fonctionnel |
 | Durable Objects | cycle marchand manuel terminé | accessibles |
 | Cron | API Cloudflare : `* * * * *` | configuré |
-| Scheduled Events | aucun événement pendant 190 s de tail | non observés |
+| Scheduled Events | aucun événement pendant deux fenêtres de 190 s de tail | non observés récemment |
+| Limites runtime | 113 invocations `exceededResources`, toutes entre le 13/08 16:13 et 18:33 UTC | plafond CPU atteint |
 | Health boutiques | état manuel puis vieillissement global | non renouvelé automatiquement |
 | Web Scout | dernier état lisible `2026-08-14T17:07:01Z` | en retard |
 
 Le déploiement de production est toujours le commit `e7cebd273c9d45ab0127ecbc9c93d1165ac1fb66`, version Cloudflare `da6539b1-3b2a-482d-9563-21d0c5b2d3a7`. Aucun commit postérieur n'a été trouvé en production.
 
-### Cause du scheduler — niveau de preuve actuel
+### Cause du scheduler — niveau de preuve atteint
 
-Le Scheduled Event n'atteint pas le handler de production pendant la fenêtre observée, malgré un trigger présent. Cela explique simultanément l'absence de heartbeat automatique, Discovery, Fast Watch et Web Scout : les quatre dépendaient du même événement.
+Deux défauts distincts sont prouvés.
+
+1. La télémétrie GraphQL Cloudflare compte **113 invocations `exceededResources`**. Elles se concentrent du `2026-08-13T16:13:26Z` au `2026-08-13T18:33:26Z`, avec une métrique CPU presque toujours plafonnée à `10000`. Ce plateau correspond à la limite actuelle documentée de 10 ms du Cron Workers Free. L'ancien Scheduled Handler orchestrait et désérialisait lui-même toutes les réponses boutiques : il dépassait donc réellement son budget CPU.
+2. Au moment de l'incident, le trigger production reste déclaré mais n'est plus livré régulièrement au handler. Deux tails séparés de 190 secondes n'ont reçu aucun événement. La dernière invocation réussie visible avant le second tail était `2026-08-15T13:00:56Z`, puis aucun des trois ticks attendus pendant le tail. C'est ce silence d'entrée qui explique simultanément l'absence de heartbeat automatique, Discovery, Fast Watch et Web Scout.
+
+Le test isolé sur le même compte a ensuite reçu et terminé deux vrais crons successifs (`12:53:56Z` et `12:54:56Z`, 9,27 s puis 5,09 s), puis a supprimé son trigger avec vérification API. Le service Cron du compte fonctionne donc ; l'état de livraison défaillant est spécifique au Worker/trigger de production actuel. Le redéploiement devra réenregistrer ce trigger, mais seule l'observation post-déploiement pourra déclarer la production rétablie.
 
 Les éléments disponibles excluent à ce stade :
 
@@ -29,7 +35,7 @@ Les éléments disponibles excluent à ce stade :
 - panne générale des Durable Objects ;
 - régression de code ou nouveau déploiement postérieur à la dernière activation connue.
 
-Le token de diagnostic ne peut pas lire la télémétrie Observability (`403`) et l'interface Cloudflare est bloquée par une vérification humaine. Past Events, exception/limit précis et métriques compte ne sont donc pas encore une preuve accessible. L'audit ne transforme pas ce manque d'accès en hypothèse : la cause racine démontrée est la **non-livraison/non-observation du Scheduled Event avant le code applicatif** ; son motif Cloudflare exact reste une inconnue de compte à fermer par les métriques ou par le test cron isolé de la PR.
+Le token de déploiement ne peut toujours pas lire l'API Workers Observability (`403`) et l'interface Cloudflare est bloquée par une vérification humaine. Le détail interne de Past Events expliquant pourquoi le trigger production a cessé d'être régulièrement livré n'est donc pas accessible. L'audit ne l'invente pas : le dépassement CPU est chiffré, la non-livraison récente est observée, mais le motif interne de cette seconde défaillance reste à confirmer côté Cloudflare.
 
 ### Cause du bug login/body
 
@@ -49,24 +55,27 @@ Le facteur principal observé est l'arrêt global de la cadence automatique. Le 
 - `minimumAlertConfidence=90` existait dans la configuration mais n'était pas appliqué de façon explicite et traçable ;
 - le cockpit comptait surtout les réveils de Durable Objects, pas les candidats observés, filtrés, qualifiés, dédupliqués et livrés ;
 - six routes partenaires sont volontairement fail-closed sans feed et plusieurs routes exploitables peuvent retourner zéro candidat commercial.
-- Web Scout pouvait dépenser ses quatre places de vérification sur les premiers résultats déjà bloqués (marketplaces/socials), sans atteindre un marchand valable placé plus bas ;
+- Web Scout pouvait dépenser ses quatre places de vérification sur les premiers résultats déjà bloqués (marketplaces/sources interdites), sans atteindre un marchand valable placé plus bas ;
 - Web Scout considérait à tort l'absence de langue étrangère comme une preuve française.
 
 La branche rend chaque rejet explicable : référence, format, langue/confiance, disponibilité, vendeur/éligibilité commerciale, accessoire/carte unitaire, baseline, déduplication, tentative et livraison Discord.
 
-Web Scout compte désormais les résultats bloqués dans ses rejets sans leur faire consommer le plafond de quatre vraies vérifications. Il exige une preuve FR explicite et conserve la requête, le dernier appel Brave, le budget et l'erreur de livraison dans son health. Une piste Discord échouée n'est pas marquée comme vue et reste donc éligible.
+Web Scout compte désormais les résultats bloqués dans ses rejets sans leur faire consommer le plafond de quatre vraies vérifications. Une publication sociale reste fail-closed : référence, One Piece, signal commercial FR et rattachement à une boutique connue ou à un domaine légalement vérifié sont tous obligatoires. Il conserve la requête, le dernier appel Brave, le budget et l'erreur de livraison dans son health. Une piste Discord échouée n'est pas marquée comme vue et reste donc éligible.
 
 ## Architecture corrigée
 
-- cron marchand minute conservé ;
+- cron marchand minute conservé, mais réduit à un hand-off vers le Durable Object scheduler afin de rester sous ses 10 ms de CPU ;
+- orchestration, agrégation des boutiques et heartbeat pré-cycle exécutés dans le Durable Object (budget CPU 30 s) ;
 - heartbeat pré-cycle 10 h/22 h Paris conservé ;
 - tick reçu, cycle automatique terminé, Discovery, Fast Watch, Web Scout, heartbeat automatique et heartbeat manuel persistés séparément ;
 - alarme Calendar Coordinator après trois minutes sans tick ;
 - watchdog GitHub toutes les cinq minutes, indépendant du scheduler Cloudflare, avec une alerte au maximum par heure ;
 - smoke final de production exigeant deux ticks distincts et un cycle automatique terminé ;
 - test PR sur Worker isolé avec vrai cron, Discord dry-run puis suppression vérifiée du trigger ;
-- Web Scout détaché du chemin marchand par `waitUntil` et métriques searched/candidates/verified/rejected/alerted/reasons ;
+- Web Scout remis au même orchestrateur Durable Object que le monitoring, mais dans une exécution et un état séparés : le Scheduled Handler Free n'effectue ainsi qu'un seul hand-off et ne peut plus dépasser ses 10 ms à `:07` en orchestrant lui-même plusieurs tâches ;
 - health boutique vert seulement après une vraie lecture Fast Watch récente ; Discovery récente sans fiche promue reste orange.
+- catalogues partenaires parcourus en streaming, avec 40 Mo de transfert maximum mais sans bufferiser le fichier complet en mémoire ;
+- revalidation conditionnelle des feeds par `ETag`/`Last-Modified` stockés dans le Store Monitor pendant les Fast Watch : un `304` est un contrôle sain, sans retéléchargement, reparsing, faux OOS ni exposition de l'URL secrète. La Discovery force néanmoins une lecture complète toutes les 15 minutes afin de réévaluer un catalogue inchangé face à une nouvelle référence Bandai.
 
 ## Circuits fonctionnels
 
@@ -76,7 +85,7 @@ Web Scout compte désormais les résultats bloqués dans ses rejets sans leur fa
 | Nouvelles sorties | Discovery 15 min + événements complets | motifs de qualification et compteurs persistés | transitions réelles de production |
 | Fast Watch | cible 60 s | vraie lecture distinguée du réveil DO | plusieurs cycles minute successifs |
 | ONE PIECE ALL | état séparé, `new_listing` disponible et `back_in_stock` | test de relais sans faux listing et sans double alerte | cycle production et offre historique réelle |
-| Web Scout | Brave à `:07`, un appel/h | métriques et rejets persistés ; tâche séparée | appels horaires observés sans dépassement |
+| Web Scout | Brave à `:07`, un appel/h | métriques et rejets persistés ; DO séparé, déclenché par l'orchestrateur et non plus par le handler 10 ms | appels horaires observés sans dépassement |
 | Discord | fingerprint/claim/receipt | échec encore éligible ; tests de doublon croisé | livraison live après approbation |
 | Heartbeat | 10 h/22 h pré-cycle | état auto/manu séparé + watchdog externe | créneau réel après déploiement |
 | Cockpit | email/password/cookie | auth unique, snapshot body, health observé | login Pages et session réels |
@@ -113,30 +122,30 @@ Audit du 15 août : 24 connecteurs appelés, 269 produits observés, 164 en fran
 | E.Leclerc | 6 produits, 2 FR lors de l'audit initial | vendeur désormais strict et fail-closed ; nouvel audit requis |
 | Carrefour | feed absent | en attente de flux partenaire |
 | King Jouet | feed absent | en attente de flux partenaire |
-| JouéClub | feed configuré mais fallback public utilisé, zéro candidat | non démontrée commerciale |
+| JouéClub | feed configuré de 27,7 Mo, auparavant rejeté par la borne 5 Mo | parser streaming ajouté ; nouvel audit réel requis |
 | Amazon FR | 28 produits, 9 FR, aucun vendeur Amazon validé | limitée, fail-closed vendeur |
 | Mystic-Ambre | 6 produits, 3 FR/commerciaux | exploitable |
 | Ludiworld | zéro candidat | discovery-only, alertes commerciales désactivées |
 | VegaStore | une fiche OP17 FR commerciale | exploitable mais couverture étroite |
 | Otakuland | 28 produits, 24 FR, 12 commerciaux sur le domaine actuel | exploitable selon l'audit ; ancienne description merchandising obsolète |
 | Esprit Jeu | 24 produits, zéro FR commercial | source accessible, non démontrée commerciale |
-| La Grande Récré | un candidat non-FR, zéro commercial | non démontrée commerciale |
-| BCD Jeux | zéro candidat puis HTTP 429 pendant la cadence | dégradée/backoff ; feed à vérifier |
+| La Grande Récré | feed configuré de 5,3 Mo, auparavant rejeté ; fallback non-FR | parser streaming ajouté ; nouvel audit réel requis |
+| BCD Jeux | feed configuré de 15,5 Mo, auparavant rejeté ; fallback puis HTTP 429 | parser streaming ajouté ; nouvel audit réel requis |
 
-Les six secrets partenaires absents confirmés sont Playin, Cultura, Micromania, Fnac, Carrefour et King Jouet. JouéClub, La Grande Récré et BCD Jeux possèdent un secret configuré, mais un échec de feed ne bascule plus vers du HTML public à chaque minute : le fallback est limité à Discovery.
+Les six secrets partenaires absents confirmés sont Playin, Cultura, Micromania, Fnac, Carrefour et King Jouet. JouéClub, La Grande Récré et BCD Jeux possèdent un secret configuré. Le test cadence a démontré que leurs catalogues dépassaient l'ancienne borne de 5 Mo, ce qui les mettait en `degraded/backoff` à chaque Fast Watch. La branche les lit maintenant en streaming, ne conserve que les lignes One Piece et borne le transfert à 40 Mo, un enregistrement à 750 Ko et les candidats à 2 000. Un échec de feed ne bascule pas vers du HTML public à chaque minute : le fallback reste limité à Discovery.
 
 ## Performance et quotas
 
-Le test isolé initial d'un cycle Discovery et quatorze cycles Fast Watch a mesuré :
+Le test isolé d'un cycle Discovery et quatorze cycles Fast Watch, avant activation du parser streaming, a mesuré :
 
 - 271 requêtes Durable Objects sur 15 minutes ;
 - projection de 26 016 requêtes DO/jour ;
-- 249 674 ms DO cumulées sur 15 minutes ;
-- projection de 3 068 GB-s/jour ;
-- marge de 76,4 % sous le repère de 13 000 GB-s/jour utilisé par le test ;
+- 184 253 ms DO cumulées sur 15 minutes ;
+- projection de 2 264 GB-s/jour ;
+- marge de 82,6 % sous le repère de 13 000 GB-s/jour utilisé par le test ;
 - Web Scout cible 744 recherches pour un mois de 31 jours.
 
-Ces projections sont un budget de test, pas une facture ni la preuve du plan du compte. Le `usage_model` déployé est `standard`, mais le niveau Free/Payé réel n'est pas déduit sans accès au compte. Le rapport de cadence corrigé sépare désormais verdict quota et incidents marchands, et publie le wall time réel en plus du temps DO cumulé.
+Ces projections sont un budget de test, pas une facture. Le `usage_model` déployé est `standard`; la télémétrie montre cependant un plafond effectif de 10 ms sur les anciennes invocations cron, identique au plafond Workers Free documenté. Le rapport de cadence sépare verdict quota et incidents marchands, et publie le wall time réel en plus du temps DO cumulé. Un nouveau passage est requis avec les trois gros feeds streamés et leur support réel de `ETag`/`Last-Modified` afin d'actualiser ce budget réseau et DO.
 
 ## Validation exigée avant promotion
 

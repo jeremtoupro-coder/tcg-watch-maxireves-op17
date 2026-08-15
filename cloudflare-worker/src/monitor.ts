@@ -373,7 +373,7 @@ export async function runMonitoringCycle(
     connector,
     env,
     officialProducts,
-    { allowPublicFallback: includeDiscoveryOnly }
+    { allowPublicFallback: includeDiscoveryOnly, stateStore }
   )));
   const connectorByKey = new Map(connectors.map((connector) => [connector.key, connector]));
   const degradedStores = audits

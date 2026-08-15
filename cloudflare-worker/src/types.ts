@@ -157,6 +157,10 @@ export interface SourceAudit {
   durationMs: number;
   etag?: string;
   lastModified?: string;
+  /** Revalidation HTTP d'une source volumineuse, sans exposer le validateur. */
+  cacheValidation?: "etag" | "last-modified" | "etag+last-modified" | "none";
+  /** Un HTTP 304 confirme que la source n'a pas changé et ne doit pas être reparsée. */
+  notModified?: boolean;
   productLinksSeen: number;
   candidates: ProductCandidate[];
   error?: string;

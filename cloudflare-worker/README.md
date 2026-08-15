@@ -13,7 +13,7 @@ Ce dossier contient le Worker TypeScript réellement utilisé par OP Watch. Le r
 
 ## Scheduler et watchdogs
 
-Le cron marchand est `* * * * *`. Chaque événement reçu et chaque circuit terminé sont persistés séparément : Fast Watch, Discovery, Web Scout et heartbeats 10h/22h Paris.
+Le cron marchand est `* * * * *`. Son handler limité à 10 ms ne fait qu'un hand-off vers Calendar Coordinator ; l'orchestration monitoring et le déclenchement horaire du Web Scout restent dans les Durable Objects. Chaque événement reçu et chaque circuit terminé sont persistés séparément : Fast Watch, Discovery, Web Scout et heartbeats 10h/22h Paris.
 
 Deux sécurités ne dépendent pas du bon déroulement du cycle marchand :
 
@@ -53,7 +53,7 @@ AUTHORIZED_FEED_CARREFOUR_URL
 AUTHORIZED_FEED_KING_JOUET_URL
 ```
 
-JouéClub, La Grande Récré et BCD Jeux peuvent utiliser un feed autorisé avec fallback public uniquement pendant Discovery. Un feed défaillant ne déclenche jamais un martèlement HTML à la minute.
+JouéClub, La Grande Récré et BCD Jeux peuvent utiliser un feed autorisé avec fallback public uniquement pendant Discovery. Les catalogues volumineux sont lus en streaming puis revalidés avec `ETag`/`Last-Modified` lorsque l'éditeur les fournit ; un `304` sain ne produit aucune fausse transition. La Discovery force une lecture complète toutes les 15 minutes pour réévaluer les références nouvellement activées. Un feed défaillant ne déclenche jamais un martèlement HTML à la minute.
 
 ## Commandes
 
