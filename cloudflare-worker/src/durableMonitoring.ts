@@ -553,6 +553,24 @@ export class CalendarCoordinatorDurableObject {
     }
   }
 
+  private async runPreCycleHeartbeat(scheduledTime: number, enabled: boolean): Promise<void> {
+    if (!enabled) return;
+    await this.schedulerMark({ kind: "automatic_heartbeat_started", scheduledTime });
+    try {
+      const delivery = await dispatchRuntimeHeartbeatSignal(scheduledTime, this.env);
+      if (delivery.sent !== 1) {
+        const error = delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi.";
+        await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error });
+        console.error("Automatic pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
+      } else {
+        await this.schedulerMark({ kind: "automatic_heartbeat_completed", scheduledTime });
+      }
+    } catch (error) {
+      await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error: safeError(error) });
+      console.error("Automatic pre-cycle heartbeat crashed:", safeError(error));
+    }
+  }
+
   /**
    * Le Cron Free dispose de 10 ms de CPU. Toute l'orchestration et la lecture
    * des réponses boutiques sont donc déportées dans ce Durable Object (30 s
@@ -583,22 +601,7 @@ export class CalendarCoordinatorDurableObject {
       observedTime: Date.now()
     });
 
-    if (heartbeatTick) {
-      await this.schedulerMark({ kind: "automatic_heartbeat_started", scheduledTime });
-      try {
-        const delivery = await dispatchRuntimeHeartbeatSignal(scheduledTime, this.env);
-        if (delivery.sent !== 1) {
-          const error = delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi.";
-          await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error });
-          console.error("Scheduled pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
-        } else {
-          await this.schedulerMark({ kind: "automatic_heartbeat_completed", scheduledTime });
-        }
-      } catch (error) {
-        await this.schedulerMark({ kind: "automatic_heartbeat_failed", scheduledTime, error: safeError(error) });
-        console.error("Scheduled pre-cycle heartbeat crashed:", safeError(error));
-      }
-    }
+    await this.runPreCycleHeartbeat(scheduledTime, heartbeatTick);
 
     if (this.scheduledMonitoringRunning) {
       await this.schedulerMark({
@@ -739,6 +742,7 @@ export class CalendarCoordinatorDurableObject {
 
     const scheduledTime = Math.floor(now / 60_000) * 60_000;
     const discovery = isDiscoveryTick(scheduledTime);
+    const heartbeatTick = mode === "live" && isHeartbeatTick(scheduledTime);
     const mark = async (input: Record<string, unknown>) => {
       await handleSchedulerHealthRequest(new Request("https://scheduler-health.internal/mark", {
         method: "POST",
@@ -746,6 +750,10 @@ export class CalendarCoordinatorDurableObject {
         body: JSON.stringify({ scheduledTime, ...input })
       }), this.state.storage, this.env);
     };
+
+    // Le secours conserve exactement le contrat du cron nominal : le signal
+    // 10 h/22 h Paris part avant tout accès marchand.
+    await this.runPreCycleHeartbeat(scheduledTime, heartbeatTick);
 
     if (this.scheduledMonitoringRunning) {
       await mark({
@@ -776,6 +784,14 @@ export class CalendarCoordinatorDurableObject {
           durationMs: performance.now() - started,
           error: safeError(error)
         });
+        if (heartbeatTick) {
+          const delivery = await dispatchRuntimeHeartbeatFailure(scheduledTime, this.env, error).catch((deliveryError) => ({
+            attempted: 0,
+            sent: 0,
+            errors: [safeError(deliveryError)]
+          }));
+          if (delivery.sent !== 1) console.error("Fallback fail-safe cycle alert delivery failed:", JSON.stringify(delivery));
+        }
       }
 
       // Le test d'alarme isolé ne consomme jamais Brave. En production, le

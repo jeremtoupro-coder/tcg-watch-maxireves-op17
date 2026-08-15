@@ -24,7 +24,13 @@ Deux défauts distincts sont prouvés.
 1. La télémétrie GraphQL Cloudflare compte **113 invocations `exceededResources`**. Elles se concentrent du `2026-08-13T16:13:26Z` au `2026-08-13T18:33:26Z`, avec une métrique CPU presque toujours plafonnée à `10000`. Ce plateau correspond à la limite actuelle documentée de 10 ms du Cron Workers Free. L'ancien Scheduled Handler orchestrait et désérialisait lui-même toutes les réponses boutiques : il dépassait donc réellement son budget CPU.
 2. Au moment de l'incident, le trigger production reste déclaré mais n'est plus livré régulièrement au handler. Deux tails séparés de 190 secondes n'ont reçu aucun événement. La dernière invocation réussie visible avant le second tail était `2026-08-15T13:00:56Z`, puis aucun des trois ticks attendus pendant le tail. C'est ce silence d'entrée qui explique simultanément l'absence de heartbeat automatique, Discovery, Fast Watch et Web Scout.
 
-Le test isolé sur le même compte a ensuite reçu et terminé deux vrais crons successifs (`12:53:56Z` et `12:54:56Z`, 9,27 s puis 5,09 s), puis a supprimé son trigger avec vérification API. Le service Cron du compte fonctionne donc ; l'état de livraison défaillant est spécifique au Worker/trigger de production actuel. Le redéploiement devra réenregistrer ce trigger, mais seule l'observation post-déploiement pourra déclarer la production rétablie.
+La livraison Cron du compte s'est révélée **intermittente**, et non définitivement arrêtée :
+
+- des essais isolés ont reçu de vrais ticks successifs plus tôt dans la journée ;
+- deux réenregistrements suivants n'ont reçu aucun nouveau tick en 16 puis 20 minutes, alors que l'API confirmait le trigger `* * * * *` ;
+- la CI #171 a finalement reçu deux nouveaux événements successifs (`15:29:58Z` et `15:30:58Z`), terminé les cycles en 6,16 s et 29,66 s sans boutique en incident, puis supprimé le trigger avec vérification API.
+
+La page de statut Cloudflare confirme en outre un incident Durable Objects du 14/08 de `19:27Z` à `20:05Z`, exactement pendant le heartbeat attendu à 22 h Paris. Cela explique solidement ce créneau, mais pas le silence du 15/08 ni les deux essais Cron isolés sans livraison. Le redéploiement devra réenregistrer le trigger et observer plusieurs cycles ; le motif fournisseur interne de l'intermittence ne doit pas être inventé.
 
 Les éléments disponibles excluent à ce stade :
 
@@ -32,7 +38,7 @@ Les éléments disponibles excluent à ce stade :
 - cron absent ;
 - Worker entièrement indisponible ;
 - webhook Discord cassé ;
-- panne générale des Durable Objects ;
+- panne générale permanente des Durable Objects ;
 - régression de code ou nouveau déploiement postérieur à la dernière activation connue.
 
 Le token de déploiement ne peut toujours pas lire l'API Workers Observability (`403`) et l'interface Cloudflare est bloquée par une vérification humaine. Le détail interne de Past Events expliquant pourquoi le trigger production a cessé d'être régulièrement livré n'est donc pas accessible. L'audit ne l'invente pas : le dépassement CPU est chiffré, la non-livraison récente est observée, mais le motif interne de cette seconde défaillance reste à confirmer côté Cloudflare.
@@ -68,10 +74,12 @@ Web Scout compte désormais les résultats bloqués dans ses rejets sans leur fa
 - orchestration, agrégation des boutiques et heartbeat pré-cycle exécutés dans le Durable Object (budget CPU 30 s) ;
 - heartbeat pré-cycle 10 h/22 h Paris conservé ;
 - tick reçu, cycle automatique terminé, Discovery, Fast Watch, Web Scout, heartbeat automatique et heartbeat manuel persistés séparément ;
-- alarme Calendar Coordinator après trois minutes sans tick ;
+- alarme Calendar Coordinator après trois minutes sans tick, puis cadence de secours minute ;
 - watchdog GitHub toutes les cinq minutes, indépendant du scheduler Cloudflare, avec une alerte au maximum par heure ;
 - smoke final de production exigeant deux ticks distincts et un cycle automatique terminé, avec une fenêtre de 20 minutes : jusqu'à 15 minutes de propagation documentée, puis deux frontières de minute et une marge ;
 - test PR sur Worker isolé avec vrai cron, Discord dry-run puis suppression vérifiée du trigger ;
+- test PR séparé sans aucun Cron Trigger : deux alarmes Durable Object ont terminé deux cycles de secours ;
+- heartbeat 10 h/22 h également pré-cycle sur le chemin d'alarme de secours ;
 - Web Scout remis au même orchestrateur Durable Object que le monitoring, mais dans une exécution et un état séparés : le Scheduled Handler Free n'effectue ainsi qu'un seul hand-off et ne peut plus dépasser ses 10 ms à `:07` en orchestrant lui-même plusieurs tâches ;
 - health boutique vert seulement après une vraie lecture Fast Watch récente ; Discovery récente sans fiche promue reste orange ;
 - dernier calendrier Bandai vérifié conservé si son rafraîchissement échoue, avec cache de secours et erreur visibles dans le cockpit au lieu d'arrêter les 24 veilles ;
@@ -107,7 +115,7 @@ Deux protections ont été ajoutées à la suite de ce contrôle :
 
 ## Audit des 24 boutiques en preview isolée
 
-Audit final isolé du 15 août (`2026-08-15T14:23:07Z`) : 24 connecteurs appelés, 244 produits observés, 156 en français et 124 commercialement éligibles. Le statut de source est de 17 saines, 1 dégradée et 6 en attente. « Source accessible » ne signifie pas « capable d'alerter ».
+Audit final isolé du 15 août (`2026-08-15T15:26:07Z`) : 24 connecteurs appelés, 272 produits observés, 164 en français et 124 commercialement éligibles. Le statut de source est de 18 saines, 0 dégradée et 6 en attente. « Source accessible » ne signifie pas « capable d'alerter ».
 
 | Boutique | Observation isolée | Capacité commerciale actuelle |
 |---|---|---|
@@ -127,7 +135,7 @@ Audit final isolé du 15 août (`2026-08-15T14:23:07Z`) : 24 connecteurs appelé
 | Carrefour | feed absent | en attente de flux partenaire |
 | King Jouet | feed absent | en attente de flux partenaire |
 | JouéClub | feed configuré de 27,7 Mo, 4 candidats, 1 FR/commercial | feed limité à Discovery puis fiches directes qualifiées en Fast Watch |
-| Amazon FR | HTTP 503 au dernier passage, aucun candidat | dégradée, fail-closed ; jamais interprétée comme rupture |
+| Amazon FR | 28 produits observés, 8 FR, disponibilité inconnue et aucun vendeur Amazon confirmé | source saine sur ce passage, 0 offre commerciale ; fail-closed et jamais interprétée comme rupture |
 | Mystic-Ambre | 6 produits, 3 FR/commerciaux | exploitable |
 | Ludiworld | zéro candidat | discovery-only, alertes commerciales désactivées |
 | VegaStore | une fiche OP17 FR commerciale | exploitable mais couverture étroite |
@@ -140,19 +148,21 @@ Les six secrets partenaires absents confirmés sont Playin, Cultura, Micromania,
 
 ## Performance et quotas
 
-Le test isolé final, avec une Discovery puis quatorze Fast Watch, a mesuré :
+Le test isolé CI #171, avec une Discovery puis quatorze Fast Watch, a mesuré :
 
 - 271 requêtes Durable Objects sur 15 minutes ;
 - projection de 26 016 requêtes DO/jour ;
-- 139 131 ms DO cumulées sur 15 minutes ;
-- projection de 1 709,6 GB-s/jour ;
-- marge de 86,85 % sous le repère de 13 000 GB-s/jour utilisé par le test ;
+- 155 533 ms DO cumulées sur 15 minutes ;
+- projection de 1 911,2 GB-s/jour ;
+- marge de 85,30 % sous le repère de 13 000 GB-s/jour utilisé par le test ;
 - 48 587 031 octets de feeds téléchargés : exactement une réponse complète par feed pendant la Discovery, aucune répétition durant les quatorze Fast Watch et aucun fallback partenaire ;
 - Web Scout cible 744 recherches pour un mois de 31 jours.
 
 Ces projections sont un budget de test, pas une facture. Le `usage_model` déployé est `standard`; la télémétrie montre cependant un plafond effectif de 10 ms sur les anciennes invocations cron, identique au plafond Workers Free documenté. Le test échoue si un catalogue complet est retéléchargé plusieurs fois dans l'échantillon.
 
-Le premier passage CI du SHA `74ee7367` a aussi montré pourquoi un smoke Cron de 16 minutes était insuffisant : aucun nouveau tick n'était encore livré après réenregistrement, alors que Cloudflare annonce jusqu'à 15 minutes de propagation et que le critère exige ensuite deux minutes distinctes. Le trigger isolé a néanmoins été retiré et sa suppression API confirmée. Le délai de test et celui de l'activation production sont portés à 20 minutes ; seule une nouvelle CI verte pourra valider ce point.
+Le passage CI du SHA `74ee7367` n'a reçu aucun nouveau tick en 16 minutes. Le SHA `d5b0de68` n'en a reçu aucun en 20 minutes. Dans les deux cas, le trigger déclaré a ensuite été retiré et sa suppression API confirmée. Le SHA `c5e57b05` a reçu deux ticks en environ deux minutes et validé les deux cycles. Le résultat exact est donc une intermittence observée, pas une simple propagation lente ni une panne permanente.
+
+Sur ce même SHA, un déploiement distinct avec `CRON_CONFIGURED=true` mais **zéro trigger enregistré** a armé l'alarme Durable Object. Deux cycles de secours ont été observés ; le second a terminé à `15:37:04Z` en 4,95 s, avec 17 boutiques exécutées et 0 incident. Aucun Discord réel ni appel Brave n'a été effectué pendant ce test.
 
 ## Validation exigée avant promotion
 
@@ -162,7 +172,8 @@ Le premier passage CI du SHA `74ee7367` a aussi montré pourquoi un smoke Cron d
 - classification health 24 boutiques ;
 - audit preview sans écriture production ;
 - cadence 60 s/15 min ;
-- deux Scheduled Events réels consécutifs sur Worker isolé ;
+- deux Scheduled Events réels consécutifs sur Worker isolé — validé CI #171 ;
+- deux cycles de secours par alarme sans Cron — validé CI #171 ;
 - suppression API-confirmée du cron isolé ;
 - diagnostic production en lecture seule.
 

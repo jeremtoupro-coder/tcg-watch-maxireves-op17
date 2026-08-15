@@ -15,12 +15,23 @@ describe("budget CPU du Scheduled Handler", () => {
   });
 
   it("conserve le heartbeat pré-cycle dans l'orchestrateur DO", () => {
+    const heartbeat = durableMonitoring.slice(
+      durableMonitoring.indexOf("private async runPreCycleHeartbeat"),
+      durableMonitoring.indexOf("private async runDeliveredScheduledEvent")
+    );
     const route = durableMonitoring.slice(
       durableMonitoring.indexOf("private async runDeliveredScheduledEvent"),
       durableMonitoring.indexOf("async fetch(request:", durableMonitoring.indexOf("private async runDeliveredScheduledEvent"))
     );
-    expect(route.indexOf("dispatchRuntimeHeartbeatSignal(")).toBeGreaterThan(0);
-    expect(route.indexOf("runDistributedMonitoringCycle(")).toBeGreaterThan(route.indexOf("dispatchRuntimeHeartbeatSignal("));
+    const alarm = durableMonitoring.slice(
+      durableMonitoring.indexOf("async alarm():"),
+      durableMonitoring.indexOf("async function readJson")
+    );
+    expect(heartbeat).toContain("dispatchRuntimeHeartbeatSignal(");
+    expect(route.indexOf("runPreCycleHeartbeat(")).toBeGreaterThan(0);
+    expect(route.indexOf("runDistributedMonitoringCycle(")).toBeGreaterThan(route.indexOf("runPreCycleHeartbeat("));
+    expect(alarm.indexOf("runPreCycleHeartbeat(")).toBeGreaterThan(0);
+    expect(alarm.indexOf("runDistributedMonitoringCycle(")).toBeGreaterThan(alarm.indexOf("runPreCycleHeartbeat("));
     expect(route).toContain("runDeliveredWebScout(");
   });
 
