@@ -75,12 +75,20 @@ async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response>
   if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
 
   const url = new URL(request.url);
+  const runtimeTestRunId = env.RUNTIME_TEST_RUN_ID?.trim() ?? "";
+  const requestedRunId = url.searchParams.get("run")?.trim() ?? "";
+  if (!runtimeTestRunId || requestedRunId !== runtimeTestRunId) {
+    return json({
+      error: "Génération runtime test absente ou remplacée pendant le contrôle.",
+      runtimeTestRunId: runtimeTestRunId || null
+    }, 409);
+  }
   if (url.searchParams.get("probe") === "auth") {
     const safe = env.SCHEDULER_MODE === "disabled" &&
       env.DISCORD_MODE === "dry-run" &&
       env.MONITORING_ENABLED === "true" &&
       env.WRITE_STATE === "true" &&
-      Boolean(env.RUNTIME_TEST_RUN_ID?.trim());
+      Boolean(runtimeTestRunId);
     if (!safe) {
       return json({ error: "Runtime test non conforme aux garde-fous d'isolation." }, 503);
     }
@@ -89,7 +97,8 @@ async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response>
       mode: "test",
       schedulerMode: "disabled",
       discordMode: "dry-run",
-      productionStateWrites: false
+      productionStateWrites: false,
+      runtimeTestRunId
     });
   }
 
@@ -100,14 +109,18 @@ async function runtimeTest(request: Request, env: RuntimeEnv): Promise<Response>
   const forceStore = url.searchParams.get("store") as StoreKey | null;
 
   try {
-    return json(await runDistributedMonitoringCycle(env, {
+    const cycle = await runDistributedMonitoringCycle(env, {
       mode: "test",
       scheduledTime,
       forceDiscovery,
       forceStore: forceStore ?? undefined
-    }));
+    });
+    return json({ ...cycle, runtimeTestRunId });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+    return json({
+      error: error instanceof Error ? error.message : String(error),
+      runtimeTestRunId
+    }, 503);
   }
 }
 

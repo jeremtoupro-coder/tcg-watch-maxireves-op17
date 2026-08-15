@@ -108,6 +108,16 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Align Pages production branch with main
+        shell: bash
+        run: |
+          curl -fsS --request PATCH \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PAGES_PROJECT}" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"production_branch":"main"}' \
+            --output /tmp/pages-project.json
+          node -e "const fs=require('node:fs'); const p=JSON.parse(fs.readFileSync('/tmp/pages-project.json','utf8')); if(p.success!==true||p.result?.production_branch!=='main'){console.error('Cloudflare Pages production branch was not aligned with main.'); process.exit(1)} console.log('Cloudflare Pages production branch: main')"
       - name: Deploy production Pages branch
         run: >-
           npx wrangler pages deploy public-site
@@ -119,7 +129,7 @@ jobs:
         shell: bash
         run: |
           url="https://${PAGES_PROJECT}.pages.dev/"
-          for attempt in {1..20}; do
+          for attempt in {1..40}; do
             body="$(curl -fsSL --max-time 20 "$url" || true)"
             cockpit="$(curl -fsSL --max-time 20 "${url}cockpit/" || true)"
             authui="$(curl -fsSL --max-time 20 "${url}cockpit-auth.js" || true)"
