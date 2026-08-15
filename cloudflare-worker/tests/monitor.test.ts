@@ -172,7 +172,7 @@ describe("surveillance planifiée", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(url === productUrl
-        ? `<html><body><h1>Display OP-17</h1><p>En stock — 119,90 €</p></body></html>`
+        ? `<html><body><h1>Display One Piece OP-17</h1><p>En stock — 119,90 €</p></body></html>`
         : `<html><body><h1>One Piece TCG</h1><a href="${productUrl}">Display OP-17</a></body></html>`, {
         status: 200,
         headers: { "content-type": "text/html" }
