@@ -25,6 +25,7 @@ const vars = {
   WRITE_STATE: armed ? "true" : "false",
   DISCORD_MODE: armed ? "live" : "dry-run",
   SCHEDULER_MODE: armed ? "live" : "disabled",
+  CRON_CONFIGURED: phase === "live" ? "true" : "false",
   RUNTIME_TEST_MODE: "false",
   PRODUCTION_PROBE_MODE: armed ? "true" : "false",
   ACTIVE_STORES: activeStores

@@ -1,0 +1,66 @@
+name: OP Watch - External Scheduler Watchdog
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op-watch-external-scheduler-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    name: Verify Cloudflare scheduler from GitHub
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+      WATCHDOG_STATE_DIRECTORY: .watchdog-state
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Restore activation marker
+        id: activation-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cloudflare-worker/.watchdog-state/activated
+          key: op-watch-external-watchdog-activated-v1
+
+      - name: Compute hourly alert key
+        id: hour
+        shell: bash
+        run: echo "key=$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore this hour's alert marker
+        id: alert-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cloudflare-worker/.watchdog-state/alerted
+          key: op-watch-external-watchdog-alert-${{ steps.hour.outputs.key }}
+
+      - name: Check scheduler and alert at most once per hour
+        run: node scripts/external-scheduler-watchdog.mjs
+
+      - name: Persist activation marker
+        if: steps.activation-cache.outputs.cache-hit != 'true' && hashFiles('cloudflare-worker/.watchdog-state/activated') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: cloudflare-worker/.watchdog-state/activated
+          key: op-watch-external-watchdog-activated-v1
+
+      - name: Persist this hour's alert marker
+        if: steps.alert-cache.outputs.cache-hit != 'true' && hashFiles('cloudflare-worker/.watchdog-state/alerted') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: cloudflare-worker/.watchdog-state/alerted
+          key: op-watch-external-watchdog-alert-${{ steps.hour.outputs.key }}

@@ -129,6 +129,7 @@ jobs:
           const b=c.durable_objects?.bindings||[];
           if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='false'||
           c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||
+          c.vars.CRON_CONFIGURED!=='false'||
           c.vars.PRODUCTION_PROBE_MODE!=='false'||c.kv_namespaces?.length||c.triggers?.crons?.length||
           b.length!==4||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')) process.exit(1)"
       - name: Deploy inert standby
@@ -211,7 +212,7 @@ jobs:
           node -e "const c=require('./wrangler.production-armed.generated.json');
           const b=c.durable_objects?.bindings||[];
           if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
-          c.vars.SCHEDULER_MODE!=='live'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
+          c.vars.SCHEDULER_MODE!=='live'||c.vars.CRON_CONFIGURED!=='false'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
           c.triggers?.crons?.length||b.length!==4||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')) process.exit(1)"
       - name: Deploy armed LIVE config without automatic polling
         run: npx wrangler deploy --config wrangler.production-armed.generated.json
@@ -230,7 +231,7 @@ jobs:
           node -e "const c=require('./wrangler.production-live.generated.json');
           const b=c.durable_objects?.bindings||[];
           if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
-          c.vars.SCHEDULER_MODE!=='live'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
+          c.vars.SCHEDULER_MODE!=='live'||c.vars.CRON_CONFIGURED!=='true'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
           JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==4||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')) process.exit(1)"
       - name: Activate final LIVE cron
         run: npx wrangler deploy --config wrangler.production-live.generated.json

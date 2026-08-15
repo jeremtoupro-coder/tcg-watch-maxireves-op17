@@ -9,6 +9,7 @@ import {
 import opWatchV1Config from "../config/opwatch-v1.json";
 import { buildActiveWatchConfig, candidateForActiveProducts } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
+import { readSchedulerHealth } from "./schedulerHealth";
 import type { ConnectorDefinition, Env, StoreKey } from "./types";
 
 type HealthRuntimeEnv = Env & {
@@ -57,6 +58,7 @@ function isLive(env: Env): boolean {
     env.WRITE_STATE === "true" &&
     env.DISCORD_MODE === "live" &&
     runtime.SCHEDULER_MODE === "live" &&
+    env.CRON_CONFIGURED === "true" &&
     runtime.RUNTIME_TEST_MODE !== "true" &&
     Boolean(runtime.STORE_MONITORS) &&
     Boolean(runtime.CALENDAR_COORDINATOR);
@@ -164,7 +166,13 @@ export default {
     const live = isLive(env);
     const mode = live ? "LIVE" : "SAFE_PREVIEW";
     const statePresent = durableStatePresent(env);
-    const automaticPolling = live && runtime.SCHEDULER_MODE === "live";
+    const schedulerObservation = live && runtime.CALENDAR_COORDINATOR
+      ? await readSchedulerHealth(runtime).catch(() => ({
+        health: null,
+        observed: { status: "never_seen" as const, observedRecently: false, staleAfterMs: 3 * 60_000 }
+      }))
+      : { health: null, observed: { status: "disabled" as const, observedRecently: false, staleAfterMs: 3 * 60_000 } };
+    const automaticPolling = schedulerObservation.observed.observedRecently;
 
     if (url.pathname === "/") {
       return jsonResponse({
@@ -172,6 +180,8 @@ export default {
         deployment: mode,
         runtime: {
           cron: automaticPolling,
+          cronConfigured: env.CRON_CONFIGURED === "true",
+          cronObserved: schedulerObservation.observed,
           monitoringEnabled: env.MONITORING_ENABLED === "true",
           discordMode: env.DISCORD_MODE ?? "dry-run",
           schedulerMode: runtime.SCHEDULER_MODE ?? "disabled",
@@ -184,7 +194,7 @@ export default {
           authenticatedAuditEnabled: env.ALLOW_PUBLIC_AUDIT === "true" && Boolean(env.PREVIEW_AUDIT_TOKEN),
           automaticPolling,
           activeStores: parseActiveStores(env.ACTIVE_STORES),
-          schedule: automaticPolling ? "Cloudflare cron every minute" : "disabled",
+          schedule: env.CRON_CONFIGURED === "true" ? "Cloudflare cron every minute" : "disabled",
           authorizedFeeds: authorizedFeedReadiness(env)
         },
         v1: {
@@ -227,6 +237,8 @@ export default {
           ? "durable_objects"
           : env.TCG_STATE ? "kv" : "none",
         automaticPolling,
+        cronConfigured: env.CRON_CONFIGURED === "true",
+        cronObserved: schedulerObservation.observed,
         authorizedFeeds: authorizedFeedReadiness(env),
         stores: storeReadiness(env),
         checkedAt: new Date().toISOString()

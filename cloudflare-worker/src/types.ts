@@ -214,6 +214,7 @@ export interface Env {
   ACTIVE_STORES?: string;
   WRITE_STATE?: string;
   DISCORD_MODE?: "dry-run" | "live";
+  CRON_CONFIGURED?: string;
   DISCORD_WEBHOOK_URL?: string;
   PREVIEW_AUDIT_TOKEN?: string;
   OPENAI_API_KEY?: string;

@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const html = readFileSync(new URL("../public-site/cockpit/index.html", import.meta.url), "utf8");
+const authScript = readFileSync(new URL("../public-site/cockpit-auth.js", import.meta.url), "utf8");
+const pagesWorker = readFileSync(new URL("../public-site/_worker.js", import.meta.url), "utf8");
 
 describe("cockpit deux circuits", () => {
   it("affiche des vues distinctes Nouvelles sorties et One Piece ALL", () => {
@@ -23,5 +25,22 @@ describe("cockpit deux circuits", () => {
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
     expect(script).toBeTruthy();
     expect(() => new Function(script as string)).not.toThrow();
+  });
+
+  it("n'active qu'une authentification e-mail/cookie sans mot de passe en sessionStorage", () => {
+    const combined = `${html}\n${authScript}`;
+    expect(combined).not.toContain("opwatch-cockpit-password");
+    expect(combined).not.toContain("x-op-watch-admin-password");
+    expect(combined).not.toContain("sessionStorage");
+    expect(authScript.match(/loginForm\.addEventListener\('submit'/g)).toHaveLength(1);
+    expect(authScript).not.toContain("stopImmediatePropagation");
+    expect(html).toContain('id="cockpitEmail"');
+  });
+
+  it("charge les scripts statiquement sans réécriture HTML fragile dans Pages", () => {
+    expect(html).toContain('<script src="/cockpit-auth.js"></script>');
+    expect(pagesWorker).not.toContain("html.replace");
+    expect(pagesWorker).not.toContain("request.body,");
+    expect(pagesWorker).toContain("await request.arrayBuffer()");
   });
 });

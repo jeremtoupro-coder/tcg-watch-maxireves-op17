@@ -1,12 +1,6 @@
 name: OP Watch Production Diagnostics (read-only)
 
 on:
-  push:
-    branches:
-      - fix/op-watch-prod-reliability
-    paths:
-      - "cloudflare-worker/**"
-      - ".github/workflows/op-watch-production-diagnostics.yml"
   workflow_dispatch:
 
 permissions:

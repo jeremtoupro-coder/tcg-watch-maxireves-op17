@@ -15,6 +15,7 @@ const vars = {
   WRITE_STATE: "true",
   DISCORD_MODE: "dry-run",
   SCHEDULER_MODE: "disabled",
+  CRON_CONFIGURED: "false",
   RUNTIME_TEST_MODE: "true",
   RUNTIME_TEST_RUN_ID: runId,
   ALLOW_PUBLIC_AUDIT: "false"

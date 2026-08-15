@@ -3,6 +3,8 @@ import { configuredStoreStatus } from "./storeAudit";
 import { isDiscoveryTick, parseActiveStores, runMonitoringCycle } from "./monitor";
 import { candidateForActiveProducts, type OfficialProduct } from "./opwatchV1";
 import { loadOfficialCalendar } from "./officialCalendar";
+import { handleSchedulerHealthRequest, handleSchedulerWatchdogAlarm } from "./schedulerHealth";
+import { isWebScoutTick } from "./webScout";
 import { CONTROL_CONFIG_STORAGE_KEY, applyRuntimeControlConfig, defaultRuntimeControlConfig, extraStoreSources, normalizeRuntimeControlConfig, type RuntimeControlConfig } from "./controlPlane";
 import type { StateStore } from "./state";
 import type { Env, LanguageStatus, ProductSnapshot, StoreKey } from "./types";
@@ -21,7 +23,9 @@ const DISCOVERY_INTERVAL_MS = 15 * 60_000;
 export interface RuntimeEnv extends Env {
   STORE_MONITORS?: DurableObjectNamespace;
   CALENDAR_COORDINATOR?: DurableObjectNamespace;
+  WEB_SCOUT?: DurableObjectNamespace;
   SCHEDULER_MODE?: "disabled" | "live";
+  CRON_CONFIGURED?: string;
   RUNTIME_TEST_MODE?: string;
   RUNTIME_TEST_RUN_ID?: string;
 }
@@ -87,6 +91,22 @@ export interface CadenceBudgetProjection {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+  });
+}
+
+interface JsonResponseSnapshot {
+  body: string;
+  status: number;
+}
+
+function jsonSnapshot(data: unknown, status = 200): JsonResponseSnapshot {
+  return { body: JSON.stringify(data), status };
+}
+
+function responseFromSnapshot(snapshot: JsonResponseSnapshot): Response {
+  return new Response(snapshot.body, {
+    status: snapshot.status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
   });
 }
@@ -410,11 +430,20 @@ export class StoreMonitorDurableObject {
 }
 
 export class CalendarCoordinatorDurableObject {
-  private running?: Promise<Response>;
+  /**
+   * Une seule lecture Bandai est exécutée à la fois, mais chaque appelant doit
+   * recevoir son propre corps HTTP. Une Response est un stream mono-lecture :
+   * la partager entre le cron et le cockpit provoquait aléatoirement
+   * "Body has already been used" chez le second consommateur.
+   */
+  private running?: Promise<JsonResponseSnapshot>;
 
   constructor(private readonly state: DurableObjectState, private readonly env: RuntimeEnv) {}
 
   async fetch(request: Request): Promise<Response> {
+    const schedulerHealthResponse = await handleSchedulerHealthRequest(request, this.state.storage, this.env);
+    if (schedulerHealthResponse) return schedulerHealthResponse;
+
     const pathname = new URL(request.url).pathname;
     if (request.method === "GET" && pathname === "/control") {
       const raw = await this.state.storage.get<unknown>(CONTROL_CONFIG_STORAGE_KEY);
@@ -429,14 +458,14 @@ export class CalendarCoordinatorDurableObject {
     if (request.method !== "POST" || pathname !== "/calendar") {
       return json({ error: "Route Durable Object calendrier invalide." }, 404);
     }
-    if (this.running) return this.running;
+    if (this.running) return responseFromSnapshot(await this.running);
 
     this.running = (async () => {
       const started = performance.now();
       try {
         const input = await request.json() as { scheduledTime?: number };
         const scheduledTime = Number(input.scheduledTime);
-        if (!Number.isFinite(scheduledTime)) return json({ error: "scheduledTime invalide." }, 400);
+        if (!Number.isFinite(scheduledTime)) return jsonSnapshot({ error: "scheduledTime invalide." }, 400);
         const stateStore = asStateStore(new DurableObjectStateStore(this.state.storage, true));
         const calendar = await loadOfficialCalendar({
           sourceUrl: opWatchV1Config.officialCatalogUrl,
@@ -448,7 +477,7 @@ export class CalendarCoordinatorDurableObject {
         const rawControl = await this.state.storage.get<unknown>(CONTROL_CONFIG_STORAGE_KEY);
         const control = rawControl ? normalizeRuntimeControlConfig(rawControl) : defaultRuntimeControlConfig();
         const activeProducts = applyRuntimeControlConfig(calendar.activeProducts, control, new Date(scheduledTime));
-        return json({
+        return jsonSnapshot({
           durationMs: Math.round(performance.now() - started),
           fetchedAt: calendar.fetchedAt,
           sourcePages: calendar.sourcePages,
@@ -459,7 +488,7 @@ export class CalendarCoordinatorDurableObject {
           controlUpdatedAt: control.updatedAt
         });
       } catch (error) {
-        return json({
+        return jsonSnapshot({
           durationMs: Math.round(performance.now() - started),
           error: safeError(error)
         }, 502);
@@ -467,9 +496,68 @@ export class CalendarCoordinatorDurableObject {
     })();
 
     try {
-      return await this.running;
+      return responseFromSnapshot(await this.running);
     } finally {
       this.running = undefined;
+    }
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const watchdog = await handleSchedulerWatchdogAlarm(this.state.storage, this.env, now);
+    if (!watchdog.stale || this.env.MONITORING_ENABLED !== "true" || this.env.WRITE_STATE !== "true") return;
+
+    const scheduledTime = Math.floor(now / 60_000) * 60_000;
+    const discovery = isDiscoveryTick(scheduledTime);
+    const mark = async (input: Record<string, unknown>) => {
+      await handleSchedulerHealthRequest(new Request("https://scheduler-health.internal/mark", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scheduledTime, ...input })
+      }), this.state.storage, this.env);
+    };
+
+    const started = performance.now();
+    await mark({ kind: "fallback_monitoring_started", discovery });
+    try {
+      const cycle = await runDistributedMonitoringCycle(this.env, { mode: "live", scheduledTime });
+      await mark({
+        kind: "fallback_monitoring_completed",
+        discovery: cycle.discovery,
+        durationMs: performance.now() - started,
+        completedStores: cycle.stores.filter((store) => store.status === "completed").length,
+        incidentStores: cycle.stores.filter((store) => store.status !== "completed").length
+      });
+    } catch (error) {
+      await mark({
+        kind: "fallback_monitoring_failed",
+        discovery,
+        durationMs: performance.now() - started,
+        error: safeError(error)
+      });
+    }
+
+    if (isWebScoutTick(scheduledTime)) {
+      const scoutStarted = performance.now();
+      await mark({ kind: "fallback_web_scout_started" });
+      try {
+        if (!this.env.WEB_SCOUT) throw new Error("Binding WEB_SCOUT absent.");
+        if (!this.env.BRAVE_SEARCH_API_KEY?.trim()) throw new Error("BRAVE_SEARCH_API_KEY absent.");
+        const stub = this.env.WEB_SCOUT.get(this.env.WEB_SCOUT.idFromName("production:web-scout"));
+        const response = await stub.fetch(new Request("https://web-scout.internal/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ scheduledTime })
+        }));
+        if (!response.ok) throw new Error(`Web Scout fallback HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+        await mark({ kind: "fallback_web_scout_completed", durationMs: performance.now() - scoutStarted });
+      } catch (error) {
+        await mark({
+          kind: "fallback_web_scout_failed",
+          durationMs: performance.now() - scoutStarted,
+          error: safeError(error)
+        });
+      }
     }
   }
 }

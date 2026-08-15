@@ -55,10 +55,6 @@ jobs:
           import re
           from pathlib import Path
           html=Path('public-site/cockpit/index.html').read_text()
-          # The Pages Worker repairs the historical refresh-handler typo while
-          # the source file is being cleaned up separately. Validate the served
-          # form here so a syntax error can never ship unnoticed again.
-          html=html.replace("$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));", "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));")
           scripts=re.findall(r'<script>(.*?)</script>', html, flags=re.S)
           if len(scripts)!=1:
               raise SystemExit(f'expected one inline cockpit script, got {len(scripts)}')
@@ -99,6 +95,7 @@ jobs:
                grep -q 'cockpit-assistant.js' <<<"$cockpit" && \
                grep -q 'cockpit-web-scout.js' <<<"$cockpit" && \
                grep -q 'cockpit-auth.js' <<<"$cockpit" && \
+               ! grep -q 'opwatch-cockpit-password\|x-op-watch-admin-password' <<<"$cockpit" && \
                grep -q 'Envoyer à ChatGPT' <<<"$assistant" && \
                grep -q 'Web Scout' <<<"$webscout" && \
                grep -q 'Mot de passe oublié' <<<"$authui" && \

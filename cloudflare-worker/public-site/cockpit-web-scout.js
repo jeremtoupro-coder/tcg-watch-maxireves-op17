@@ -5,7 +5,7 @@
 
   const style = document.createElement('style');
   style.textContent = `
-    .scout-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
+    .scout-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:12px}
     .scout-metric{padding:14px;border:1px solid var(--line);border-radius:14px;background:#091827}.scout-metric strong{display:block;font-size:23px}.scout-metric span{display:block;margin-top:3px;color:var(--muted);font-size:11px;font-weight:750}
     .scout-status{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.scout-status h4{margin:0}.scout-query{margin-top:9px;padding:10px 12px;background:#071525;border:1px solid #294260;border-radius:11px;color:#c8d7e9;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
     .scout-refs{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.scout-ref{padding:5px 8px;border-radius:999px;background:#0a2239;border:1px solid #2d4a68;color:#cde1f5;font-size:11px;font-weight:800}
@@ -31,6 +31,7 @@
       <p id="scoutSummary" class="detail" style="margin-bottom:0">Lecture du dernier passage Web Scout.</p>
       <div class="scout-grid">
         <div class="scout-metric"><strong id="scoutResults">—</strong><span>résultats Brave</span></div>
+        <div class="scout-metric"><strong id="scoutCandidates">—</strong><span>candidats exploitables</span></div>
         <div class="scout-metric"><strong id="scoutVerified">—</strong><span>candidats vérifiés</span></div>
         <div class="scout-metric"><strong id="scoutAlerts">—</strong><span>pistes remontées</span></div>
         <div class="scout-metric"><strong id="scoutRejected">—</strong><span>résultats rejetés</span></div>
@@ -52,6 +53,7 @@
       <h3 style="margin-top:0">Dernière recherche</h3>
       <div id="scoutLastRun" class="detail">Aucun passage enregistré pour le moment.</div>
       <div id="scoutQuery" class="scout-query hidden"></div>
+      <div id="scoutReasons" class="detail" style="margin-top:10px"></div>
       <div id="scoutError" class="scout-error hidden"></div>
     </div>
   `;
@@ -71,8 +73,10 @@
   function classifyScout(data) {
     if (!data?.bindingPresent) return { level: 'red', label: 'Binding absent', headline: 'Web Scout non déployé' };
     if (!data?.searchConfigured) return { level: 'amber', label: 'Clé Brave absente', headline: 'Web Scout en attente de configuration' };
-    if (!data?.schedulerLive) return { level: 'amber', label: 'Scheduler OFF', headline: 'Web Scout prêt mais non planifié' };
+    if (!data?.schedulerConfigured) return { level: 'amber', label: 'Scheduler OFF', headline: 'Web Scout prêt mais non planifié' };
+    if (!data?.schedulerObserved?.observedRecently) return { level: 'red', label: 'Scheduler inactif', headline: 'Web Scout bloqué par le scheduler' };
     if (!data?.health) return { level: 'amber', label: 'Premier passage attendu', headline: 'Web Scout actif' };
+    if (data.cadence?.overdue) return { level: 'red', label: 'Passage en retard', headline: 'Web Scout ne tourne plus à sa cadence' };
     if (data.health.status === 'completed') return { level: 'green', label: 'Opérationnel', headline: 'Web Scout opérationnel' };
     if (data.health.status === 'degraded') return { level: 'amber', label: 'Dégradé', headline: 'Web Scout fonctionne en mode dégradé' };
     if (data.health.status === 'disabled') return { level: 'amber', label: 'Désactivé', headline: 'Web Scout désactivé sur ce passage' };
@@ -93,10 +97,11 @@
     const next = data.cadence?.nextScheduledAt ? fmtDate(data.cadence.nextScheduledAt) : '—';
     setText('scoutSummary', `${data.searchConfigured ? 'Brave Search connecté' : 'Brave Search non configuré'} · ${data.cadence?.label || 'cadence inconnue'} · prochain passage ${next}.`);
     setText('scoutResults', health?.searchResults ?? 0);
+    setText('scoutCandidates', health?.candidates ?? 0);
     setText('scoutVerified', health?.verified ?? 0);
     setText('scoutAlerts', health?.alerted ?? 0);
     setText('scoutRejected', health?.rejected ?? 0);
-    setText('scoutCadence', `Cadence : ${data.cadence?.label || '—'}. Brave : ${data.searchConfigured ? 'connecté' : 'non configuré'}. Scheduler : ${data.schedulerLive ? 'LIVE' : 'OFF'}. Dernier passage : ${fmtDate(health?.checkedAt)}.${health ? ` Cache ignoré : ${health.skippedCached ?? 0}.` : ''}`);
+    setText('scoutCadence', `Cadence : ${data.cadence?.label || '—'}. Brave : ${data.searchConfigured ? 'connecté' : 'non configuré'}. Scheduler configuré : ${data.schedulerConfigured ? 'LIVE' : 'OFF'}. Scheduler observé : ${data.schedulerObserved?.observedRecently ? 'OUI' : 'NON'}. Dernier passage : ${fmtDate(health?.checkedAt)}.${health ? ` Cache ignoré : ${health.skippedCached ?? 0}. Budget mensuel : ${health.monthlySearchRequests ?? '—'} / ${health.monthlySearchRequestCap ?? 744}.` : ''}`);
 
     const refs = document.getElementById('scoutRefs');
     if (refs) {
@@ -110,6 +115,13 @@
     if (query) {
       query.textContent = health?.query || '';
       query.classList.toggle('hidden', !health?.query);
+    }
+    const reasons = document.getElementById('scoutReasons');
+    if (reasons) {
+      const rows = Object.entries(health?.rejectionReasons || {});
+      reasons.innerHTML = rows.length
+        ? `<b>Pourquoi les candidats ont été rejetés :</b><br>${rows.map(([reason,count])=>`${esc(count)} × ${esc(reason)}`).join('<br>')}`
+        : 'Aucune raison de rejet détaillée enregistrée sur le dernier passage.';
     }
     const error = document.getElementById('scoutError');
     const errorText = health?.error || data.healthError || '';
@@ -139,17 +151,9 @@
 
   document.getElementById('refreshWebScout')?.addEventListener('click', () => refreshScout());
 
-  const baseRender = render;
-  render = () => {
-    baseRender();
-    if (typeof state !== 'undefined' && state) {
-      const heroTitle = document.getElementById('heroTitle');
-      const heroText = document.getElementById('heroText');
-      if (heroTitle && state.totals?.red === 0) heroTitle.textContent = 'Trois veilles, un même moteur';
-      if (heroText) heroText.textContent = `Nouvelles sorties : Bandai + Fast Watch minute. One Piece ALL : restocks historiques. Web Scout : recherche Web fiable chaque heure. ${state.totals.green} vert(s), ${state.totals.amber} orange(s), ${state.totals.red} rouge(s).`;
-      void refreshScout();
-    }
-  };
+  window.addEventListener('opwatch:rendered', () => {
+    if (typeof state !== 'undefined' && state) void refreshScout();
+  });
 
   if (typeof state !== 'undefined' && state) void refreshScout();
 })();

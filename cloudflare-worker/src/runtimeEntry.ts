@@ -15,6 +15,13 @@ import {
 } from "./heartbeat";
 import { handleCockpitApi } from "./cockpitApi";
 import { detectAvailability, detectLanguage, matchReferences } from "./matching";
+import { isDiscoveryTick } from "./monitor";
+import {
+  armSchedulerWatchdog,
+  markSchedulerHealth,
+  readSchedulerHealth,
+  type SchedulerMarker
+} from "./schedulerHealth";
 import { WebScoutDurableObject, isWebScoutTick } from "./webScout";
 import type { Env, StoreKey } from "./types";
 
@@ -57,22 +64,28 @@ function webScoutStub(env: WebScoutRuntimeEnv): DurableObjectStub | undefined {
   return env.WEB_SCOUT.get(env.WEB_SCOUT.idFromName("production:web-scout"));
 }
 
-async function runHourlyWebScout(env: WebScoutRuntimeEnv, scheduledTime: number): Promise<void> {
-  if (!isWebScoutTick(scheduledTime)) return;
+async function runHourlyWebScout(env: WebScoutRuntimeEnv, scheduledTime: number): Promise<boolean> {
+  if (!isWebScoutTick(scheduledTime)) return false;
   const stub = webScoutStub(env);
-  if (!stub || !env.BRAVE_SEARCH_API_KEY?.trim()) return;
+  if (!stub) throw new Error("Binding WEB_SCOUT absent.");
+  if (!env.BRAVE_SEARCH_API_KEY?.trim()) throw new Error("BRAVE_SEARCH_API_KEY absent.");
+  const response = await stub.fetch(new Request("https://web-scout.internal/run", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scheduledTime })
+  }));
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Web Scout HTTP ${response.status}: ${text.slice(0, 600)}`);
+  }
+  return true;
+}
+
+async function safeSchedulerMark(env: WebScoutRuntimeEnv, marker: SchedulerMarker): Promise<void> {
   try {
-    const response = await stub.fetch(new Request("https://web-scout.internal/run", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ scheduledTime })
-    }));
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`Web Scout HTTP ${response.status}: ${text.slice(0, 600)}`);
-    }
+    await markSchedulerHealth(env, marker);
   } catch (error) {
-    console.error("Web Scout error:", error instanceof Error ? error.message : String(error));
+    console.error("Scheduler health mark failed:", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -125,6 +138,15 @@ async function productionReady(request: Request, env: WebScoutRuntimeEnv): Promi
 
   try {
     assertRuntimeReadiness(env, "live");
+    const schedulerHealth = await readSchedulerHealth(env).catch((error) => ({
+      health: null,
+      observed: {
+        status: "never_seen" as const,
+        observedRecently: false,
+        staleAfterMs: 3 * 60_000
+      },
+      readError: error instanceof Error ? error.message : String(error)
+    }));
     return json({
       status: "ready",
       mode: "live",
@@ -133,13 +155,21 @@ async function productionReady(request: Request, env: WebScoutRuntimeEnv): Promi
       monitoringEnabled: env.MONITORING_ENABLED === "true",
       stateWritesEnabled: env.WRITE_STATE === "true",
       stores: CONNECTORS.map((connector) => connector.key),
-      automaticPolling: false,
+      automaticPolling: schedulerHealth.observed.observedRecently,
+      scheduler: {
+        configured: env.CRON_CONFIGURED === "true",
+        observed: schedulerHealth.observed,
+        health: schedulerHealth.health,
+        ...(Object.hasOwn(schedulerHealth, "readError")
+          ? { readError: (schedulerHealth as { readError?: string }).readError }
+          : {})
+      },
       webScout: {
         bindingPresent: Boolean(env.WEB_SCOUT),
         searchConfigured: Boolean(env.BRAVE_SEARCH_API_KEY?.trim()),
         cadence: "hourly at minute 07"
       },
-      note: "Sonde de readiness uniquement : aucun audit marchand n'est exécuté par cette route."
+      note: "Readiness de configuration et observation persistante du scheduler ; aucun audit marchand n'est exécuté par cette route."
     });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 503);
@@ -158,6 +188,34 @@ async function productionWebScoutHealth(request: Request, env: WebScoutRuntimeEn
       status: response.status,
       headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
     });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
+async function productionSchedulerHealth(request: Request, env: WebScoutRuntimeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "GET") return json({ error: "Méthode non autorisée. GET uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+  try {
+    const result = await readSchedulerHealth(env);
+    return json({
+      checkedAt: new Date().toISOString(),
+      configured: env.CRON_CONFIGURED === "true",
+      ...result
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 503);
+  }
+}
+
+async function productionArmSchedulerWatchdog(request: Request, env: WebScoutRuntimeEnv): Promise<Response> {
+  if (env.PRODUCTION_PROBE_MODE !== "true") return json({ error: "Route inconnue." }, 404);
+  if (request.method !== "POST") return json({ error: "Méthode non autorisée. POST uniquement." }, 405);
+  if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
+  try {
+    const health = await armSchedulerWatchdog(env);
+    return json({ status: "armed", health });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 503);
   }
@@ -243,16 +301,24 @@ async function productionHeartbeatNow(request: Request, env: ProductionProbeEnv)
   if (request.method !== "POST") return json({ error: "Méthode non autorisée. POST uniquement." }, 405);
   if (!validRuntimeToken(request, env)) return json({ error: "Jeton runtime absent ou invalide." }, 401);
 
+  const scheduledTime = Date.now();
+  await safeSchedulerMark(env, { kind: "manual_heartbeat_started", scheduledTime });
   try {
     assertRuntimeReadiness(env, "live");
     const cycle = await runDistributedMonitoringCycle(env, {
       mode: "live",
-      scheduledTime: Date.now()
+      scheduledTime
     });
     const delivery = await dispatchRuntimeHeartbeat(cycle, env, true);
     if (delivery.sent !== 1) {
+      await safeSchedulerMark(env, {
+        kind: "manual_heartbeat_failed",
+        scheduledTime,
+        error: delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi."
+      });
       return json({ status: "failed", delivery }, 502);
     }
+    await safeSchedulerMark(env, { kind: "manual_heartbeat_completed", scheduledTime });
     return json({
       status: "sent",
       delivery,
@@ -267,7 +333,12 @@ async function productionHeartbeatNow(request: Request, env: ProductionProbeEnv)
       }
     });
   } catch (error) {
-    const delivery = await dispatchRuntimeHeartbeatFailure(Date.now(), env, error, true).catch((deliveryError) => ({
+    await safeSchedulerMark(env, {
+      kind: "manual_heartbeat_failed",
+      scheduledTime,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    const delivery = await dispatchRuntimeHeartbeatFailure(scheduledTime, env, error, true).catch((deliveryError) => ({
       attempted: 0,
       sent: 0,
       errors: [deliveryError instanceof Error ? deliveryError.message : String(deliveryError)]
@@ -291,6 +362,12 @@ export default {
     if (pathname === "/web-scout-health") {
       return productionWebScoutHealth(request, env as WebScoutRuntimeEnv);
     }
+    if (pathname === "/scheduler-health") {
+      return productionSchedulerHealth(request, env as WebScoutRuntimeEnv);
+    }
+    if (pathname === "/scheduler-watchdog/arm") {
+      return productionArmSchedulerWatchdog(request, env as WebScoutRuntimeEnv);
+    }
     if (pathname === "/merchant-probe") {
       return productionMerchantProbe(request, env as ProductionProbeEnv);
     }
@@ -303,35 +380,75 @@ export default {
   scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     const runtimeEnv = env as WebScoutRuntimeEnv;
     if (runtimeEnv.SCHEDULER_MODE !== "live") return;
-    ctx.waitUntil((async () => {
-      const heartbeatTick = isHeartbeatTick(controller.scheduledTime);
+    const scheduledTime = controller.scheduledTime;
+    const heartbeatTick = isHeartbeatTick(scheduledTime);
+    const discovery = isDiscoveryTick(scheduledTime);
 
-      // Le heartbeat de présence part AVANT tout accès au calendrier ou aux boutiques.
-      // Ainsi, un cycle marchand lent, bloqué ou tué par la plateforme ne peut plus le supprimer.
-      if (heartbeatTick) {
-        try {
-          const delivery = await dispatchRuntimeHeartbeatSignal(controller.scheduledTime, runtimeEnv);
-          if (delivery.sent !== 1) {
-            console.error("Scheduled pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
-          }
-        } catch (heartbeatError) {
-          console.error(
-            "Scheduled pre-cycle heartbeat crashed:",
-            heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError)
-          );
-        }
-      }
+    // Cette écriture très courte prouve que Cloudflare a réellement livré le
+    // Scheduled Event et réarme une alarme Durable Object indépendante du cron.
+    ctx.waitUntil(safeSchedulerMark(runtimeEnv, {
+      kind: "scheduled_received",
+      scheduledTime,
+      observedTime: Date.now()
+    }));
 
+    const heartbeatBeforeMonitoring = (async () => {
+      if (!heartbeatTick) return;
+      await safeSchedulerMark(runtimeEnv, { kind: "automatic_heartbeat_started", scheduledTime });
       try {
-        await runDistributedMonitoringCycle(runtimeEnv, {
+        const delivery = await dispatchRuntimeHeartbeatSignal(scheduledTime, runtimeEnv);
+        if (delivery.sent !== 1) {
+          const error = delivery.errors.join(" | ") || "Discord n'a confirmé aucun envoi.";
+          await safeSchedulerMark(runtimeEnv, { kind: "automatic_heartbeat_failed", scheduledTime, error });
+          console.error("Scheduled pre-cycle heartbeat delivery failed:", JSON.stringify(delivery));
+          return;
+        }
+        await safeSchedulerMark(runtimeEnv, { kind: "automatic_heartbeat_completed", scheduledTime });
+      } catch (error) {
+        await safeSchedulerMark(runtimeEnv, {
+          kind: "automatic_heartbeat_failed",
+          scheduledTime,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        console.error("Scheduled pre-cycle heartbeat crashed:", error instanceof Error ? error.message : String(error));
+      }
+    })();
+
+    // Le monitoring conserve l'ordre heartbeat -> marchands, mais Web Scout
+    // dispose désormais de son propre waitUntil : un circuit ne supprime plus
+    // silencieusement l'autre en cas d'exception.
+    ctx.waitUntil((async () => {
+      await heartbeatBeforeMonitoring;
+      const started = performance.now();
+      await safeSchedulerMark(runtimeEnv, { kind: "monitoring_started", scheduledTime, discovery });
+      try {
+        const cycle = await runDistributedMonitoringCycle(runtimeEnv, {
           mode: "live",
-          scheduledTime: controller.scheduledTime
+          scheduledTime
+        });
+        const completedStores = cycle.stores.filter((store) => store.status === "completed").length;
+        const incidentStores = cycle.stores.filter((store) => store.status !== "completed").length;
+        await safeSchedulerMark(runtimeEnv, {
+          kind: "monitoring_completed",
+          scheduledTime,
+          discovery: cycle.discovery,
+          durationMs: performance.now() - started,
+          completedStores,
+          incidentStores
         });
       } catch (error) {
-        console.error("Scheduled monitoring cycle failed:", error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        await safeSchedulerMark(runtimeEnv, {
+          kind: "monitoring_failed",
+          scheduledTime,
+          discovery,
+          durationMs: performance.now() - started,
+          error: message
+        });
+        console.error("Scheduled monitoring cycle failed:", message);
         if (heartbeatTick) {
           try {
-            const delivery = await dispatchRuntimeHeartbeatFailure(controller.scheduledTime, runtimeEnv, error);
+            const delivery = await dispatchRuntimeHeartbeatFailure(scheduledTime, runtimeEnv, error);
             if (delivery.sent !== 1) {
               console.error("Scheduled fail-safe cycle alert delivery failed:", JSON.stringify(delivery));
             }
@@ -343,8 +460,30 @@ export default {
           }
         }
       }
-
-      await runHourlyWebScout(runtimeEnv, controller.scheduledTime);
     })());
+
+    if (isWebScoutTick(scheduledTime)) {
+      ctx.waitUntil((async () => {
+        const started = performance.now();
+        await safeSchedulerMark(runtimeEnv, { kind: "web_scout_started", scheduledTime });
+        try {
+          await runHourlyWebScout(runtimeEnv, scheduledTime);
+          await safeSchedulerMark(runtimeEnv, {
+            kind: "web_scout_completed",
+            scheduledTime,
+            durationMs: performance.now() - started
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await safeSchedulerMark(runtimeEnv, {
+            kind: "web_scout_failed",
+            scheduledTime,
+            durationMs: performance.now() - started,
+            error: message
+          });
+          console.error("Web Scout error:", message);
+        }
+      })());
+    }
   }
 };

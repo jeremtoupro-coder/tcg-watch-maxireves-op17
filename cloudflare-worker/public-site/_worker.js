@@ -1,4 +1,30 @@
 const PRODUCTION_API = "https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev";
+const MAX_COCKPIT_BODY_BYTES = 64 * 1024;
+
+export async function bufferedCockpitBody(request) {
+  if (request.method === "GET" || request.method === "HEAD") return undefined;
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_COCKPIT_BODY_BYTES) {
+    throw new Response(JSON.stringify({ error: "Corps cockpit trop volumineux." }), {
+      status: 413,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  if (request.bodyUsed) {
+    throw new Response(JSON.stringify({ error: "Le corps de la requête cockpit a déjà été consommé." }), {
+      status: 400,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_COCKPIT_BODY_BYTES) {
+    throw new Response(JSON.stringify({ error: "Corps cockpit trop volumineux." }), {
+      status: 413,
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }
+    });
+  }
+  return body;
+}
 
 export default {
   async fetch(request, env) {
@@ -49,10 +75,18 @@ export default {
       const headers = new Headers(request.headers);
       headers.set("origin", "https://op-watch-tcg-fr.pages.dev");
       headers.set("host", new URL(PRODUCTION_API).host);
+      headers.delete("content-length");
+      let body;
+      try {
+        body = await bufferedCockpitBody(request);
+      } catch (response) {
+        if (response instanceof Response) return response;
+        throw response;
+      }
       const upstream = await fetch(upstreamUrl.toString(), {
         method: request.method,
         headers,
-        body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+        body,
         redirect: "manual"
       });
       const responseHeaders = new Headers(upstream.headers);
@@ -65,28 +99,10 @@ export default {
     }
 
     const asset = await env.ASSETS.fetch(request);
-    const contentType = asset.headers.get("content-type") || "";
-    if (!contentType.includes("text/html")) return asset;
-
-    let html = await asset.text();
-    const headers = new Headers(asset.headers);
-    headers.delete("content-length");
-
     const cockpit = url.pathname === "/cockpit/" || url.pathname === "/cockpit/index.html";
-    if (cockpit) {
-      html = html.replace(
-        "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message));",
-        "$('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));"
-      );
-      headers.set("cache-control", "no-store");
-    }
-
-    const scripts = cockpit
-      ? '<script src="/catalog.js" defer></script><script src="/cockpit-assistant.js"></script><script src="/cockpit-web-scout.js"></script><script src="/cockpit-auth.js"></script>'
-      : '<script src="/catalog.js" defer></script>';
-    return new Response(
-      html.replace("</body>", `${scripts}</body>`),
-      { status: asset.status, statusText: asset.statusText, headers }
-    );
+    if (!cockpit) return asset;
+    const headers = new Headers(asset.headers);
+    headers.set("cache-control", "no-store");
+    return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
   }
 };

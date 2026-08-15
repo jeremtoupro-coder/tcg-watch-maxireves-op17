@@ -22,12 +22,21 @@
     <section id="login" class="login">
       <div class="login-card">
         <div class="brand"><div class="logo">OP</div><div><h1>OP Watch Cockpit</h1><small>Console personnelle de supervision</small></div></div>
-        <h2 style="margin-top:24px">Accès administrateur</h2>
-        <p>Le tableau de bord et les actions sont protégés. Le mot de passe reste uniquement dans cette session de navigateur.</p>
+        <h2 style="margin-top:24px">Connexion</h2>
+        <p>Accès privé réservé au propriétaire du cockpit.</p>
         <form id="loginForm">
-          <div class="field"><label>Mot de passe cockpit</label><input id="password" type="password" autocomplete="current-password" required></div>
-          <button class="btn primary" style="width:100%">Ouvrir le cockpit</button>
+          <div class="field"><label>Adresse e-mail</label><input id="cockpitEmail" type="email" inputmode="email" autocomplete="username" value="jrm.touitou@gmail.com" required></div>
+          <div class="field"><label>Mot de passe</label><input id="password" type="password" autocomplete="current-password" required></div>
+          <button class="btn primary" style="width:100%">Se connecter</button>
+          <button id="forgotPassword" type="button" class="btn ghost" style="width:100%;margin-top:10px">Mot de passe oublié ?</button>
           <div id="loginError" class="error"></div>
+          <div id="authStatus" class="detail" style="margin-top:12px;text-align:center">Seule l’adresse jrm.touitou@gmail.com est autorisée.</div>
+        </form>
+        <form id="cockpitResetForm" class="hidden">
+          <div class="field"><label>Nouveau mot de passe</label><input id="newCockpitPassword" type="password" autocomplete="new-password" minlength="12" required></div>
+          <div class="field"><label>Confirmer le mot de passe</label><input id="confirmCockpitPassword" type="password" autocomplete="new-password" minlength="12" required></div>
+          <button class="btn primary" style="width:100%">Enregistrer le nouveau mot de passe</button>
+          <div id="resetError" class="error"></div>
         </form>
       </div>
     </section>
@@ -125,17 +134,17 @@
   </main>
   <div id="toast" class="toast"></div>
   <script>
-    const PASSWORD_KEY='opwatch-cockpit-password';
     let state=null;
     const $=id=>document.getElementById(id);
     const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const password=()=>sessionStorage.getItem(PASSWORD_KEY)||'';
     async function api(path,options={}){
-      const headers={...(options.headers||{}),'x-op-watch-admin-password':password()};
+      const headers={...(options.headers||{})};
       if(options.body&&!headers['content-type'])headers['content-type']='application/json';
-      const res=await fetch(path,{...options,headers,cache:'no-store'});
-      const data=await res.json().catch(()=>({error:'Réponse invalide'}));
-      if(res.status===401){sessionStorage.removeItem(PASSWORD_KEY);showLogin('Mot de passe invalide.');throw new Error('Session refusée');}
+      const res=await fetch(path,{...options,headers,cache:'no-store',credentials:'same-origin'});
+      const raw=await res.text();
+      let data={};
+      if(raw){try{data=JSON.parse(raw)}catch{throw new Error(`HTTP ${res.status} — réponse non JSON du service`)}}
+      if(res.status===401){showLogin('Session expirée. Reconnecte-toi.');throw new Error('Session expirée');}
       if(!res.ok)throw new Error(data.error||`HTTP ${res.status}`);
       return data;
     }
@@ -143,8 +152,11 @@
     function showLogin(message=''){$('login').classList.remove('hidden');$('app').classList.add('hidden');$('loginError').textContent=message}
     function showApp(){$('login').classList.add('hidden');$('app').classList.remove('hidden')}
     function ageText(ms){if(ms==null)return 'jamais';const s=Math.round(ms/1000);if(s<60)return `${s}s`;const m=Math.round(s/60);if(m<60)return `${m} min`;return `${Math.round(m/60)} h`}
+    function dateText(value){return value?new Date(value).toLocaleString('fr-FR',{timeZone:'Europe/Paris'}):'jamais'}
+    function runText(value){if(!value)return 'jamais';const at=value.completedAt||value.startedAt;return `${dateText(at)} · ${value.status}${value.durationMs!=null?` · ${value.durationMs} ms`:''}${value.error?` · ${value.error}`:''}`}
     function sourceText(value){return ({public_structured_feed:'API structurée',public_html:'Site marchand',authorized_feed:'Flux partenaire',authorized_feed_required:'Flux partenaire requis',unknown:'—'})[value]||value}
     async function load(){const data=await api('/cockpit/api/status');state=data;render();showApp();}
+    window.load=load;window.showLogin=showLogin;
     function allCoverage(s){
       if(s.configuredStatus==='pending_authorized_feed')return {level:'amber',label:'ALL bloqué',detail:'Flux partenaire autorisé requis avant de pouvoir observer les restocks de cette boutique.'};
       if(s.level==='red')return {level:'red',label:'ALL en incident',detail:s.detail};
@@ -160,11 +172,27 @@
       $('lastRefresh').textContent='Actualisé '+new Date(state.checkedAt).toLocaleTimeString('fr-FR');
       $('greenCount').textContent=state.totals.green;$('amberCount').textContent=state.totals.amber;$('redCount').textContent=state.totals.red;$('productCount').textContent=state.calendar.activeProducts.length;
       const runtime=state.runtime.live;const pill=$('runtimePill');pill.innerHTML=`<span class="dot ${runtime?'green':'red'}"></span>${runtime?'PRODUCTION LIVE':'RUNTIME À CONTRÔLER'}`;
-      $('heroTitle').textContent=state.totals.red===0?'Deux veilles, un même moteur':'OP Watch tourne, mais il reste des rouges';
-      $('heroText').textContent=`Nouvelles sorties : Bandai + Fast Watch minute. One Piece ALL : restocks historiques sur Discovery. ${state.totals.green} vert(s), ${state.totals.amber} orange(s), ${state.totals.red} rouge(s).`;
+      const schedulerObserved=state.runtime.schedulerObserved||{};
+      $('heroTitle').textContent=!schedulerObserved.observedRecently?'🔴 SCHEDULER INACTIF / AUCUNE EXÉCUTION RÉCENTE':state.totals.red===0?'Deux veilles, un même moteur':'OP Watch tourne, mais il reste des rouges';
+      $('heroText').textContent=!schedulerObserved.observedRecently?`Le scheduler est configuré ${state.runtime.schedulerConfigured?'LIVE':'OFF'}, mais son dernier signal réel est ${schedulerObserved.status==='never_seen'?'absent':`vieux de ${ageText(schedulerObserved.ageMs)}`}. Les rouges simultanés sont probablement un incident global.`:`Nouvelles sorties : Bandai + Fast Watch minute. One Piece ALL : restocks historiques sur Discovery. ${state.totals.green} vert(s), ${state.totals.amber} orange(s), ${state.totals.red} rouge(s).`;
       $('stores').innerHTML=state.stores.map(s=>`<article class="store"><div class="store-top"><div><h4>${esc(s.name)}</h4><div class="meta"><span>${esc(sourceText(s.sourceKind))}</span>${s.lastCheck?`<span>il y a <b>${esc(ageText(s.ageMs))}</b></span>`:''}</div></div><span class="status ${s.level}"><span class="dot ${s.level}"></span>${esc(s.label)}</span></div><div class="detail">${esc(s.detail)}</div><div class="meta"><span>Candidats: <b>${s.candidates??'—'}</b></span>${s.durationMs!=null?`<span>Cycle: <b>${s.durationMs} ms</b></span>`:''}</div><div class="store-actions"><button class="btn ghost" onclick="runStore('${esc(s.key)}')">Tester maintenant</button></div></article>`).join('');
       renderAllWatch();renderLanguages();renderProducts();renderRequests();
-      $('runtimeDetails').innerHTML=`Monitoring : <b>${state.runtime.monitoring?'ON':'OFF'}</b> · Discord : <b>${state.runtime.discord?'LIVE':'OFF'}</b> · Scheduler : <b>${state.runtime.scheduler?'LIVE':'OFF'}</b> · État : <b>${esc(state.runtime.stateBackend)}</b> · Runtime test : <b>${state.runtime.runtimeTest?'OUI':'NON'}</b>`;
+      const sh=state.runtime.schedulerHealth||{};
+      $('runtimeDetails').innerHTML=`
+        Scheduler configuré : <b>${state.runtime.schedulerConfigured?'LIVE':'OFF'}</b><br>
+        Scheduler observé récemment : <b style="color:${schedulerObserved.observedRecently?'var(--green)':'var(--red)'}">${schedulerObserved.observedRecently?'OUI':'NON — '+esc(schedulerObserved.status||'inconnu')}</b><br>
+        Dernier Scheduled Event reçu : <b>${esc(dateText(sh.lastScheduledEvent?.receivedAt))}</b><br>
+        Dernier cycle automatique : <b>${esc(runText(sh.automaticMonitoring))}</b><br>
+        Dernier Fast Watch : <b>${esc(runText(sh.lastFastWatch))}</b><br>
+        Dernière Discovery : <b>${esc(runText(sh.lastDiscovery))}</b><br>
+        Dernier Web Scout automatique : <b>${esc(runText(sh.lastWebScout))}</b><br>
+        Dernier cycle de secours DO : <b>${esc(runText(sh.lastFallbackMonitoring))}</b><br>
+        Dernier Web Scout de secours : <b>${esc(runText(sh.lastFallbackWebScout))}</b><br>
+        Dernier heartbeat automatique : <b>${esc(runText(sh.lastAutomaticHeartbeat))}</b><br>
+        Dernier heartbeat manuel : <b>${esc(runText(sh.lastManualHeartbeat))}</b><br>
+        Watchdog interne : <b>${esc(sh.watchdog?.status||'non armé')}</b>${sh.watchdog?.nextCheckAt?` · prochain contrôle ${esc(dateText(sh.watchdog.nextCheckAt))}`:''}<br>
+        Monitoring : <b>${state.runtime.monitoring?'ON':'OFF'}</b> · Discord : <b>${state.runtime.discord?'LIVE':'OFF'}</b> · État : <b>${esc(state.runtime.stateBackend)}</b> · Runtime test : <b>${state.runtime.runtimeTest?'OUI':'NON'}</b>`;
+      window.dispatchEvent(new CustomEvent('opwatch:rendered'));
     }
     function renderLanguages(){const active=new Set(state.control.languages);const all=[['Français confirmé','🇫🇷 Français'],['Anglais détecté','🇬🇧 Anglais'],['Japonais détecté','🇯🇵 Japonais']];$('languages').innerHTML=all.map(([value,label])=>`<label class="choice"><input type="checkbox" value="${value}" ${active.has(value)?'checked':''}>${label}</label>`).join('')}
     function renderProducts(){const products=state.calendar.controllableProducts||state.calendar.activeProducts||[];$('productList').innerHTML=products.length?products.map(p=>{const enabled=p.enabled!==false;const release=p.releaseDate?`Sortie ${esc(p.releaseDate)}`:'Date de sortie non chargée';return `<div class="product"><div><strong>${esc(p.id)} — ${esc(p.label)}</strong><small>${release}${p.manual?' · manuel':' · catalogue Bandai'}${p.active?' · actif':' · hors circuit'}</small></div><label class="switch"><input type="checkbox" ${enabled?'checked':''} onchange="setProductEnabled('${esc(p.id)}',this.checked)"> Surveillé</label><div class="actions"><input class="field date-mini" type="date" value="${esc(p.stopAt||'')}" title="Arrêter la surveillance après cette date" onchange="setProductStop('${esc(p.id)}',this.value)">${p.manual?`<button class="btn danger" onclick="deleteManual('${esc(p.id)}')">Supprimer</button>`:''}</div></div>`}).join(''):'<div class="detail">Aucune référence configurée.</div>'}
@@ -175,16 +203,17 @@
     window.setProductStop=(id,stopAt)=>control({action:'setProductOverride',id,stopAt},`Cutoff ${id} mis à jour`);
     window.deleteManual=id=>{if(confirm(`Supprimer ${id} du circuit ?`))control({action:'deleteManualProduct',id},`${id} supprimé`)};
     window.cancelRequest=id=>control({action:'cancelAssistantRequest',id},'Demande annulée');
-    $('loginForm').addEventListener('submit',async e=>{e.preventDefault();sessionStorage.setItem(PASSWORD_KEY,$('password').value);$('loginError').textContent='';try{await load()}catch(err){$('loginError').textContent=err.message}});
-    $('logout').addEventListener('click',()=>{sessionStorage.removeItem(PASSWORD_KEY);location.reload()});
     $('refresh').addEventListener('click',()=>load().catch(e=>toast(e.message)));
     $('saveLanguages').addEventListener('click',()=>{const languages=[...$('languages').querySelectorAll('input:checked')].map(i=>i.value);control({action:'setLanguages',languages},'Langues enregistrées')});
     $('heartbeatNow').addEventListener('click',()=>control({action:'heartbeatNow'},'Heartbeat Discord envoyé'));
     $('addProductForm').addEventListener('submit',e=>{e.preventDefault();const urls={};$('storeUrls').value.split('\n').map(x=>x.trim()).filter(Boolean).forEach(line=>{const i=line.indexOf('=');if(i>0){const store=line.slice(0,i).trim();const url=line.slice(i+1).trim();(urls[store]??=[]).push(url)}});const product={id:$('productId').value,label:$('productLabel').value,game:$('game').value,releaseDate:$('releaseDate').value||undefined,stopAt:$('manualStopAt').value||undefined,aliases:$('aliases').value.split(',').map(x=>x.trim()).filter(Boolean),storeUrls:urls,enabled:true};control({action:'addManualProduct',product},'Référence ajoutée').then(()=>$('addProductForm').reset())});
-    $('assistantForm').addEventListener('submit',e=>{e.preventDefault();const text=$('assistantText').value.trim();if(text){control({action:'queueAssistantRequest',text},'Demande ajoutée').then(()=>$('assistantText').value='')}});
     document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===btn));document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===btn.dataset.tab))}));
-    if(password())load().catch(()=>showLogin('Session expirée.'));else showLogin();
-    setInterval(()=>{if(password()&&!$('app').classList.contains('hidden'))load().catch(()=>{})},60000);
+    showLogin();
+    setInterval(()=>{if(!$('app').classList.contains('hidden'))load().catch(()=>{})},60000);
   </script>
+  <script src="/catalog.js" defer></script>
+  <script src="/cockpit-assistant.js"></script>
+  <script src="/cockpit-web-scout.js"></script>
+  <script src="/cockpit-auth.js"></script>
 </body>
 </html>
