@@ -280,7 +280,12 @@ export function hasCommercialSignal(value: string): boolean {
 export function hasFrenchSignal(value: string): boolean {
   const explicitFrench = /lang=["']fr(?:-|["'])|\bfran[çc]ais\b|\bversion\s+fr\b|\bvf\b|(?:^|[\s([\-|])fr(?:$|[\s)\]|-])/i.test(value);
   const explicitForeign = /\bversion\s+(?:anglaise|japonaise)\b|\benglish\s+version\b|\bjapanese\s+version\b|(?:^|[\s([\-|])jp(?:$|[\s)\]|-])|(?:^|[\s([\-|])eng(?:$|[\s)\]|-])/i.test(value);
-  return explicitFrench || !explicitForeign;
+  return explicitFrench && !explicitForeign;
+}
+
+export function isWebScoutVerificationCandidateUrl(value: string): boolean {
+  const target = publicHttpsUrl(value);
+  return Boolean(target && sourceTypeForUrl(target.toString()) !== "blocked");
 }
 
 export function extractLegalEvidence(value: string): {
@@ -705,11 +710,9 @@ function nextExpectedRunAt(scheduledTime: number): string {
 }
 
 function candidateResultCount(results: BraveWebResult[]): number {
-  return results.filter((result) => {
-    if (!result.url || !result.title) return false;
-    const target = publicHttpsUrl(result.url);
-    return Boolean(target && sourceTypeForUrl(target.toString()) !== "blocked");
-  }).length;
+  return results.filter((result) => Boolean(
+    result.url && result.title && isWebScoutVerificationCandidateUrl(result.url)
+  )).length;
 }
 
 function addReason(reasons: Record<string, number>, reason: string): void {
@@ -745,6 +748,10 @@ export class WebScoutDurableObject {
   private async run(request: Request): Promise<WebScoutResponseSnapshot> {
     const nowFallback = Date.now();
     let scheduledTime = nowFallback;
+    let attemptedQuery: string | undefined;
+    let attemptedReferences: string[] = [];
+    let lastBraveCallAt: string | undefined;
+    let monthlySearchRequests: number | undefined;
     try {
       const input = await request.json() as { scheduledTime?: number };
       scheduledTime = Number(input.scheduledTime);
@@ -792,6 +799,8 @@ export class WebScoutDurableObject {
       }
 
       const query = buildWebScoutQuery(products);
+      attemptedQuery = query;
+      attemptedReferences = products.map((product) => product.id);
       const budgetKey = monthlySearchBudgetKey(scheduledTime);
       const usedRequests = (await this.state.storage.get<number>(budgetKey)) ?? 0;
       if (usedRequests >= WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP) {
@@ -816,6 +825,8 @@ export class WebScoutDurableObject {
         return webScoutSnapshot(health);
       }
       await this.state.storage.put(budgetKey, usedRequests + 1);
+      monthlySearchRequests = usedRequests + 1;
+      lastBraveCallAt = checkedAt;
       const results = await fetchBraveResults(apiKey, query);
       const seen = await readCache(this.state.storage, "web-scout:seen");
       const rejectedCache = await readCache(this.state.storage, "web-scout:rejected");
@@ -828,14 +839,39 @@ export class WebScoutDurableObject {
       const deliveryErrors: string[] = [];
 
       for (const result of results) {
-        if (verified >= WEB_SCOUT_MAX_VERIFY || alerted >= WEB_SCOUT_MAX_ALERTS) break;
-        if (!result.url) continue;
+        if (alerted >= WEB_SCOUT_MAX_ALERTS) break;
+        if (!result.url || !result.title) {
+          rejected += 1;
+          addReason(rejectionReasons, "résultat Brave incomplet");
+          continue;
+        }
+        const target = publicHttpsUrl(result.url);
         const preliminaryRefs = matchedProductIds(resultText(result), products);
-        const id = findingId(result.url, preliminaryRefs.length ? preliminaryRefs : products.map((product) => product.id));
+        if (!target) {
+          rejected += 1;
+          addReason(rejectionReasons, "URL non HTTPS ou non publique");
+          continue;
+        }
+        const id = findingId(target.toString(), preliminaryRefs.length ? preliminaryRefs : products.map((product) => product.id));
         if (cacheHas(seen, id, scheduledTime) || cacheHas(rejectedCache, id, scheduledTime)) {
           skippedCached += 1;
           continue;
         }
+        if (sourceTypeForUrl(target.toString()) === "blocked") {
+          const reason = "marketplace/social/source bloqué par politique";
+          rejected += 1;
+          addReason(rejectionReasons, reason);
+          recentRejections.push({
+            domain: registeredDomainFromUrl(target.toString()) ?? "domaine inconnu",
+            reason
+          });
+          rejectedCache.push({ id, at: checkedAt, until: new Date(scheduledTime + REJECT_TTL_MS).toISOString() });
+          continue;
+        }
+        // Seules les pages pouvant réellement faire l'objet d'une vérification
+        // réseau consomment le plafond de quatre. Les marketplaces déjà
+        // bloquées ne doivent pas masquer un marchand valide placé plus bas.
+        if (verified >= WEB_SCOUT_MAX_VERIFY) break;
         verified += 1;
         try {
           const verification = await verifySearchResult(this.state.storage, result, products, scheduledTime);
@@ -880,7 +916,7 @@ export class WebScoutDurableObject {
       await writeCache(this.state.storage, "web-scout:seen", seen);
       await writeCache(this.state.storage, "web-scout:rejected", rejectedCache);
       const health: WebScoutHealth = {
-        status: "completed",
+        status: deliveryErrors.length ? "degraded" : "completed",
         checkedAt,
         query,
         activeReferences: products.map((product) => product.id),
@@ -896,7 +932,12 @@ export class WebScoutDurableObject {
         monthlySearchRequestCap: WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP,
         rejectionReasons,
         recentRejections: recentRejections.slice(-8),
-        ...(deliveryErrors.length ? { deliveryErrors: deliveryErrors.slice(0, 8) } : {})
+        ...(deliveryErrors.length
+          ? {
+              deliveryErrors: deliveryErrors.slice(0, 8),
+              error: "Discord n'a confirmé aucune livraison pour au moins une piste ; elle reste éligible."
+            }
+          : {})
       };
       await this.state.storage.put("web-scout:health", health);
       return webScoutSnapshot(health);
@@ -904,12 +945,22 @@ export class WebScoutDurableObject {
       const health: WebScoutHealth = {
         status: "error",
         checkedAt: new Date(scheduledTime || nowFallback).toISOString(),
-        activeReferences: [],
+        ...(attemptedQuery ? { query: attemptedQuery } : {}),
+        activeReferences: attemptedReferences,
         searchResults: 0,
+        candidates: 0,
         verified: 0,
         alerted: 0,
         skippedCached: 0,
         rejected: 0,
+        ...(lastBraveCallAt ? { lastBraveCallAt } : {}),
+        nextExpectedRunAt: nextExpectedRunAt(scheduledTime || nowFallback),
+        ...(monthlySearchRequests !== undefined
+          ? {
+              monthlySearchRequests,
+              monthlySearchRequestCap: WEB_SCOUT_MONTHLY_SEARCH_REQUEST_CAP
+            }
+          : {}),
         error: safeError(error)
       };
       await this.state.storage.put("web-scout:health", health);

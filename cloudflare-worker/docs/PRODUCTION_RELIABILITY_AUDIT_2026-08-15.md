@@ -49,8 +49,12 @@ Le facteur principal observé est l'arrêt global de la cadence automatique. Le 
 - `minimumAlertConfidence=90` existait dans la configuration mais n'était pas appliqué de façon explicite et traçable ;
 - le cockpit comptait surtout les réveils de Durable Objects, pas les candidats observés, filtrés, qualifiés, dédupliqués et livrés ;
 - six routes partenaires sont volontairement fail-closed sans feed et plusieurs routes exploitables peuvent retourner zéro candidat commercial.
+- Web Scout pouvait dépenser ses quatre places de vérification sur les premiers résultats déjà bloqués (marketplaces/socials), sans atteindre un marchand valable placé plus bas ;
+- Web Scout considérait à tort l'absence de langue étrangère comme une preuve française.
 
 La branche rend chaque rejet explicable : référence, format, langue/confiance, disponibilité, vendeur/éligibilité commerciale, accessoire/carte unitaire, baseline, déduplication, tentative et livraison Discord.
+
+Web Scout compte désormais les résultats bloqués dans ses rejets sans leur faire consommer le plafond de quatre vraies vérifications. Il exige une preuve FR explicite et conserve la requête, le dernier appel Brave, le budget et l'erreur de livraison dans son health. Une piste Discord échouée n'est pas marquée comme vue et reste donc éligible.
 
 ## Architecture corrigée
 
