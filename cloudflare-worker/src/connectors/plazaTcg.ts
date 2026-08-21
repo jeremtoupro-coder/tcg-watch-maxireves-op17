@@ -20,9 +20,13 @@ export const plazaTcg: ConnectorDefinition = {
   requestHeaders: honestHeaders,
   responseMustContainAny: [/one[\s-]*piece/i],
   followDiscoveredProductPages: true,
-  // Fenêtre OP17 critique : les trois sources ci-dessus doivent rester dans le
-  // Fast Watch minute afin de détecter aussi une éventuelle nouvelle URL.
-  // Ce flag fait repasser les sources configurées à chaque cycle ; le parsing
+  // OP17 est une fenêtre de lancement critique : les trois sources ci-dessus
+  // doivent rester dans le Fast Watch minute afin de détecter aussi une
+  // éventuelle nouvelle URL. Information opérationnelle du 21/08/2026 : la
+  // boutique a indiqué que la précommande n'était pas encore ouverte, qu'elle
+  // serait web-only et attendue sous 1 à 3 jours. Le site peut donc afficher
+  // la fiche dans une zone "Précommandes" tout en restant réellement fermé.
+  // Ce flag maintient les sources configurées au cycle minute ; le parsing
   // reste celui des pages HTML publiques et aucune protection n'est contournée.
   authoritativeStructuredFeed: true,
   maxDiscoveredProductPages: 4,
