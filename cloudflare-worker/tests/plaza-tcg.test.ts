@@ -40,8 +40,9 @@ function unavailableProductHtml(): string {
       <meta property="og:image" content="https://plazatcg.com/img/op17-fr.jpg">
     </head><body>
       <h1>One Piece - Display - Les guerriers les plus puissants au monde - OP17 - Français</h1>
+      <section>Précommandes</section>
       <p>199,99 €</p>
-      <p>Rupture de stock</p>
+      <p>INDISPONIBLE</p><p>Rupture de stock</p>
     </body></html>`;
 }
 
@@ -50,7 +51,7 @@ function categoryHtml(productUrl = PLAZA_OP17_URL): string {
     <html><head><title>One Piece - Plaza TCG</title></head><body>
       <h1>Nos produits One Piece</h1>
       <a href="${productUrl}">One Piece Display OP17 Français</a>
-      <span>199,99 €</span><span>INDISPONIBLE</span>
+      <span>199,99 €</span><span>INDISPONIBLE</span><span>Rupture de stock</span>
     </body></html>`;
 }
 
@@ -67,7 +68,7 @@ describe("Plaza TCG", () => {
     expect(plaza?.sources).toEqual([PLAZA_OP17_URL, PLAZA_CATEGORY_URL, PLAZA_HOME_URL]);
   });
 
-  it("qualifie la fiche OP17 FR directe avant toute alerte commerciale", async () => {
+  it("reste indisponible même si la fiche apparaît dans une zone Précommandes avant l'ouverture réelle", async () => {
     const plaza = CONNECTORS.find((connector) => connector.key === "plaza-tcg");
     expect(plaza).toBeDefined();
 
