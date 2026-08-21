@@ -1,4 +1,4 @@
-export {};
+import { CONNECTORS } from "../src/connectors";
 
 const baseUrl = (process.env.PREVIEW_URL ?? "").replace(/\/$/, "");
 const auditToken = process.env.PREVIEW_AUDIT_TOKEN ?? "";
@@ -80,12 +80,15 @@ if (root.runtime?.stateBindingPresent !== false || root.runtime?.cron !== false)
   throw new Error("La preview ne doit avoir ni KV ni cron.");
 }
 
+const expectedStoreCount = CONNECTORS.length;
 const health = await getJson("/health");
 if (health.status !== "ok" || health.mode !== "SAFE_PREVIEW") {
   throw new Error(`Healthcheck invalide: ${JSON.stringify(health)}`);
 }
-if (!Array.isArray(health.stores) || health.stores.length !== 24) {
-  throw new Error(`Le healthcheck ne décrit pas les 24 boutiques: ${JSON.stringify(health.stores)}`);
+if (!Array.isArray(health.stores) || health.stores.length !== expectedStoreCount) {
+  throw new Error(
+    `Le healthcheck ne décrit pas les ${expectedStoreCount} boutiques: ${JSON.stringify(health.stores)}`
+  );
 }
 
 const config = await getJson("/config");
@@ -95,8 +98,8 @@ if (config.opWatchV1?.officialCatalogUrl !== "https://fr.onepiece-cardgame.com/p
 if (config.opWatchV1?.language?.strict !== true || config.opWatchV1?.language?.target !== "fr") {
   throw new Error("La configuration commerciale n'est pas strictement française.");
 }
-if (!Array.isArray(config.stores) || config.stores.length !== 24) {
-  throw new Error("La configuration déployée ne contient pas exactement 24 boutiques.");
+if (!Array.isArray(config.stores) || config.stores.length !== expectedStoreCount) {
+  throw new Error(`La configuration déployée ne contient pas exactement ${expectedStoreCount} boutiques.`);
 }
 
 const calendar = await getJson(
