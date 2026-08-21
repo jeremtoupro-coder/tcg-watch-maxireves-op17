@@ -151,8 +151,11 @@ if (serialized.includes(auditToken)) {
 if (/https?:\/\/[^\s\"]+authorized[_-]feed/i.test(serialized)) {
   throw new Error("Le rapport semble contenir une URL de flux autorisé : écriture refusée.");
 }
-if (summaries.length !== 24 || new Set(summaries.map((store) => store.store)).size !== 24) {
-  throw new Error(`Audit incomplet: ${summaries.length}/24 boutique(s).`);
+if (
+  summaries.length !== CONNECTORS.length ||
+  new Set(summaries.map((store) => store.store)).size !== CONNECTORS.length
+) {
+  throw new Error(`Audit incomplet: ${summaries.length}/${CONNECTORS.length} boutique(s).`);
 }
 
 await writeFile("audit-report.json", serialized, "utf8");

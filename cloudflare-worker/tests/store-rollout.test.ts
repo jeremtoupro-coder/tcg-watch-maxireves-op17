@@ -26,16 +26,17 @@ const EXPECTED_STORES = [
   "mystic-ambre",
   "ludiworld",
   "vegastore",
+  "plaza-tcg",
   "otakuland",
   "esprit-jeu",
   "la-grande-recre",
   "bcd-jeux"
 ];
 
-describe("rollout 24 boutiques", () => {
-  it("enregistre exactement les 24 boutiques demandées sans doublon", () => {
+describe("rollout 25 boutiques", () => {
+  it("enregistre exactement les 25 boutiques demandées sans doublon", () => {
     expect(CONNECTORS.map((connector) => connector.key)).toEqual(EXPECTED_STORES);
-    expect(new Set(DEFAULT_CLOUDFLARE_STORES).size).toBe(24);
+    expect(new Set(DEFAULT_CLOUDFLARE_STORES).size).toBe(25);
     expect(DEFAULT_CLOUDFLARE_STORES).toEqual(EXPECTED_STORES);
     expect(CONNECTORS.every((connector) => (connector.responseMustContainAny?.length ?? 0) > 0)).toBe(true);
   });

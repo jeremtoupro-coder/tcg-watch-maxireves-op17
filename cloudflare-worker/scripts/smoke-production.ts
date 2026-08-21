@@ -1,4 +1,4 @@
-export {};
+import { CONNECTORS } from "../src/connectors";
 
 const baseUrl = process.env.PRODUCTION_URL?.replace(/\/$/, "");
 const token = process.env.PREVIEW_AUDIT_TOKEN?.trim();
@@ -51,6 +51,7 @@ if (phase === "standby") {
   }
   console.log(JSON.stringify({ ok: true, phase, monitoring: false, stateWrites: false, discord: "dry-run", cron: false, cockpitAuth: "PASS" }));
 } else {
+  const expectedStoreCount = CONNECTORS.length;
   const ready = await jsonGet("/runtime-ready", true);
   if (
     ready.status !== "ready" ||
@@ -60,7 +61,7 @@ if (phase === "standby") {
     ready.monitoringEnabled !== true ||
     ready.stateWritesEnabled !== true ||
     !Array.isArray(ready.stores) ||
-    ready.stores.length !== 24
+    ready.stores.length !== expectedStoreCount
   ) {
     throw new Error(`Readiness ${phase} invalide: ${JSON.stringify(ready)}`);
   }
