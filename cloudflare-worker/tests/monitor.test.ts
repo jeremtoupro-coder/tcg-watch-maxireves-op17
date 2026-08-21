@@ -15,9 +15,9 @@ const OP17: OfficialProduct = {
 };
 
 describe("surveillance planifiée", () => {
-  it("utilise les vingt-quatre boutiques OP Watch par défaut", () => {
+  it("utilise les vingt-cinq boutiques OP Watch par défaut", () => {
     expect(parseActiveStores()).toEqual(DEFAULT_CLOUDFLARE_STORES);
-    expect(parseActiveStores()).toHaveLength(24);
+    expect(parseActiveStores()).toHaveLength(25);
   });
 
   it("ignore les boutiques inconnues et supprime les doublons", () => {
