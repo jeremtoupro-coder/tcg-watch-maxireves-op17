@@ -9,6 +9,7 @@ import { oupi } from "./oupi";
 import { parkage } from "./parkage";
 import { philibert } from "./philibert";
 import { pixelheart } from "./pixelheart";
+import { plazaTcg } from "./plazaTcg";
 import {
   amazonFr,
   carrefour,
@@ -57,6 +58,7 @@ export const CONNECTORS: ConnectorDefinition[] = [
   mysticAmbre,
   ludiworld,
   vegastore,
+  plazaTcg,
   otakuland,
   espritJeu,
   laGrandeRecre,
