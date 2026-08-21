@@ -55,6 +55,18 @@ function categoryHtml(productUrl = PLAZA_OP17_URL): string {
 }
 
 describe("Plaza TCG", () => {
+  it("garde les trois chemins critiques OP17 dans le Fast Watch", () => {
+    const plaza = CONNECTORS.find((connector) => connector.key === "plaza-tcg");
+    expect(plaza).toMatchObject({
+      authoritativeStructuredFeed: true,
+      followDiscoveredProductPages: true,
+      requiresDirectProductPageForAlerts: true,
+      maxDiscoveredProductPages: 4,
+      maxConcurrency: 2,
+    });
+    expect(plaza?.sources).toEqual([PLAZA_OP17_URL, PLAZA_CATEGORY_URL, PLAZA_HOME_URL]);
+  });
+
   it("qualifie la fiche OP17 FR directe avant toute alerte commerciale", async () => {
     const plaza = CONNECTORS.find((connector) => connector.key === "plaza-tcg");
     expect(plaza).toBeDefined();
