@@ -48,7 +48,7 @@
       </header>
 
       <section class="summary">
-        <div class="hero"><h2 id="heroTitle">Contrôle en cours…</h2><p id="heroText">Lecture du runtime, des 24 boutiques et des deux circuits de veille.</p></div>
+        <div class="hero"><h2 id="heroTitle">Contrôle en cours…</h2><p id="heroText">Lecture du runtime, des boutiques surveillées et des deux circuits de veille.</p></div>
         <div class="metric green"><strong id="greenCount">—</strong><span>opérationnels</span></div>
         <div class="metric amber"><strong id="amberCount">—</strong><span>en attente / limités</span></div>
         <div class="metric red"><strong id="redCount">—</strong><span>incidents</span></div>
@@ -64,7 +64,7 @@
       </nav>
 
       <section id="supervision" class="view active">
-        <div class="section-head"><div><h3>24 boutiques</h3><p>Vert = cycle réel récent. Orange = dépendance connue. Rouge = problème à traiter.</p></div><button id="refresh" class="btn">Actualiser</button></div>
+        <div class="section-head"><div><h3 id="storeCountTitle">Boutiques surveillées</h3><p>Vert = cycle réel récent. Orange = dépendance connue. Rouge = problème à traiter.</p></div><button id="refresh" class="btn">Actualiser</button></div>
         <div id="stores" class="stores"></div>
       </section>
 
@@ -172,6 +172,7 @@
     }
     function render(){
       $('lastRefresh').textContent='Actualisé '+new Date(state.checkedAt).toLocaleTimeString('fr-FR');
+      $('storeCountTitle').textContent=`${state.stores.length} boutiques`;
       $('greenCount').textContent=state.totals.green;$('amberCount').textContent=state.totals.amber;$('redCount').textContent=state.totals.red;$('productCount').textContent=state.calendar.activeProducts.length;
       const runtime=state.runtime.live;const pill=$('runtimePill');pill.innerHTML=`<span class="dot ${runtime?'green':'red'}"></span>${runtime?'PRODUCTION LIVE':'RUNTIME À CONTRÔLER'}`;
       const schedulerObserved=state.runtime.schedulerObserved||{};
