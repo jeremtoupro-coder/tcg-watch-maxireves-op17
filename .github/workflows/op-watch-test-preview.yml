@@ -147,9 +147,9 @@ jobs:
         run: npm run stabilize-preview-auth
       - name: Smoke test real preview
         run: npm run smoke-preview
-      - name: Audit all 24 shops through preview
+      - name: Audit all configured shops through preview
         run: npm run audit-preview
-      - name: Upload 24-shop audit evidence
+      - name: Upload configured-shop audit evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
