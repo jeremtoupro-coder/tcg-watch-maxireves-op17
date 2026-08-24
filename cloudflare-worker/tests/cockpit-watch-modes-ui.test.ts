@@ -54,4 +54,11 @@ describe("cockpit deux circuits", () => {
     expect(html).toContain("Feed complet reporté");
     expect(html).toContain("source.deferred");
   });
+
+  it("calcule le nombre de boutiques depuis l'état réel du Worker", () => {
+    expect(html).toContain('id="storeCountTitle">Boutiques surveillées');
+    expect(html).toContain("$('storeCountTitle').textContent=`${state.stores.length} boutiques`");
+    expect(html).not.toContain("des 24 boutiques");
+    expect(html).not.toContain("<h3>24 boutiques</h3>");
+  });
 });
