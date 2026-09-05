@@ -41,6 +41,11 @@ if (authHealth.ok !== true || authHealth.hashing !== "hmac-sha256-v1") {
   throw new Error(`Cockpit auth health invalide: ${JSON.stringify(authHealth)}`);
 }
 
+const protectedScout = await jsonGet("/protected-store-scout-health", true);
+if (protectedScout.bindingPresent !== true || protectedScout.searchConfigured !== true) {
+  throw new Error(`Protected Store Scout non prêt: ${JSON.stringify(protectedScout)}`);
+}
+
 if (phase === "standby") {
   const root = await jsonGet("/");
   if (root.runtime?.monitoringEnabled !== false || root.runtime?.stateWritesEnabled !== false) {
@@ -49,7 +54,17 @@ if (phase === "standby") {
   if (root.runtime?.discordMode !== "dry-run") {
     throw new Error("Standby invalide : Discord n'est pas dry-run.");
   }
-  console.log(JSON.stringify({ ok: true, phase, monitoring: false, stateWrites: false, discord: "dry-run", cron: false, cockpitAuth: "PASS" }));
+  console.log(JSON.stringify({
+    ok: true,
+    phase,
+    monitoring: false,
+    stateWrites: false,
+    discord: "dry-run",
+    cron: false,
+    cockpitAuth: "PASS",
+    protectedScout: "READY",
+    deadmanConfigured: protectedScout.deadmanConfigured === true
+  }));
 } else {
   const expectedStoreCount = CONNECTORS.length;
   const ready = await jsonGet("/runtime-ready", true);
@@ -67,14 +82,20 @@ if (phase === "standby") {
   }
   if (phase === "armed") {
     if (ready.automaticPolling !== false) throw new Error("La phase armed sans cron ne doit pas être observée comme active.");
-    console.log(JSON.stringify({ ok: true, phase, readiness: "PASS", schedulerObserved: false, stores: ready.stores.length, cockpitAuth: "PASS" }));
+    console.log(JSON.stringify({
+      ok: true,
+      phase,
+      readiness: "PASS",
+      schedulerObserved: false,
+      stores: ready.stores.length,
+      cockpitAuth: "PASS",
+      protectedScout: "READY",
+      deadmanConfigured: protectedScout.deadmanConfigured === true
+    }));
   } else {
     const armed = await jsonPost("/scheduler-watchdog/arm", true);
     const baseline = Number(armed.health?.receivedCount) || 0;
     let observed: Record<string, any> | undefined;
-    // Une modification de Cron Trigger peut mettre jusqu'à 15 minutes à se
-    // propager chez Cloudflare. Le smoke laisse ensuite deux frontières de
-    // minute distinctes, avec une marge : 20 minutes au total.
     for (let attempt = 1; attempt <= 240; attempt += 1) {
       const current = await jsonGet("/scheduler-health", true);
       const received = Number(current.health?.receivedCount) || 0;
@@ -101,7 +122,9 @@ if (phase === "standby") {
       automaticCyclesObserved: (Number(observed.health?.receivedCount) || 0) - baseline,
       lastAutomaticMonitoring: observed.health?.automaticMonitoring?.status,
       stores: ready.stores.length,
-      cockpitAuth: "PASS"
+      cockpitAuth: "PASS",
+      protectedScout: "READY",
+      deadmanConfigured: protectedScout.deadmanConfigured === true
     }));
   }
 }
