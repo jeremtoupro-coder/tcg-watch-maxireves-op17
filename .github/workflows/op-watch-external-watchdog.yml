@@ -2,7 +2,8 @@ name: OP Watch - External Scheduler Watchdog
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # Décalé de :00/:05 pour éviter les périodes de forte charge du scheduler GitHub.
+    - cron: "2-57/5 * * * *"
   workflow_dispatch:
 
 permissions:
