@@ -63,6 +63,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+      EXTERNAL_DEADMAN_PING_URL: ${{ secrets.EXTERNAL_DEADMAN_PING_URL }}
       PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
       PRODUCTION_WORKER_NAME: tcg-watch-one-piece
     steps:
@@ -94,7 +96,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DISCORD_WEBHOOK_URL; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID DISCORD_WEBHOOK_URL BRAVE_SEARCH_API_KEY; do
             if [ -z "${!name}" ]; then
               echo "::error title=Secret manquant::$name n'est pas configuré."
               missing=1
@@ -118,7 +120,6 @@ jobs:
           echo "::add-mask::$pepper"
           echo "COCKPIT_AUTH_PEPPER=$pepper" >> "$GITHUB_ENV"
 
-      # Phase 1 : déployer le code et les Durable Objects totalement inertes.
       - name: Generate standby config
         run: npm run generate-production-config
         env:
@@ -129,9 +130,8 @@ jobs:
           const b=c.durable_objects?.bindings||[];
           if(c.name!=='tcg-watch-one-piece'||c.vars.MONITORING_ENABLED!=='false'||
           c.vars.WRITE_STATE!=='false'||c.vars.DISCORD_MODE!=='dry-run'||c.vars.SCHEDULER_MODE!=='disabled'||
-          c.vars.CRON_CONFIGURED!=='false'||
-          c.vars.PRODUCTION_PROBE_MODE!=='false'||c.kv_namespaces?.length||c.triggers?.crons?.length||
-          b.length!==4||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')) process.exit(1)"
+          c.vars.CRON_CONFIGURED!=='false'||c.vars.PRODUCTION_PROBE_MODE!=='false'||c.kv_namespaces?.length||c.triggers?.crons?.length||
+          b.length!==5||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')||!b.some(x=>x.name==='PROTECTED_STORE_SCOUT')) process.exit(1)"
       - name: Deploy inert standby
         run: npx wrangler deploy --config wrangler.production-standby.generated.json
       - name: Install private readiness token
@@ -149,14 +149,17 @@ jobs:
             echo "::add-mask::$OPENAI_API_KEY"
             printf '%s' "$OPENAI_API_KEY" | npx wrangler secret put OPENAI_API_KEY --config wrangler.production-standby.generated.json
           fi
-      - name: Install Brave Search API key if configured
+      - name: Install Brave Search API key
         shell: bash
-        env:
-          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
         run: |
-          if [ -n "$BRAVE_SEARCH_API_KEY" ]; then
-            echo "::add-mask::$BRAVE_SEARCH_API_KEY"
-            printf '%s' "$BRAVE_SEARCH_API_KEY" | npx wrangler secret put BRAVE_SEARCH_API_KEY --config wrangler.production-standby.generated.json
+          echo "::add-mask::$BRAVE_SEARCH_API_KEY"
+          printf '%s' "$BRAVE_SEARCH_API_KEY" | npx wrangler secret put BRAVE_SEARCH_API_KEY --config wrangler.production-standby.generated.json
+      - name: Install external dead-man endpoint if configured
+        shell: bash
+        run: |
+          if [ -n "$EXTERNAL_DEADMAN_PING_URL" ]; then
+            echo "::add-mask::$EXTERNAL_DEADMAN_PING_URL"
+            printf '%s' "$EXTERNAL_DEADMAN_PING_URL" | npx wrangler secret put EXTERNAL_DEADMAN_PING_URL --config wrangler.production-standby.generated.json
           fi
       - name: Install Resend API key if configured
         shell: bash
@@ -201,8 +204,6 @@ jobs:
         env:
           PRODUCTION_SMOKE_PHASE: standby
 
-      # Phase 2a : armer les variables LIVE, toujours sans cron. La sonde ne fait
-      # aucun audit marchand ; elle vérifie les connecteurs, les DO et le webhook Discord officiel.
       - name: Generate armed LIVE config without cron
         run: npm run generate-production-config
         env:
@@ -213,7 +214,7 @@ jobs:
           const b=c.durable_objects?.bindings||[];
           if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
           c.vars.SCHEDULER_MODE!=='live'||c.vars.CRON_CONFIGURED!=='false'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
-          c.triggers?.crons?.length||b.length!==4||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')) process.exit(1)"
+          c.triggers?.crons?.length||b.length!==5||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')||!b.some(x=>x.name==='PROTECTED_STORE_SCOUT')) process.exit(1)"
       - name: Deploy armed LIVE config without automatic polling
         run: npx wrangler deploy --config wrangler.production-armed.generated.json
       - name: Smoke LIVE readiness without merchant polling
@@ -221,7 +222,6 @@ jobs:
         env:
           PRODUCTION_SMOKE_PHASE: armed
 
-      # Phase 2b : le cron commercial n'est ajouté qu'après toutes les validations.
       - name: Generate final one-minute LIVE config
         run: npm run generate-production-config
         env:
@@ -232,7 +232,7 @@ jobs:
           const b=c.durable_objects?.bindings||[];
           if(c.vars.MONITORING_ENABLED!=='true'||c.vars.WRITE_STATE!=='true'||c.vars.DISCORD_MODE!=='live'||
           c.vars.SCHEDULER_MODE!=='live'||c.vars.CRON_CONFIGURED!=='true'||c.vars.PRODUCTION_PROBE_MODE!=='true'||c.kv_namespaces?.length||
-          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==4||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')) process.exit(1)"
+          JSON.stringify(c.triggers?.crons)!==JSON.stringify(['* * * * *'])||b.length!==5||!b.some(x=>x.name==='WEB_SCOUT')||!b.some(x=>x.name==='COCKPIT_AUTH')||!b.some(x=>x.name==='PROTECTED_STORE_SCOUT')) process.exit(1)"
       - name: Activate final LIVE cron
         run: npx wrangler deploy --config wrangler.production-live.generated.json
       - name: Final LIVE readiness smoke
