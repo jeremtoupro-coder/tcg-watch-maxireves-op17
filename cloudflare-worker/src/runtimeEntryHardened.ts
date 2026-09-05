@@ -54,8 +54,28 @@ async function protectedScoutHealth(request: Request, env: HardenedRuntimeEnv): 
     return Response.json({ error: "Non autorisé." }, { status: 401 });
   }
   const stub = protectedScoutStub(env);
-  if (!stub) return Response.json({ error: "Protected Store Scout non déployé." }, { status: 503 });
-  return stub.fetch(new Request("https://protected-store-scout.internal/health"));
+  if (!stub) {
+    return Response.json({
+      bindingPresent: false,
+      searchConfigured: Boolean(env.BRAVE_SEARCH_API_KEY?.trim()),
+      deadmanConfigured: Boolean(env.EXTERNAL_DEADMAN_PING_URL?.trim()),
+      error: "Protected Store Scout non déployé."
+    }, { status: 503 });
+  }
+  const response = await stub.fetch(new Request("https://protected-store-scout.internal/health"));
+  const raw = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+  } catch {
+    return Response.json({ error: "Réponse Protected Scout inexploitable." }, { status: 502 });
+  }
+  return Response.json({
+    bindingPresent: true,
+    searchConfigured: Boolean(env.BRAVE_SEARCH_API_KEY?.trim()),
+    deadmanConfigured: Boolean(env.EXTERNAL_DEADMAN_PING_URL?.trim()),
+    ...data
+  }, { status: response.status });
 }
 
 export default {
