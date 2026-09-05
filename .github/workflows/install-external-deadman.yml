@@ -1,0 +1,120 @@
+name: OP Watch - Install External Dead-Man
+
+on:
+  workflow_dispatch:
+    inputs:
+      ping_url:
+        description: "URL Healthchecks.io (hc-ping.com) ou Better Stack heartbeat"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: op-watch-install-external-deadman
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: Validate and install external dead-man
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudflare-worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PRODUCTION_URL: https://tcg-watch-one-piece.jeremie-touitou-pro.workers.dev
+      PRODUCTION_WORKER_NAME: tcg-watch-one-piece
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cloudflare-worker/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Cloudflare credentials
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error title=Secrets Cloudflare manquants::Impossible d'installer le dead-man."
+            exit 1
+          fi
+
+      - name: Validate and mask dead-man endpoint
+        shell: bash
+        env:
+          INPUT_PING_URL: ${{ inputs.ping_url }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const raw = (process.env.INPUT_PING_URL || '').trim();
+          let u;
+          try { u = new URL(raw); } catch { process.exit(2); }
+          const allowed = new Set(['hc-ping.com', 'uptime.betterstack.com']);
+          if (u.protocol !== 'https:' || !allowed.has(u.hostname.toLowerCase()) || u.username || u.password || u.port || u.hash || u.pathname.length < 2) {
+            process.exit(2);
+          }
+          const value = u.toString();
+          process.stdout.write(`::add-mask::${value}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `EXTERNAL_DEADMAN_PING_URL=${value}\n`, 'utf8');
+          NODE
+
+      - name: Probe external endpoint
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --max-time 10 "$EXTERNAL_DEADMAN_PING_URL" >/dev/null
+
+      - name: Generate current LIVE config
+        run: npm run generate-production-config
+        env:
+          PRODUCTION_PHASE: live
+
+      - name: Install dead-man secret on production Worker
+        shell: bash
+        run: |
+          printf '%s' "$EXTERNAL_DEADMAN_PING_URL" | npx wrangler secret put EXTERNAL_DEADMAN_PING_URL --config wrangler.production-live.generated.json
+
+      - name: Derive production readiness token
+        shell: bash
+        run: |
+          token="$(npm run --silent derive-preview-audit-token)"
+          echo "::add-mask::$token"
+          echo "PREVIEW_AUDIT_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Verify Worker sees dead-man configuration
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE'
+          const base = process.env.PRODUCTION_URL;
+          const token = process.env.PREVIEW_AUDIT_TOKEN;
+          let last = '';
+          for (let i = 0; i < 12; i += 1) {
+            const r = await fetch(`${base}/protected-store-scout-health?deadman=${Date.now()}-${i}`, {
+              headers: { authorization: `Bearer ${token}` },
+              cache: 'no-store'
+            });
+            last = await r.text();
+            if (r.ok) {
+              try {
+                const j = JSON.parse(last);
+                if (j.deadmanConfigured === true) {
+                  console.log(JSON.stringify({ ok: true, deadmanConfigured: true }));
+                  process.exit(0);
+                }
+              } catch {}
+            }
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+          console.error(last.slice(0, 500));
+          process.exit(1);
+          NODE
