@@ -56,6 +56,7 @@ jobs:
           INPUT_PING_URL: ${{ inputs.ping_url }}
         run: |
           node - <<'NODE'
+          const fs = require('node:fs');
           const raw = (process.env.INPUT_PING_URL || '').trim();
           let u;
           try { u = new URL(raw); } catch { process.exit(2); }
@@ -63,9 +64,10 @@ jobs:
           if (u.protocol !== 'https:' || !allowed.has(u.hostname.toLowerCase()) || u.username || u.password || u.port || u.hash || u.pathname.length < 2) {
             process.exit(2);
           }
+          const value = u.toString();
+          process.stdout.write(`::add-mask::${value}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `EXTERNAL_DEADMAN_PING_URL=${value}\n`, 'utf8');
           NODE
-          echo "::add-mask::$INPUT_PING_URL"
-          echo "EXTERNAL_DEADMAN_PING_URL=$INPUT_PING_URL" >> "$GITHUB_ENV"
 
       - name: Probe external endpoint
         shell: bash
@@ -92,7 +94,7 @@ jobs:
       - name: Verify Worker sees dead-man configuration
         shell: bash
         run: |
-          node - <<'NODE'
+          node --input-type=module - <<'NODE'
           const base = process.env.PRODUCTION_URL;
           const token = process.env.PREVIEW_AUDIT_TOKEN;
           let last = '';
